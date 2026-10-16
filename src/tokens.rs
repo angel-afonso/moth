@@ -187,6 +187,9 @@ pub struct TerminalColors {
     pub background: Hsla,
     #[serde(with = "hex")]
     pub cursor: Hsla,
+    /// Fondo del texto seleccionado (con transparencia).
+    #[serde(with = "hex")]
+    pub selection: Hsla,
     pub ansi: AnsiColors,
 }
 

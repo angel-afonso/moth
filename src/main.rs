@@ -1,4 +1,5 @@
 mod assets;
+mod completions;
 mod components;
 mod fuzzy;
 mod git;
@@ -7,6 +8,7 @@ mod highlight;
 mod hosts;
 mod keys;
 mod links;
+mod mouse;
 mod palette;
 mod picker;
 mod shell;

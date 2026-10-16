@@ -67,8 +67,6 @@ impl RenderOnce for Kbd {
 // ---------------------------------------------------------------------------------------
 
 /// Tipo de una sugerencia, con el color de su categoría de sintaxis.
-/// `Command`, `Subcommand` y `Flag` son para el popup de completions, que todavía no existe.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuggestionKind {
     Command,

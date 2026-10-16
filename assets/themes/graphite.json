@@ -37,6 +37,7 @@
     "foreground": "#E3E6EB",
     "background": "#0C0D10",
     "cursor": "#82AAFF",
+    "selection": "#82AAFF4D",
     "ansi": {
       "black": "#1A1D22",
       "red": "#FF7B72",

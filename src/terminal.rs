@@ -24,6 +24,7 @@ use futures::{
 use gpui::{App, ClipboardItem, Context, EventEmitter, Pixels, Task, px};
 
 use crate::{
+    completions,
     git::{self, GitStatus},
     hosts::{self, HostIdentity},
     ssh::{self, ResolvedHost, SshTarget},
@@ -465,6 +466,47 @@ impl Terminal {
         });
     }
 
+    /// Qué se puede escribir en la posición del cursor de la línea en edición.
+    pub fn complete(&mut self, cx: &App) -> Option<completions::Completion> {
+        let line = self.shell.line.clone().filter(|_| self.at_prompt())?;
+        let cursor = line
+            .buffer
+            .char_indices()
+            .nth(line.cursor)
+            .map_or(line.buffer.len(), |(i, _)| i);
+        let git = self.shell.git.clone();
+        let branches = git.as_ref().map(|g| g.branches.clone()).unwrap_or_default();
+        let history = shell::history(cx).map(|h| h.entries.clone()).unwrap_or_default();
+        let hosts: Vec<(String, String)> = ssh::config_hosts()
+            .into_iter()
+            .map(|h| {
+                let describe = h.describe();
+                (h.alias, describe)
+            })
+            .collect();
+        let default_specs = completions::Specs::default();
+        let specs = cx.try_global::<completions::Specs>().unwrap_or(&default_specs);
+        let cwd = self.shell.cwd.clone();
+        let resolver = std::cell::RefCell::new(std::mem::take(&mut self.resolver));
+        let commands = |prefix: &str| resolver.borrow_mut().names_with_prefix(prefix);
+        let scripts = || cwd.as_deref().map(completions::package_scripts).unwrap_or_default();
+        let result = completions::complete(&completions::Context {
+            buffer: &line.buffer,
+            cursor,
+            cwd: cwd.as_deref(),
+            specs,
+            branches: &branches,
+            current_branch: git.as_ref().and_then(|g| g.branch.as_deref()),
+            history: &history,
+            hosts: &hosts,
+            commands: &commands,
+            list_dir: &completions::list_dir,
+            scripts: &scripts,
+        });
+        self.resolver = resolver.into_inner();
+        result
+    }
+
     /// Vuelve a ejecutar el `ssh` que se cortó.
     pub fn reconnect(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(command) = self.shell.disconnected.as_ref().map(|d| d.command.clone()) else {
@@ -579,6 +621,10 @@ impl Terminal {
     /// Entrada del usuario: vuelve al final del scrollback antes de escribir.
     pub fn input(&mut self, bytes: impl Into<Cow<'static, [u8]>>, cx: &mut Context<Self>) {
         let mut term = self.term.lock();
+        // Escribir descarta la selección, como en cualquier terminal.
+        if term.selection.take().is_some() {
+            cx.notify();
+        }
         if term.grid().display_offset() != 0 {
             term.scroll_display(Scroll::Bottom);
             cx.notify();

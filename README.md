@@ -23,8 +23,17 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | ⌘L | Limpiar pantalla y scrollback |
 | ⌘⇧R | Reconectar la sesión SSH que se cortó |
 | ⌘V | Pegar (respeta bracketed paste) |
-| ⌘C | Copiar la pantalla visible (todavía no hay selección) |
+| ⌘C | Copiar la selección (sin selección, la pantalla visible) |
+| Tab | Abrir el popup de completions (↑↓ elegir, Tab completar, ⏎ ejecutar, esc cerrar) |
 | → / Fin | Aceptar la sugerencia del historial |
+
+## Selección y mouse
+
+Arrastrar selecciona, doble clic selecciona una palabra, triple clic una línea y Shift+clic extiende la selección; ⌘C la copia y escribir la descarta. Cuando un programa pide el mouse (vim, htop, lazygit, Claude Code…), los clics, el arrastre y la rueda le llegan a él en formato SGR o X10; con Shift se selecciona igual.
+
+## Completions
+
+Tab en el prompt abre un popup con lo que se puede escribir donde está el cursor: comandos (PATH, alias, funciones, builtins), subcomandos y flags de herramientas comunes con su descripción, ramas de git, scripts de `package.json`, hosts de `~/.ssh/config`, rutas e historial. El resto del candidato elegido se ve en gris en la línea y un panel muestra su documentación (uso y flags). Si hay un solo candidato se completa directo; si no hay ninguno, el Tab sigue a la completion de zsh. Las especificaciones están en [`assets/completions/specs.json`](assets/completions/specs.json) y se pueden ampliar.
 
 ## Links
 
@@ -107,6 +116,8 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
 - `src/state.rs`: última carpeta y carpetas recientes.
 - `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
+- `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).
+- `src/mouse.rs`: reporte de mouse a los programas que lo piden (SGR y X10).
 - `src/links.rs`: búsqueda de URLs en la salida y esquemas permitidos.
 - `src/keys.rs`: teclas especiales → secuencias de escape.
 - `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.

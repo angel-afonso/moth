@@ -64,6 +64,8 @@ pub struct CommandResolver {
     path: Vec<PathBuf>,
     names: HashSet<String>,
     cache: HashMap<String, bool>,
+    /// Ejecutables del PATH, ordenados; se arma la primera vez que se completa un comando.
+    executables: Option<Vec<String>>,
 }
 
 impl CommandResolver {
@@ -76,6 +78,35 @@ impl CommandResolver {
     pub fn set_path(&mut self, path: &str) {
         self.path = std::env::split_paths(path).collect();
         self.cache.clear();
+        self.executables = None;
+    }
+
+    /// Comandos que empiezan con `prefix`: builtins, alias y funciones de la shell y
+    /// ejecutables del PATH.
+    pub fn names_with_prefix(&mut self, prefix: &str) -> Vec<String> {
+        let path = &self.path;
+        let executables = self.executables.get_or_insert_with(|| {
+            let mut names: Vec<String> = path
+                .iter()
+                .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok))
+                .filter(|entry| is_executable(&entry.path()))
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names.dedup();
+            names
+        });
+        let mut found: Vec<String> = BUILTINS
+            .iter()
+            .map(|b| b.to_string())
+            .chain(self.names.iter().cloned())
+            .chain(executables.iter().cloned())
+            .filter(|name| name.starts_with(prefix) && !name.starts_with('_'))
+            .collect();
+        found.sort();
+        found.dedup();
+        found.truncate(200);
+        found
     }
 
     /// Alias, funciones y builtins que reporta la shell.

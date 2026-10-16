@@ -12,6 +12,7 @@ use rust_embed::RustEmbed;
 #[include = "fonts/**/*.ttf"]
 #[include = "shell/**/*"]
 #[include = "themes/*.json"]
+#[include = "completions/*.json"]
 pub struct Assets;
 
 impl AssetSource for Assets {

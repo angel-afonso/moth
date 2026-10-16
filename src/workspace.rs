@@ -84,6 +84,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-r", Reconnect, None),
     ]);
     hosts::reload(cx);
+    crate::completions::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     picker::init(cx);
 }
