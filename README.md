@@ -78,6 +78,7 @@ La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code)
 
 - colorea la línea que estás escribiendo (comando, subcomando, flags, strings, rutas, operadores, variables; comando inexistente en rojo ondulado);
 - sugiere en gris el resto del comando más reciente del historial que empieza igual; → o Fin lo acepta;
+- un clic sobre la línea que estás escribiendo lleva el cursor ahí, como en un editor (también en líneas partidas y con caracteres anchos);
 - muestra en la pestaña el comando en ejecución o la carpeta, y en la barra de estado la ruta y el resultado y la duración del último comando;
 - muestra el estado de git en cada prompt (rama, `↓`/`↑` respecto del upstream, `+` en stage, `~` modificados, `?` sin seguimiento, `!` en conflicto). Elegir una rama en el buscador escribe y ejecuta `git switch` en la shell, así el resultado o cualquier error queda a la vista. Solo se puede cambiar con la shell en el prompt, no con un comando en curso.
 

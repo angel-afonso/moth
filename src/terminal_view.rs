@@ -1,6 +1,6 @@
 //! Vista de una sesión: pinta la grilla de alacritty directamente con el text system de gpui.
 
-use std::{collections::HashMap, ops::Range};
+use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc};
 
 use alacritty_terminal::{
     Term,
@@ -11,7 +11,8 @@ use alacritty_terminal::{
 };
 use gpui::{
     App, BorderStyle, Bounds, ClipboardItem, Context, CursorStyle, Entity, FocusHandle, Focusable,
-    Font, FontStyle, FontWeight, Hsla, InputHandler, KeyDownEvent, MouseButton, PaintQuad, Pixels,
+    Font, FontStyle, FontWeight, Hsla, InputHandler, KeyDownEvent, MouseButton, MouseDownEvent,
+    PaintQuad, Pixels,
     Point, ScrollDelta, ScrollWheelEvent, ShapedLine, StrikethroughStyle, Subscription, TextAlign,
     TextRun, UTF16Selection, UnderlineStyle, Window, actions, canvas, div, fill, outline,
     prelude::*, point, px, size, transparent_black,
@@ -39,7 +40,17 @@ pub struct TerminalView {
     scroll_remainder: f32,
     /// Texto de varias líneas esperando confirmación antes de pegarse en producción.
     pending_paste: Option<String>,
+    /// Geometría de la grilla del último frame, para traducir clics a celdas.
+    geometry: Rc<Cell<Option<GridGeometry>>>,
     _observe: Subscription,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GridGeometry {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    display_offset: i32,
 }
 
 impl TerminalView {
@@ -51,6 +62,7 @@ impl TerminalView {
             marked_text: None,
             scroll_remainder: 0.,
             pending_paste: None,
+            geometry: Rc::new(Cell::new(None)),
             _observe: observe,
         }
     }
@@ -88,6 +100,57 @@ impl TerminalView {
                 .update(cx, |t, cx| t.input(esc.into_owned().into_bytes(), cx));
             cx.stop_propagation();
         }
+    }
+
+    /// Clic en la línea que se está escribiendo: mueve el cursor de zsh hasta ahí, como en un
+    /// editor, mandando las flechas necesarias.
+    fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_handle.focus(window, cx);
+        let Some(geometry) = self.geometry.get() else {
+            return;
+        };
+        let terminal = self.terminal.read(cx);
+        let Some(edit) = terminal.shell().line.clone().filter(|_| terminal.at_prompt()) else {
+            return;
+        };
+        let column = (event.position.x - geometry.origin.x) / geometry.cell_width;
+        let row = ((event.position.y - geometry.origin.y) / geometry.line_height).floor();
+        if column < 0. || row < 0. {
+            return;
+        }
+        let grid_line = row as i32 - geometry.display_offset;
+
+        let term = terminal.term.clone();
+        let term = term.lock();
+        let Some(points) = locate_input(&term, &edit) else {
+            return;
+        };
+        let cells: Vec<CharCell> = points
+            .iter()
+            .map(|p| CharCell {
+                line: p.line.0,
+                column: p.column.0,
+                width: if term.grid()[*p].flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 },
+            })
+            .collect();
+        let app_cursor = term.mode().contains(TermMode::APP_CURSOR);
+        drop(term);
+
+        let Some(target) = click_target(&cells, grid_line, column) else {
+            return;
+        };
+        let delta = target as isize - edit.cursor.min(cells.len()) as isize;
+        if delta == 0 {
+            return;
+        }
+        let arrow = match (delta > 0, app_cursor) {
+            (true, true) => "\x1bOC",
+            (true, false) => "\x1b[C",
+            (false, true) => "\x1bOD",
+            (false, false) => "\x1b[D",
+        };
+        let bytes = arrow.repeat(delta.unsigned_abs()).into_bytes();
+        self.terminal.update(cx, |t, cx| t.input(bytes, cx));
     }
 
     fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -265,6 +328,7 @@ impl Render for TerminalView {
             .filter(|remote| remote.identity.production)
             .map(|remote| remote.identity.color(cx));
         let paste_guard = self.render_paste_guard(cx);
+        let geometry = self.geometry.clone();
 
         div()
             .id("terminal-view")
@@ -285,14 +349,13 @@ impl Render for TerminalView {
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::copy))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.focus_handle.focus(window, cx)),
-            )
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .child(
                 canvas(
                     move |bounds, window, cx| {
-                        layout_grid(&terminal, bounds, focused, marked_text, window, cx)
+                        let layout = layout_grid(&terminal, bounds, focused, marked_text, window, cx);
+                        geometry.set(Some(layout.geometry));
+                        layout
                     },
                     move |_, layout, window, cx| {
                         layout.paint(window, cx);
@@ -337,6 +400,7 @@ struct GridLayout {
     cursor_text: Option<(Point<Pixels>, ShapedLine)>,
     cursor_bounds: Option<Bounds<Pixels>>,
     line_height: Pixels,
+    geometry: GridGeometry,
 }
 
 impl GridLayout {
@@ -626,7 +690,45 @@ fn layout_grid(
         cursor_text,
         cursor_bounds,
         line_height,
+        geometry: GridGeometry {
+            origin,
+            cell_width,
+            line_height,
+            display_offset,
+        },
     }
+}
+
+/// Celda de un carácter de la línea en edición: línea de la grilla, columna inicial y ancho.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CharCell {
+    line: i32,
+    column: usize,
+    width: usize,
+}
+
+/// Dónde debería quedar el cursor (índice en caracteres) al hacer clic en `line`, `column`
+/// (columna fraccional). Como en un editor: la mitad derecha de un carácter deja el cursor
+/// después de él, y un clic más allá del final de una fila va al final de esa fila.
+/// `None` si el clic no cae sobre la línea en edición (por ejemplo, sobre el prompt).
+fn click_target(cells: &[CharCell], line: i32, column: f32) -> Option<usize> {
+    let row: Vec<(usize, &CharCell)> = cells.iter().enumerate().filter(|(_, c)| c.line == line).collect();
+    let (first_ix, first) = *row.first()?;
+    if column < first.column as f32 {
+        // A la izquierda del texto: en una fila continuada, al inicio de esa fila; en la
+        // primera fila es el prompt, y no se toca.
+        return (first_ix > 0).then_some(first_ix);
+    }
+    for (ix, cell) in &row {
+        let start = cell.column as f32;
+        let end = start + cell.width as f32;
+        if column >= start && column < end {
+            let right_half = column - start >= cell.width as f32 / 2.;
+            return Some(if right_half { ix + 1 } else { *ix });
+        }
+    }
+    let (last_ix, _) = *row.last()?;
+    Some(last_ix + 1)
 }
 
 /// Posición en la grilla de cada carácter de la línea en edición, retrocediendo desde el
@@ -815,5 +917,57 @@ impl InputHandler for TerminalInputHandler {
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         // Mantener una tecla debe repetirla, no abrir el selector de acentos de macOS.
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CharCell, click_target};
+
+    fn cells(line: i32, start: usize, widths: &[usize]) -> Vec<CharCell> {
+        let mut column = start;
+        widths
+            .iter()
+            .map(|&width| {
+                let cell = CharCell { line, column, width };
+                column += width;
+                cell
+            })
+            .collect()
+    }
+
+    #[test]
+    fn clicks_land_on_nearest_boundary() {
+        // `git push` empezando en la columna 2 (después de "❯ ").
+        let line = cells(5, 2, &[1; 8]);
+        assert_eq!(click_target(&line, 5, 2.2), Some(0));
+        assert_eq!(click_target(&line, 5, 2.7), Some(1));
+        assert_eq!(click_target(&line, 5, 6.1), Some(4));
+        // Más allá del final, al final.
+        assert_eq!(click_target(&line, 5, 40.), Some(8));
+        // Sobre el prompt o en otra fila: nada.
+        assert_eq!(click_target(&line, 5, 0.5), None);
+        assert_eq!(click_target(&line, 4, 3.), None);
+    }
+
+    #[test]
+    fn handles_wide_chars_and_wrapped_rows() {
+        // "a界b": el carácter ancho ocupa dos celdas.
+        let line = cells(0, 2, &[1, 2, 1]);
+        assert_eq!(click_target(&line, 0, 3.4), Some(1));
+        assert_eq!(click_target(&line, 0, 4.2), Some(2));
+        assert_eq!(click_target(&line, 0, 5.1), Some(2));
+        assert_eq!(click_target(&line, 0, 5.7), Some(3));
+
+        // Línea partida en dos filas: 4 caracteres en la fila 3 y 2 en la 4.
+        let mut wrapped = cells(3, 76, &[1; 4]);
+        wrapped.extend(cells(4, 0, &[1; 2]));
+        assert_eq!(click_target(&wrapped, 4, 0.2), Some(4));
+        assert_eq!(click_target(&wrapped, 4, 10.), Some(6));
+    }
+
+    #[test]
+    fn empty_line_has_no_target() {
+        assert_eq!(click_target(&[], 0, 3.), None);
     }
 }
