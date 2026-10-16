@@ -1,8 +1,10 @@
 mod assets;
+mod git;
 mod highlight;
 mod keys;
 mod palette;
 mod shell;
+mod state;
 mod terminal;
 mod terminal_view;
 mod theme;
@@ -54,7 +56,8 @@ fn main() {
                     titlebar: Some(TitlebarOptions {
                         title: Some("terminalapp".into()),
                         appears_transparent: true,
-                        traffic_light_position: Some(point(px(12.), px(10.))),
+                        // Centrados en la barra de pestañas de 40 px.
+                        traffic_light_position: Some(point(px(14.), px(14.))),
                     }),
                     window_min_size: Some(size(px(480.), px(280.))),
                     ..Default::default()

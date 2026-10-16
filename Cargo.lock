@@ -4997,6 +4997,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "menu",
  "polling",
  "rust-embed",
  "theme",

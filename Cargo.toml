@@ -13,6 +13,7 @@ ui = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9
 # `font-kit`: sin ella gpui no dibuja texto en macOS. `runtime_shaders`: compila los shaders de Metal al iniciar (no requiere el Metal Toolchain de Xcode).
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a", features = ["font-kit", "runtime_shaders"] }
 theme = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
+menu = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
 # El mismo fork de alacritty que usa Zed en ese commit.
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 anyhow = "1"

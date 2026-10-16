@@ -24,9 +24,11 @@ use futures::{
 use gpui::{App, ClipboardItem, Context, EventEmitter, Pixels, Task, px};
 
 use crate::{
+    git::{self, GitStatus},
     highlight::{self, CommandResolver, Token},
     palette,
     shell::{self, History, ShellEvent, ShellPty},
+    state,
 };
 
 #[derive(Clone)]
@@ -102,7 +104,7 @@ pub struct FinishedCommand {
 pub struct ShellState {
     pub integrated: bool,
     pub cwd: Option<PathBuf>,
-    pub git_branch: Option<String>,
+    pub git: Option<GitStatus>,
     pub line: Option<EditLine>,
     pub running: Option<RunningCommand>,
     pub last: Option<FinishedCommand>,
@@ -116,6 +118,7 @@ pub struct Terminal {
     shell: ShellState,
     pending_command: Option<String>,
     resolver: CommandResolver,
+    git_refresh: Option<Task<()>>,
     _events: Task<()>,
 }
 
@@ -136,7 +139,8 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    pub fn new() -> Result<Self> {
+    /// Abre una sesión en `cwd`; sin carpeta (o si ya no existe), en el home.
+    pub fn new(cwd: Option<PathBuf>) -> Result<Self> {
         let size = TermSize {
             columns: 100,
             lines: 30,
@@ -150,9 +154,18 @@ impl TerminalBuilder {
             ("TERM_PROGRAM".to_string(), "terminalapp".to_string()),
         ]);
         env.extend(shell::integration_env().unwrap_or_default());
+        // La shell se lanza directa como shell de login (`-l`, carga .zprofile y .zshrc). Sin
+        // `shell`, alacritty pasa por /usr/bin/login, que imprime "Last login: …" al abrir.
+        let program = std::env::var("SHELL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/bin/zsh".into());
+        let working_directory = cwd
+            .filter(|dir| dir.is_dir())
+            .or_else(|| std::env::var_os("HOME").map(Into::into));
         let options = tty::Options {
-            shell: None,
-            working_directory: std::env::var_os("HOME").map(Into::into),
+            shell: Some(tty::Shell::new(program, vec!["-l".into()])),
+            working_directory,
             drain_on_exit: true,
             env,
             ..Default::default()
@@ -214,6 +227,7 @@ impl TerminalBuilder {
             shell: ShellState::default(),
             pending_command: None,
             resolver: CommandResolver::from_env(),
+            git_refresh: None,
             _events: events,
         }
     }
@@ -266,9 +280,16 @@ impl Terminal {
             ShellEvent::PromptStart => self.shell.integrated = true,
             ShellEvent::PromptEnd => {}
             ShellEvent::Cwd(cwd) => {
-                self.shell.git_branch = shell::git_branch(&cwd);
-                self.shell.cwd = Some(cwd);
-                cx.emit(TerminalEvent::TitleChanged);
+                // Llega en cada prompt: buen momento para refrescar git (cambió de rama, commit…).
+                self.refresh_git(cwd.clone(), cx);
+                if self.shell.cwd.as_ref() != Some(&cwd) {
+                    let save = cwd.clone();
+                    cx.background_executor()
+                        .spawn(async move { state::save_last_cwd(&save) })
+                        .detach();
+                    self.shell.cwd = Some(cwd);
+                    cx.emit(TerminalEvent::TitleChanged);
+                }
             }
             ShellEvent::CommandText(text) => {
                 cx.default_global::<History>().push(&text);
@@ -324,6 +345,40 @@ impl Terminal {
             ShellEvent::Path(path) => self.resolver.set_path(&path),
             ShellEvent::Names(names) => self.resolver.set_names(&names),
         }
+    }
+
+    fn refresh_git(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
+        let read = cx
+            .background_executor()
+            .spawn(async move { git::read_status(&cwd) });
+        // Reemplazar la tarea cancela una lectura anterior que todavía no terminó.
+        self.git_refresh = Some(cx.spawn(async move |this, cx| {
+            let status = read.await;
+            this.update(cx, |this, cx| {
+                if this.shell.git != status {
+                    this.shell.git = status;
+                    cx.emit(TerminalEvent::TitleChanged);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// La shell está esperando input: se le puede escribir un comando sin pisar un programa.
+    pub fn at_prompt(&self) -> bool {
+        self.shell.line.is_some() && self.shell.running.is_none()
+    }
+
+    /// Escribe y ejecuta `git switch` en la shell, para que el cambio (y cualquier error)
+    /// quede visible en la terminal. Solo cuando la shell está en el prompt.
+    pub fn switch_branch(&mut self, branch: &str, cx: &mut Context<Self>) -> bool {
+        if !self.at_prompt() {
+            return false;
+        }
+        // Ctrl-E + Ctrl-U: va al final y borra lo que hubiera escrito en la línea.
+        let command = format!("\x05\x15{}\r", git::switch_command(branch));
+        self.input(command.into_bytes(), cx);
+        true
     }
 
     pub fn size(&self) -> TermSize {

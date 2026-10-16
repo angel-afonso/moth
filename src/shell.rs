@@ -376,34 +376,6 @@ pub fn read_history_file(path: &Path) -> Vec<String> {
     deduped
 }
 
-/// Rama de git del directorio, leyendo `.git/HEAD` hacia arriba.
-pub fn git_branch(dir: &Path) -> Option<String> {
-    let mut current = Some(dir);
-    while let Some(d) = current {
-        let dot_git = d.join(".git");
-        let git_dir = if dot_git.is_dir() {
-            Some(dot_git)
-        } else if dot_git.is_file() {
-            // Worktrees y submódulos: `.git` es un archivo con `gitdir: <ruta>`.
-            let content = std::fs::read_to_string(&dot_git).ok()?;
-            let target = content.trim().strip_prefix("gitdir: ")?;
-            Some(d.join(target))
-        } else {
-            None
-        };
-        if let Some(git_dir) = git_dir {
-            let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
-            let head = head.trim();
-            return Some(match head.strip_prefix("ref: refs/heads/") {
-                Some(branch) => branch.to_string(),
-                None => head.chars().take(7).collect(),
-            });
-        }
-        current = d.parent();
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,18 +1,20 @@
-//! Ventana: barra de pestañas (componentes `Tab`/`TabBar` de Zed), terminal activa y barra de estado.
+//! Ventana: barra de pestañas, terminal activa y barra de estado, con componentes del crate
+//! `ui` de Zed (Label, Icon, IconButton, Button, PopoverMenu, ContextMenu, Tooltip).
 
 use std::{path::Path, time::Duration};
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    Subscription, Window, actions, div, prelude::*, px,
+    Action, Anchor, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
+    KeyBinding, MouseButton, Pixels, Subscription, Window, actions, div, prelude::*, px,
 };
 use ui::{
-    Color, Icon, IconButton, IconName, IconSize, Label, LabelCommon, LabelSize, Tab, TabBar,
-    TabCloseSide, TabPosition, Tooltip, h_flex, prelude::*, v_flex,
+    Button, ButtonSize, ButtonStyle, Color, ContextMenu, Icon, IconButton, IconName,
+    IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu, Tooltip, h_flex,
+    prelude::*, v_flex,
 };
 
 use crate::{
-    palette,
+    palette, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
@@ -58,9 +60,21 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-v", terminal_view::Paste, Some("Terminal")),
         KeyBinding::new("cmd-c", terminal_view::Copy, Some("Terminal")),
+        // Navegación de los menús de `ui` (ContextMenu usa el contexto "menu").
+        KeyBinding::new("up", menu::SelectPrevious, Some("menu")),
+        KeyBinding::new("down", menu::SelectNext, Some("menu")),
+        KeyBinding::new("ctrl-p", menu::SelectPrevious, Some("menu")),
+        KeyBinding::new("ctrl-n", menu::SelectNext, Some("menu")),
+        KeyBinding::new("home", menu::SelectFirst, Some("menu")),
+        KeyBinding::new("end", menu::SelectLast, Some("menu")),
+        KeyBinding::new("enter", menu::Confirm, Some("menu")),
+        KeyBinding::new("escape", menu::Cancel, Some("menu")),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
+
+/// Alto de la barra de pestañas; los semáforos de macOS se centran en ella (ver main.rs).
+pub const TAB_BAR_HEIGHT: Pixels = px(40.);
 
 struct TabEntry {
     view: Entity<TerminalView>,
@@ -92,8 +106,15 @@ impl Workspace {
         this
     }
 
+    /// Una pestaña nueva abre en la carpeta de la pestaña activa; la primera, en la última
+    /// carpeta usada en la ejecución anterior.
     fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let builder = match TerminalBuilder::new() {
+        let cwd = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| tab.view.read(cx).terminal().read(cx).shell().cwd.clone())
+            .or_else(state::last_cwd);
+        let builder = match TerminalBuilder::new(cwd) {
             Ok(builder) => builder,
             Err(err) => {
                 eprintln!("no se pudo abrir la terminal: {err:#}");
@@ -193,17 +214,10 @@ impl Workspace {
 
     fn render_tab(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = ix == self.active;
-        let last = self.tabs.len() - 1;
-        let position = if ix == 0 {
-            TabPosition::First
-        } else if ix == last {
-            TabPosition::Last
-        } else {
-            TabPosition::Middle(ix.cmp(&self.active))
-        };
         let attention = self.tabs[ix].needs_attention;
+        let border = palette::hsla(palette::BORDER_VARIANT);
 
-        let start = if attention {
+        let indicator = if attention {
             div()
                 .size(px(7.))
                 .rounded_full()
@@ -211,70 +225,86 @@ impl Workspace {
                 .into_any_element()
         } else if self.is_running(ix, cx) {
             div()
-                .size(px(7.))
+                .size(px(13.))
+                .flex()
+                .items_center()
+                .justify_center()
                 .rounded_full()
-                .bg(palette::hsla(palette::SUCCESS))
-                .border_2()
-                .border_color(palette::hsla(palette::SUCCESS).opacity(0.2))
+                .bg(palette::hsla(palette::SUCCESS).opacity(0.15))
+                .child(div().size(px(7.)).rounded_full().bg(palette::hsla(palette::SUCCESS)))
                 .into_any_element()
         } else {
             Icon::new(IconName::Terminal)
-                .size(IconSize::XSmall)
-                .color(if selected { Color::Accent } else { Color::Muted })
+                .size(IconSize::Small)
+                .color(if selected { Color::Accent } else { Color::Placeholder })
                 .into_any_element()
         };
 
-        Tab::new(("tab", ix))
-            .position(position)
-            .close_side(TabCloseSide::End)
-            .toggle_state(selected)
-            .when(!selected, |tab| {
-                tab.hover(|style| style.bg(palette::hsla(palette::ELEMENT_HOVER)))
+        h_flex()
+            .id(("tab", ix))
+            .group("tab")
+            .relative()
+            .h_full()
+            .flex_none()
+            .pl(px(14.))
+            .pr(px(6.))
+            .gap(px(8.))
+            .border_r_1()
+            .border_color(border)
+            .cursor_pointer()
+            .map(|tab| {
+                if selected {
+                    // La pestaña activa se funde con la terminal: mismo fondo, sin borde inferior.
+                    tab.bg(palette::hsla(palette::BACKGROUND)).child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(2.))
+                            .bg(palette::hsla(palette::ACCENT)),
+                    )
+                } else {
+                    tab.border_b_1()
+                        .hover(|style| style.bg(palette::hsla(palette::ELEMENT_HOVER)))
+                }
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.activate(ix, window, cx)
             }))
-            .start_slot(start)
-            .end_slot(
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| this.close(ix, window, cx)),
+            )
+            .child(div().size(px(14.)).flex().items_center().justify_center().child(indicator))
+            .child(
+                div().max_w(px(200.)).child(
+                    Label::new(self.tab_title(ix, cx))
+                        .color(if selected { Color::Default } else { Color::Muted })
+                        .when(selected, |label| label.weight(FontWeight::MEDIUM))
+                        .truncate(),
+                ),
+            )
+            .when(ix < 9, |tab| {
+                tab.child(
+                    div()
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(px(11.))
+                        .text_color(palette::hsla(palette::TEXT_PLACEHOLDER))
+                        .child(format!("⌘{}", ix + 1)),
+                )
+            })
+            .child(
                 IconButton::new(("close-tab", ix), IconName::Close)
                     .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
+                    .icon_color(if selected { Color::Muted } else { Color::Placeholder })
+                    .size(ButtonSize::Medium)
                     .tooltip(Tooltip::for_action_title("Cerrar pestaña", &CloseTab))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.close(ix, window, cx)
                     })),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .pl_1()
-                    .max_w(px(220.))
-                    .child(
-                        Label::new(self.tab_title(ix, cx))
-                            .size(LabelSize::Small)
-                            .color(if selected { Color::Default } else { Color::Muted })
-                            .truncate(),
-                    )
-                    .when(ix < 9, |this| {
-                        this.child(
-                            Label::new(format!("⌘{}", ix + 1))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Placeholder),
-                        )
-                    }),
-            )
-            .when(selected, |tab| {
-                tab.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(palette::hsla(palette::ACCENT)),
-                )
-            })
     }
 
     /// Zona arrastrable (barra de título transparente en macOS).
@@ -311,37 +341,152 @@ impl Workspace {
         let border = palette::hsla(palette::BORDER_VARIANT);
 
         h_flex()
+            .h(TAB_BAR_HEIGHT)
             .w_full()
             .flex_none()
             .bg(palette::hsla(palette::CHROME))
             // Espacio para los semáforos de macOS.
             .child(
                 self.drag_region("traffic-lights", cx)
-                    .w(px(78.))
+                    .w(px(80.))
                     .flex_none()
                     .border_b_1()
                     .border_color(border),
             )
             .child(
-                TabBar::new("tab-bar")
+                h_flex()
+                    .id("tabs")
+                    .h_full()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_scroll()
                     .children(tabs)
+                    .child(
+                        h_flex()
+                            .h_full()
+                            .flex_none()
+                            .px(px(6.))
+                            .border_b_1()
+                            .border_color(border)
+                            .child(
+                                IconButton::new("new-tab", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .size(ButtonSize::Medium)
+                                    .tooltip(Tooltip::for_action_title("Nueva pestaña", &NewTab))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(NewTab.boxed_clone(), cx)
+                                    }),
+                            ),
+                    )
                     .child(
                         self.drag_region("tab-bar-drag", cx)
                             .flex_1()
                             .min_w(px(24.))
                             .border_b_1()
                             .border_color(border),
-                    )
-                    .end_child(
-                        IconButton::new("new-tab", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::for_action_title("Nueva pestaña", &NewTab))
-                            .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx)),
                     ),
             )
     }
 
+    /// Rama actual con cambios y ahead/behind; al hacer clic, lista las ramas para cambiar.
+    fn render_git(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let view = self.tabs[self.active].view.clone();
+        let terminal = view.read(cx).terminal().clone();
+        let git = terminal.read(cx).shell().git.clone()?;
+        let branch_color = Color::Custom(palette::hsla(palette::SYNTAX_SUBCOMMAND));
+
+        let mut sync = Vec::new();
+        if git.behind > 0 {
+            sync.push(format!("↓{}", git.behind));
+        }
+        if git.ahead > 0 {
+            sync.push(format!("↑{}", git.ahead));
+        }
+        let mut changes = Vec::new();
+        if git.staged > 0 {
+            changes.push(format!("+{}", git.staged));
+        }
+        if git.modified > 0 {
+            changes.push(format!("~{}", git.modified));
+        }
+        if git.untracked > 0 {
+            changes.push(format!("?{}", git.untracked));
+        }
+        if git.conflicted > 0 {
+            changes.push(format!("!{}", git.conflicted));
+        }
+
+        let menu = PopoverMenu::new("branch-menu")
+            .anchor(Anchor::BottomLeft)
+            .trigger_with_tooltip(
+                Button::new("branch", git.display_name())
+                    .style(ButtonStyle::Subtle)
+                    .size(ButtonSize::Compact)
+                    .label_size(LabelSize::Small)
+                    .color(branch_color)
+                    .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(branch_color)),
+                Tooltip::text("Cambiar de rama"),
+            )
+            .menu(move |window, cx| {
+                let shell = terminal.read(cx);
+                let at_prompt = shell.at_prompt();
+                let git = shell.shell().git.clone()?;
+                let terminal = terminal.clone();
+                let view = view.clone();
+                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.header(if at_prompt {
+                        "Cambiar de rama"
+                    } else {
+                        "Termina el comando en curso para cambiar de rama"
+                    });
+                    if git.branches.is_empty() {
+                        menu = menu.label("Sin ramas locales");
+                    }
+                    for name in &git.branches {
+                        let current = git.branch.as_ref() == Some(name);
+                        let branch = name.clone();
+                        let terminal = terminal.clone();
+                        let view = view.clone();
+                        menu = menu.toggleable_entry_disabled_when(
+                            name.clone(),
+                            current,
+                            !at_prompt || current,
+                            IconPosition::Start,
+                            None,
+                            move |window, cx| {
+                                terminal.update(cx, |t, cx| t.switch_branch(&branch, cx));
+                                view.focus_handle(cx).focus(window, cx);
+                            },
+                        );
+                    }
+                    menu
+                }))
+            });
+
+        Some(
+            h_flex()
+                .gap_2()
+                .child(menu)
+                .when(!sync.is_empty(), |this| {
+                    this.child(
+                        Label::new(sync.join(" "))
+                            .size(LabelSize::Small)
+                            .color(Color::Warning),
+                    )
+                })
+                .when(!changes.is_empty(), |this| {
+                    this.child(
+                        Label::new(changes.join(" "))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let git = self.render_git(cx);
         let terminal = self.tabs[self.active].view.read(cx).terminal().read(cx);
         let size = terminal.size();
         let shell = terminal.shell();
@@ -374,9 +519,10 @@ impl Workspace {
         };
 
         h_flex()
-            .h(px(26.))
+            .h(px(28.))
             .flex_none()
-            .px_3()
+            .pl(px(14.))
+            .pr(px(14.))
             .gap_4()
             .justify_between()
             .overflow_hidden()
@@ -385,11 +531,12 @@ impl Workspace {
             .border_color(palette::hsla(palette::BORDER_VARIANT))
             .child(
                 h_flex()
-                    .gap_3()
+                    .gap_4()
                     .min_w_0()
                     .child(
                         h_flex()
-                            .gap_1p5()
+                            .gap(px(6.))
+                            .flex_none()
                             .child(div().size(px(6.)).rounded_full().bg(palette::hsla(dot)))
                             .child(
                                 Label::new(self.shell_name.clone())
@@ -399,28 +546,15 @@ impl Workspace {
                     )
                     .when_some(shell.cwd.as_ref(), |this, cwd| {
                         this.child(
-                            Label::new(abbreviate_home(cwd))
-                                .size(LabelSize::Small)
-                                .color(Color::Placeholder)
-                                .truncate(),
+                            div().min_w_0().child(
+                                Label::new(abbreviate_home(cwd))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Placeholder)
+                                    .truncate(),
+                            ),
                         )
                     })
-                    .when_some(shell.git_branch.clone(), |this, branch| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::GitBranch)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Custom(palette::hsla(palette::SYNTAX_SUBCOMMAND))),
-                                )
-                                .child(
-                                    Label::new(branch)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Custom(palette::hsla(palette::SYNTAX_SUBCOMMAND))),
-                                ),
-                        )
-                    }),
+                    .children(git),
             )
             .child(
                 h_flex()
