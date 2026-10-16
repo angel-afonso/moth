@@ -106,6 +106,7 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/text_input.rs`: campo de texto de una línea con IME (el crate `ui` no trae uno).
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
 - `src/state.rs`: última carpeta y carpetas recientes.
+- `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
 - `src/links.rs`: búsqueda de URLs en la salida y esquemas permitidos.
 - `src/keys.rs`: teclas especiales → secuencias de escape.
 - `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.

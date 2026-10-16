@@ -2,6 +2,7 @@ mod assets;
 mod components;
 mod fuzzy;
 mod git;
+mod glyphs;
 mod highlight;
 mod hosts;
 mod keys;

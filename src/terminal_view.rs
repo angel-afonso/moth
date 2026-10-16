@@ -24,7 +24,7 @@ use ui::{
 
 use crate::{
     highlight::{Token, TokenKind},
-    keys, links, palette,
+    glyphs, keys, links, palette,
     tokens::{SyntaxColors, TokensExt, metrics, tint},
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
@@ -476,6 +476,7 @@ struct Segment {
 
 struct GridLayout {
     backgrounds: Vec<PaintQuad>,
+    glyph_quads: Vec<PaintQuad>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<PaintQuad>,
     cursor_text: Option<(Point<Pixels>, ShapedLine)>,
@@ -486,7 +487,7 @@ struct GridLayout {
 
 impl GridLayout {
     fn paint(&self, window: &mut Window, cx: &mut App) {
-        for quad in &self.backgrounds {
+        for quad in self.backgrounds.iter().chain(&self.glyph_quads) {
             window.paint_quad(quad.clone());
         }
         for (origin, line) in &self.lines {
@@ -588,6 +589,12 @@ fn layout_grid(
         .unwrap_or_default();
 
     let mut backgrounds = Vec::new();
+    // Bloques y líneas de caja dibujados como rectángulos, ajustados a píxeles del dispositivo
+    // para que celdas vecinas compartan bordes exactos (sin costuras).
+    let mut glyph_quads = Vec::new();
+    let scale = window.scale_factor();
+    let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+    let stroke = (f32::from(cell_width) * 0.12 * scale).round().max(1.) / scale;
     let mut shaped = Vec::new();
     let mut current: Option<Segment> = None;
     let flush = |segment: Option<Segment>, shaped: &mut Vec<(Point<Pixels>, ShapedLine)>| {
@@ -647,6 +654,25 @@ fn layout_grid(
         }
         if link_cells.contains(&(indexed.point.line.0, indexed.point.column.0)) {
             style.underline = Some((style.fg, false));
+        }
+
+        if let Some(rects) = glyphs::custom_glyph(
+            cell.c,
+            f32::from(cell_width) * width as f32,
+            f32::from(line_height),
+            stroke,
+        ) {
+            flush(current.take(), &mut shaped);
+            let at = cell_origin(line, column);
+            for r in rects {
+                let top_left = point(snap(at.x + px(r.x0)), snap(at.y + px(r.y0)));
+                let bottom_right = point(snap(at.x + px(r.x1)), snap(at.y + px(r.y1)));
+                glyph_quads.push(fill(
+                    Bounds::from_corners(top_left, bottom_right),
+                    style.fg.opacity(r.alpha),
+                ));
+            }
+            continue;
         }
 
         if cell.c == ' ' && style.underline.is_none() && !style.strikethrough {
@@ -770,6 +796,7 @@ fn layout_grid(
 
     GridLayout {
         backgrounds,
+        glyph_quads,
         lines: shaped,
         cursor,
         cursor_text,
