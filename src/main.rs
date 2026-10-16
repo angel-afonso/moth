@@ -5,6 +5,7 @@ mod git;
 mod highlight;
 mod hosts;
 mod keys;
+mod links;
 mod palette;
 mod picker;
 mod shell;

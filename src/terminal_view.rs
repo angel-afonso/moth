@@ -12,7 +12,7 @@ use alacritty_terminal::{
 use gpui::{
     App, BorderStyle, Bounds, ClipboardItem, Context, CursorStyle, Entity, FocusHandle, Focusable,
     Font, FontStyle, FontWeight, Hsla, InputHandler, KeyDownEvent, MouseButton, MouseDownEvent,
-    PaintQuad, Pixels,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels,
     Point, ScrollDelta, ScrollWheelEvent, ShapedLine, StrikethroughStyle, Subscription, TextAlign,
     TextRun, UTF16Selection, UnderlineStyle, Window, actions, canvas, div, fill, outline,
     prelude::*, point, px, size, transparent_black,
@@ -24,7 +24,7 @@ use ui::{
 
 use crate::{
     highlight::{Token, TokenKind},
-    keys, palette,
+    keys, links, palette,
     tokens::{SyntaxColors, TokensExt, metrics, tint},
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
@@ -42,7 +42,18 @@ pub struct TerminalView {
     pending_paste: Option<String>,
     /// Geometría de la grilla del último frame, para traducir clics a celdas.
     geometry: Rc<Cell<Option<GridGeometry>>>,
+    /// Link bajo el mouse: se subraya y el cursor pasa a ser una mano.
+    hovered_link: Option<HoveredLink>,
+    /// Link donde se apretó el botón; se abre si se suelta sobre el mismo.
+    link_press: Option<String>,
     _observe: Subscription,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct HoveredLink {
+    url: String,
+    /// Celdas (línea, columna) en coordenadas de la grilla.
+    cells: Vec<(i32, usize)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,6 +74,8 @@ impl TerminalView {
             scroll_remainder: 0.,
             pending_paste: None,
             geometry: Rc::new(Cell::new(None)),
+            hovered_link: None,
+            link_press: None,
             _observe: observe,
         }
     }
@@ -104,8 +117,60 @@ impl TerminalView {
 
     /// Clic en la línea que se está escribiendo: mueve el cursor de zsh hasta ahí, como en un
     /// editor, mandando las flechas necesarias.
+    /// Celda de la grilla bajo `position`, si cae dentro de la pantalla.
+    fn grid_point(&self, position: Point<Pixels>, term: &Term<Listener>) -> Option<AlacPoint> {
+        let geometry = self.geometry.get()?;
+        let column = (position.x - geometry.origin.x) / geometry.cell_width;
+        let row = (position.y - geometry.origin.y) / geometry.line_height;
+        if column < 0. || row < 0. || column >= term.columns() as f32 || row >= term.screen_lines() as f32 {
+            return None;
+        }
+        Some(AlacPoint::new(
+            alacritty_terminal::index::Line(row as i32 - geometry.display_offset),
+            alacritty_terminal::index::Column(column as usize),
+        ))
+    }
+
+    /// Link bajo el mouse. En la línea que se está escribiendo no hay links: ahí el clic
+    /// mueve el cursor.
+    fn link_under(&self, position: Point<Pixels>, cx: &App) -> Option<HoveredLink> {
+        let terminal = self.terminal.read(cx);
+        let term = terminal.term.clone();
+        let term = term.lock();
+        let point = self.grid_point(position, &term)?;
+        if let Some(edit) = terminal.shell().line.as_ref().filter(|_| terminal.at_prompt())
+            && locate_input(&term, edit).is_some_and(|cells| cells.contains(&point))
+        {
+            return None;
+        }
+        link_at(&term, point)
+    }
+
+    fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let link = self.link_under(event.position, cx);
+        if link != self.hovered_link {
+            self.hovered_link = link;
+            cx.notify();
+        }
+    }
+
+    fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(url) = self.link_press.take()
+            && self.link_under(event.position, cx).is_some_and(|link| link.url == url)
+        {
+            cx.open_url(&url);
+        }
+    }
+
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
+        // El clic que solo activa la ventana no abre links.
+        if !event.first_mouse
+            && let Some(link) = self.link_under(event.position, cx)
+        {
+            self.link_press = Some(link.url);
+            return;
+        }
         let Some(geometry) = self.geometry.get() else {
             return;
         };
@@ -317,6 +382,11 @@ impl Render for TerminalView {
         let terminal = self.terminal.clone();
         let focused = self.focus_handle.is_focused(window);
         let marked_text = self.marked_text.clone();
+        let link_cells: std::collections::HashSet<(i32, usize)> = self
+            .hovered_link
+            .as_ref()
+            .map(|link| link.cells.iter().copied().collect())
+            .unwrap_or_default();
         let focus_handle = self.focus_handle.clone();
         let view = cx.entity();
         let production_color = self
@@ -344,16 +414,27 @@ impl Render for TerminalView {
             .when_some(production_color, |el, color| {
                 el.border_1().border_color(tint(color, 0.22)).rounded(px(8.)).px(px(20.)).pt(px(12.))
             })
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.hovered_link.is_some() {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            })
             .on_key_down(cx.listener(Self::key_down))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::copy))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+            .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.hovered_link.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .child(
                 canvas(
                     move |bounds, window, cx| {
-                        let layout = layout_grid(&terminal, bounds, focused, marked_text, window, cx);
+                        let layout = layout_grid(&terminal, bounds, focused, marked_text, &link_cells, window, cx);
                         geometry.set(Some(layout.geometry));
                         layout
                     },
@@ -438,6 +519,7 @@ fn layout_grid(
     bounds: Bounds<Pixels>,
     focused: bool,
     marked_text: Option<String>,
+    link_cells: &std::collections::HashSet<(i32, usize)>,
     window: &mut Window,
     cx: &mut App,
 ) -> GridLayout {
@@ -562,6 +644,9 @@ fn layout_grid(
         let mut style = style;
         if let Some(&kind) = input_cells.get(&(indexed.point.line.0, indexed.point.column.0)) {
             apply_token_style(&mut style, kind, &tokens.syntax, tokens.terminal.foreground);
+        }
+        if link_cells.contains(&(indexed.point.line.0, indexed.point.column.0)) {
+            style.underline = Some((style.fg, false));
         }
 
         if cell.c == ' ' && style.underline.is_none() && !style.strikethrough {
@@ -697,6 +782,74 @@ fn layout_grid(
             display_offset,
         },
     }
+}
+
+/// Link en `point`: un hipervínculo OSC 8 de la celda, o una URL escrita en la línea lógica
+/// (las filas partidas por el ancho de la terminal se unen). Solo esquemas seguros.
+fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
+    let grid = term.grid();
+    let last_column = alacritty_terminal::index::Column(term.columns() - 1);
+
+    if let Some(hyperlink) = grid[point].hyperlink() {
+        let url = hyperlink.uri().to_string();
+        if !links::is_openable(&url) {
+            return None;
+        }
+        let same = |column: usize| {
+            grid[AlacPoint::new(point.line, alacritty_terminal::index::Column(column))]
+                .hyperlink()
+                .is_some_and(|h| h.id() == hyperlink.id())
+        };
+        let start = (0..=point.column.0).rev().take_while(|&c| same(c)).last().unwrap_or(point.column.0);
+        let end = (point.column.0..term.columns()).take_while(|&c| same(c)).last().unwrap_or(point.column.0);
+        let cells = (start..=end).map(|c| (point.line.0, c)).collect();
+        return Some(HoveredLink { url, cells });
+    }
+
+    let wraps = |line: alacritty_terminal::index::Line| {
+        grid[AlacPoint::new(line, last_column)].flags.contains(Flags::WRAPLINE)
+    };
+    let mut first = point.line;
+    while first > term.topmost_line() && wraps(first - 1) {
+        first -= 1;
+    }
+    let mut last = point.line;
+    while last < term.bottommost_line() && wraps(last) {
+        last += 1;
+    }
+
+    let mut text = String::new();
+    let mut offsets: Vec<(usize, (i32, usize))> = Vec::new();
+    let mut line = first;
+    while line <= last {
+        for column in 0..term.columns() {
+            let cell = &grid[AlacPoint::new(line, alacritty_terminal::index::Column(column))];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            offsets.push((text.len(), (line.0, column)));
+            text.push(cell.c);
+        }
+        line += 1;
+    }
+
+    // Una celda de relleno de un carácter ancho cuenta como el carácter.
+    let hovered = offsets
+        .iter()
+        .rev()
+        .find(|(_, (l, c))| *l == point.line.0 && *c <= point.column.0)
+        .map(|(offset, _)| *offset)?;
+    let range = links::find_urls(&text).into_iter().find(|r| r.contains(&hovered))?;
+    let url = text[range.clone()].to_string();
+    if !links::is_openable(&url) {
+        return None;
+    }
+    let cells = offsets
+        .iter()
+        .filter(|(offset, _)| range.contains(offset))
+        .map(|(_, cell)| *cell)
+        .collect();
+    Some(HoveredLink { url, cells })
 }
 
 /// Celda de un carácter de la línea en edición: línea de la grilla, columna inicial y ancho.

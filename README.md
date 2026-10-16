@@ -26,6 +26,10 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | ⌘C | Copiar la pantalla visible (todavía no hay selección) |
 | → / Fin | Aceptar la sugerencia del historial |
 
+## Links
+
+Las URLs de la salida (`http`, `https`, `ftp`, `file`, `mailto`), incluso las que se parten en dos filas, y los hipervínculos OSC 8 (`ls --hyperlink`, compiladores) se subrayan al pasar el mouse y se abren en el navegador predeterminado con un clic. Se abren al soltar el botón sobre el mismo link, y el clic que solo activa la ventana no abre nada. En la línea que estás escribiendo el clic sigue moviendo el cursor. Por seguridad no se abren otros esquemas, aunque lleguen por OSC 8.
+
 ## Paleta de comandos e historial
 
 ⌘K abre la paleta: acciones (con sus atajos), las pestañas abiertas y las carpetas recientes, que abren en una pestaña nueva. ⌘R abre la búsqueda en el historial de zsh: arranca con lo que ya estaba escrito en el prompt, filtra con coincidencia difusa y resalta los caracteres que coinciden. ⏎ lleva el comando al prompt para editarlo y ⌘⏎ lo ejecuta. Clic en la rama de la barra de estado (o "Cambiar de rama…" en la paleta) abre el mismo buscador con las ramas locales.
@@ -102,6 +106,7 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/text_input.rs`: campo de texto de una línea con IME (el crate `ui` no trae uno).
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
 - `src/state.rs`: última carpeta y carpetas recientes.
+- `src/links.rs`: búsqueda de URLs en la salida y esquemas permitidos.
 - `src/keys.rs`: teclas especiales → secuencias de escape.
 - `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.
 - `src/theme.rs`: aplica el tema activo a la app y al sistema de temas de Zed (para los componentes de `ui`), cambio en caliente.
