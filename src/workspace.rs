@@ -4,12 +4,12 @@
 
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    sync::Arc,
 };
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
-    MouseButton, Pixels, Subscription, Window, actions, div, prelude::*, px, rgba,
+    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding,
+    MouseButton, MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
 };
 use ui::{
     Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
@@ -17,11 +17,13 @@ use ui::{
 };
 
 use crate::{
-    palette,
+    components::{BlockStatus, DotState, StatusDot, SuggestionKind, TabItem, TabState},
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
     shell, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
+    theme::{self, Themes},
+    tokens::{Appearance, Tokens, TokensExt, metrics},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
 };
 
@@ -44,6 +46,7 @@ actions!(
         ToggleCommandPalette,
         SearchHistory,
         SwitchBranch,
+        SelectTheme,
         ClearScreen,
         Quit,
     ]
@@ -94,11 +97,14 @@ enum ModalKind {
     CommandPalette,
     History,
     Branches,
+    Themes,
 }
 
 struct Modal {
     kind: ModalKind,
     picker: Entity<Picker>,
+    /// Tema a restaurar si se cierra el selector sin elegir (por la vista previa).
+    restore_theme: Option<Arc<Tokens>>,
     _subscription: Subscription,
 }
 
@@ -238,98 +244,26 @@ impl Workspace {
     }
 
     fn render_tab(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = ix == self.active;
-        let attention = self.tabs[ix].needs_attention;
-        let border = palette::hsla(palette::BORDER_VARIANT);
-
-        let indicator = if attention {
-            div()
-                .size(px(7.))
-                .rounded_full()
-                .bg(palette::hsla(palette::WARNING))
-                .into_any_element()
+        let state = if self.tabs[ix].needs_attention {
+            TabState::Attention
         } else if self.is_running(ix, cx) {
-            div()
-                .size(px(13.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(palette::hsla(palette::SUCCESS).opacity(0.15))
-                .child(div().size(px(7.)).rounded_full().bg(palette::hsla(palette::SUCCESS)))
-                .into_any_element()
+            TabState::Running
         } else {
-            Icon::new(IconName::Terminal)
-                .size(IconSize::Small)
-                .color(if selected { Color::Accent } else { Color::Placeholder })
-                .into_any_element()
+            TabState::Idle
         };
-
-        h_flex()
-            .id(("tab", ix))
-            .group("tab")
-            .relative()
-            .h_full()
-            .flex_none()
-            .pl(px(14.))
-            .pr(px(6.))
-            .gap(px(8.))
-            .border_r_1()
-            .border_color(border)
-            .cursor_pointer()
-            .map(|tab| {
-                if selected {
-                    // La pestaña activa se funde con la terminal: mismo fondo, sin borde inferior.
-                    tab.bg(palette::hsla(palette::BACKGROUND)).child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .right_0()
-                            .h(px(2.))
-                            .bg(palette::hsla(palette::ACCENT)),
-                    )
-                } else {
-                    tab.border_b_1()
-                        .hover(|style| style.bg(palette::hsla(palette::ELEMENT_HOVER)))
-                }
-            })
+        TabItem::new(("tab", ix), self.tab_title(ix, cx))
+            .selected(ix == self.active)
+            .state(state)
+            .when(ix < 9, |tab| tab.shortcut(format!("⌘{}", ix + 1)))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.activate(ix, window, cx)
             }))
-            .on_mouse_down(
-                MouseButton::Middle,
-                cx.listener(move |this, _, window, cx| this.close(ix, window, cx)),
-            )
-            .child(div().size(px(14.)).flex().items_center().justify_center().child(indicator))
-            .child(
-                div().max_w(px(200.)).child(
-                    Label::new(self.tab_title(ix, cx))
-                        .color(if selected { Color::Default } else { Color::Muted })
-                        .when(selected, |label| label.weight(FontWeight::MEDIUM))
-                        .truncate(),
-                ),
-            )
-            .when(ix < 9, |tab| {
-                tab.child(
-                    div()
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(px(11.))
-                        .text_color(palette::hsla(palette::TEXT_PLACEHOLDER))
-                        .child(format!("⌘{}", ix + 1)),
-                )
-            })
-            .child(
-                IconButton::new(("close-tab", ix), IconName::Close)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(if selected { Color::Muted } else { Color::Placeholder })
-                    .size(ButtonSize::Medium)
-                    .tooltip(Tooltip::for_action_title("Cerrar pestaña", &CloseTab))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.close(ix, window, cx)
-                    })),
-            )
+            .on_close(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.close(ix, window, cx)
+            }))
+            .on_middle_click(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                this.close(ix, window, cx)
+            }))
     }
 
     /// Zona arrastrable (barra de título transparente en macOS).
@@ -363,13 +297,14 @@ impl Workspace {
         let tabs = (0..self.tabs.len())
             .map(|ix| self.render_tab(ix, cx).into_any_element())
             .collect::<Vec<_>>();
-        let border = palette::hsla(palette::BORDER_VARIANT);
+        let ui = cx.tokens().ui.clone();
+        let border = ui.border;
 
         h_flex()
             .h(TAB_BAR_HEIGHT)
             .w_full()
             .flex_none()
-            .bg(palette::hsla(palette::CHROME))
+            .bg(ui.chrome)
             // Espacio para los semáforos de macOS.
             .child(
                 self.drag_region("traffic-lights", cx)
@@ -441,7 +376,7 @@ impl Workspace {
     fn render_git(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let terminal = self.tabs[self.active].view.read(cx).terminal().clone();
         let git = terminal.read(cx).shell().git.clone()?;
-        let branch_color = Color::Custom(palette::hsla(palette::SYNTAX_SUBCOMMAND));
+        let branch_color = Color::Custom(cx.tokens().syntax.subcommand);
 
         let mut sync = Vec::new();
         if git.behind > 0 {
@@ -497,57 +432,44 @@ impl Workspace {
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let git = self.render_git(cx);
+        let ui = cx.tokens().ui.clone();
         let terminal = self.tabs[self.active].view.read(cx).terminal().read(cx);
         let size = terminal.size();
         let shell = terminal.shell();
         let tab_count = self.tabs.len();
 
-        let (dot, last) = match (&shell.running, &shell.last) {
+        let (dot, block) = match (&shell.running, &shell.last) {
             (Some(running), _) => (
-                palette::WARNING,
-                Some((
-                    format!("● {}", format_duration(running.started.elapsed())),
-                    Color::Warning,
-                )),
+                DotState::Attention,
+                Some(BlockStatus::Running(running.started.elapsed())),
             ),
-            (None, Some(last)) if last.exit_code.unwrap_or(0) != 0 => (
-                palette::ERROR,
-                Some((
-                    format!(
-                        "✕ exit {} · {}",
-                        last.exit_code.unwrap_or_default(),
-                        format_duration(last.duration)
-                    ),
-                    Color::Error,
-                )),
-            ),
-            (None, Some(last)) => (
-                palette::SUCCESS,
-                Some((format!("✓ {}", format_duration(last.duration)), Color::Success)),
-            ),
-            (None, None) => (palette::SUCCESS, None),
+            (None, Some(last)) => {
+                let exit_code = last.exit_code.unwrap_or(0);
+                let dot = if exit_code == 0 { DotState::Success } else { DotState::Error };
+                (dot, Some(BlockStatus::Finished { exit_code, duration: last.duration }))
+            }
+            (None, None) => (DotState::Success, None),
         };
 
         h_flex()
             .h(px(28.))
             .flex_none()
-            .pl(px(14.))
-            .pr(px(14.))
-            .gap_4()
+            .px(px(14.))
+            .gap(metrics::SPACE_4)
             .justify_between()
             .overflow_hidden()
-            .bg(palette::hsla(palette::CHROME))
+            .bg(ui.chrome)
             .border_t_1()
-            .border_color(palette::hsla(palette::BORDER_VARIANT))
+            .border_color(ui.border)
             .child(
                 h_flex()
-                    .gap_4()
+                    .gap(metrics::SPACE_4)
                     .min_w_0()
                     .child(
                         h_flex()
                             .gap(px(6.))
                             .flex_none()
-                            .child(div().size(px(6.)).rounded_full().bg(palette::hsla(dot)))
+                            .child(StatusDot::new(dot).small())
                             .child(
                                 Label::new(self.shell_name.clone())
                                     .size(LabelSize::Small)
@@ -568,12 +490,10 @@ impl Workspace {
             )
             .child(
                 h_flex()
-                    .gap_4()
+                    .gap(metrics::SPACE_4)
                     .flex_none()
                     .font_family(MONO_FONT_FAMILY)
-                    .when_some(last, |this, (text, color)| {
-                        this.child(Label::new(text).size(LabelSize::XSmall).color(color))
-                    })
+                    .children(block)
                     .child(
                         Label::new(if tab_count == 1 {
                             "1 pestaña".to_string()
@@ -627,16 +547,6 @@ fn abbreviate_home(path: &Path) -> String {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
-    let ms = duration.as_millis();
-    if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", duration.as_secs_f32())
-    } else {
-        format!("{}m {}s", ms / 60_000, (ms / 1000) % 60)
-    }
-}
 
 impl Workspace {
     fn active_terminal(&self, cx: &App) -> Entity<Terminal> {
@@ -661,13 +571,17 @@ impl Workspace {
         self.modal = Some(Modal {
             kind,
             picker,
+            restore_theme: (kind == ModalKind::Themes).then(|| cx.tokens().clone()),
             _subscription: subscription,
         });
         cx.notify();
     }
 
     fn dismiss_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.modal.take().is_some() {
+        if let Some(modal) = self.modal.take() {
+            if let Some(previous) = modal.restore_theme {
+                theme::apply(previous, cx);
+            }
             self.tabs[self.active].view.focus_handle(cx).focus(window, cx);
             cx.notify();
         }
@@ -680,11 +594,30 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let PickerEvent::Confirm { action, secondary } = event else {
-            self.dismiss_modal(window, cx);
-            return;
+        let (action, secondary) = match event {
+            PickerEvent::Selected(PickerAction::SetTheme(name)) => {
+                // Vista previa: se aplica sin guardar.
+                let preview = cx
+                    .global::<Themes>()
+                    .0
+                    .iter()
+                    .find(|t| &t.name == name)
+                    .cloned();
+                if let Some(preview) = preview {
+                    theme::apply(preview, cx);
+                }
+                return;
+            }
+            PickerEvent::Selected(_) => return,
+            PickerEvent::Dismiss => {
+                self.dismiss_modal(window, cx);
+                return;
+            }
+            PickerEvent::Confirm { action, secondary } => (action.clone(), *secondary),
         };
-        let (action, secondary) = (action.clone(), *secondary);
+        if let Some(modal) = &mut self.modal {
+            modal.restore_theme = None;
+        }
         self.dismiss_modal(window, cx);
         let terminal = self.active_terminal(cx);
         match action {
@@ -700,6 +633,7 @@ impl Workspace {
             PickerAction::SwitchBranch(branch) => {
                 terminal.update(cx, |t, cx| t.switch_branch(&branch, cx));
             }
+            PickerAction::SetTheme(name) => theme::select(&name, cx),
         }
     }
 
@@ -724,6 +658,8 @@ impl Workspace {
             );
         }
         items.extend([
+            PickerItem::new("Acciones", "Cambiar tema…", PickerAction::Dispatch(Box::new(SelectTheme)))
+                .icon(IconName::Sparkle),
             PickerItem::new("Acciones", "Limpiar pantalla", PickerAction::Dispatch(Box::new(ClearScreen)))
                 .icon(IconName::Eraser)
                 .shortcut(ClearScreen),
@@ -779,7 +715,7 @@ impl Workspace {
         {
             items.push(
                 PickerItem::new("Carpetas recientes", abbreviate_home(&dir), PickerAction::OpenDirInNewTab(dir))
-                    .icon(IconName::Folder)
+                    .kind(SuggestionKind::Path)
                     .detail("abrir en pestaña nueva")
                     .mono(),
             );
@@ -795,6 +731,7 @@ impl Workspace {
                 ("esc".into(), "cerrar".into()),
             ],
             disabled_reason: None,
+            selected_item: None,
         };
         self.open_modal(ModalKind::CommandPalette, items, config, window, cx);
     }
@@ -817,6 +754,7 @@ impl Workspace {
                     .rev()
                     .map(|command| {
                         PickerItem::new("", command.clone(), PickerAction::InsertCommand(command.clone()))
+                            .kind(SuggestionKind::History)
                             .mono()
                     })
                     .collect()
@@ -838,6 +776,7 @@ impl Workspace {
             ],
             disabled_reason: (!terminal.at_prompt())
                 .then(|| "Hay un comando en ejecución: termina para usar el historial".into()),
+            selected_item: None,
         };
         self.open_modal(ModalKind::History, items, config, window, cx);
     }
@@ -854,7 +793,7 @@ impl Workspace {
             .map(|branch| {
                 let current = git.branch.as_ref() == Some(branch);
                 let item = PickerItem::new("", branch.clone(), PickerAction::SwitchBranch(branch.clone()))
-                    .icon(if current { IconName::Check } else { IconName::GitBranch });
+                    .kind(SuggestionKind::Branch);
                 if current { item.detail("actual") } else { item }
             })
             .collect();
@@ -869,8 +808,44 @@ impl Workspace {
             ],
             disabled_reason: (!terminal.at_prompt())
                 .then(|| "Hay un comando en ejecución: termina para cambiar de rama".into()),
+            selected_item: None,
         };
         self.open_modal(ModalKind::Branches, items, config, window, cx);
+    }
+
+    fn select_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Se releen por si el usuario agregó o editó un tema desde la última vez.
+        let themes = theme::reload_themes(cx);
+        let current = cx.tokens().name.clone();
+        let items = themes
+            .iter()
+            .map(|t| {
+                let appearance = match t.appearance {
+                    Appearance::Dark => "oscuro",
+                    Appearance::Light => "claro",
+                };
+                let mut item = PickerItem::new("", t.name.clone(), PickerAction::SetTheme(t.name.clone()))
+                    .icon(if t.name == current { IconName::Check } else { IconName::Sparkle })
+                    .detail(appearance);
+                if t.name == current {
+                    item = item.detail(format!("{appearance} · actual"));
+                }
+                item
+            })
+            .collect();
+        let config = PickerConfig {
+            placeholder: "Elegir tema…".into(),
+            query: String::new(),
+            empty_text: "Ningún tema coincide".into(),
+            hints: vec![
+                ("↑↓".into(), "vista previa".into()),
+                ("⏎".into(), "usar".into()),
+                ("esc".into(), "volver al anterior".into()),
+            ],
+            disabled_reason: None,
+            selected_item: themes.iter().position(|t| t.name == current),
+        };
+        self.open_modal(ModalKind::Themes, items, config, window, cx);
     }
 
     fn render_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -882,7 +857,7 @@ impl Workspace {
                 .left_0()
                 .right_0()
                 .bottom_0()
-                .bg(rgba(0x0506089e))
+                .bg(cx.tokens().ui.overlay)
                 .flex()
                 .justify_center()
                 .items_start()
@@ -911,8 +886,8 @@ impl Render for Workspace {
             .relative()
             .size_full()
             .key_context("Workspace")
-            .bg(palette::hsla(palette::BACKGROUND))
-            .text_color(palette::hsla(palette::TEXT))
+            .bg(cx.tokens().ui.background)
+            .text_color(cx.tokens().ui.text)
             .font_family(UI_FONT_FAMILY)
             .text_size(UI_FONT_SIZE)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
@@ -944,6 +919,7 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &SearchHistory, w, cx| this.search_history(w, cx)))
             .on_action(cx.listener(|this, _: &SwitchBranch, w, cx| this.switch_branch(w, cx)))
+            .on_action(cx.listener(|this, _: &SelectTheme, w, cx| this.select_theme(w, cx)))
             .on_action(cx.listener(|this, _: &ClearScreen, _, cx| {
                 this.active_terminal(cx).update(cx, |t, cx| t.clear(cx))
             }))

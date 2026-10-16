@@ -62,30 +62,31 @@ _tapp_format_duration() {
   fi
 }
 
-# Encabezado tenue y `❯` debajo, con los colores de la paleta Graphite (truecolor).
+# Encabezado tenue y `❯` debajo. Usa colores ANSI, que la app resuelve con el tema activo:
+# white = texto secundario, bright black = metadatos, magenta = rama, green/red = estado.
 #   ~/work/terminalapp  main  ✓ 41.2s · 14:02
 #   ❯
 _tapp_build_prompt() {
   local ret=$1 ran=$2 branch
   # Rutas largas: solo las últimas tres carpetas.
-  local header="%F{#A3AAB4}%(5~|…/%3~|%~)%f"
+  local header="%F{7}%(5~|…/%3~|%~)%f"
   branch=$(command git symbolic-ref --short -q HEAD 2>/dev/null) \
     || branch=$(command git rev-parse --short HEAD 2>/dev/null)
   if [[ -n "$branch" ]]; then
-    header+="  %F{#C3A6FF}${branch//\%/%%}%f"
+    header+="  %F{5}${branch//\%/%%}%f"
   fi
   local meta="%D{%H:%M}"
   if [[ -n "$ran" && -n "$_tapp_started" ]]; then
     _tapp_format_duration $(( EPOCHREALTIME - _tapp_started ))
     if (( ret == 0 )); then
-      meta="%F{#7EE0A1}✓ $REPLY%f%F{#7D8590} · $meta"
+      meta="%F{2}✓ $REPLY%f%F{8} · $meta"
     else
-      meta="%F{#FF7B72}✕ exit $ret · $REPLY%f%F{#7D8590} · $meta"
+      meta="%F{1}✕ exit $ret · $REPLY%f%F{8} · $meta"
     fi
   fi
-  header+="  %F{#7D8590}$meta%f"
-  local mark="#7EE0A1"
-  [[ -n "$ran" ]] && (( ret != 0 )) && mark="#FF7B72"
+  header+="  %F{8}$meta%f"
+  local mark=2
+  [[ -n "$ran" ]] && (( ret != 0 )) && mark=1
   # Tras un comando, una línea en blanco lo separa del siguiente bloque.
   local gap=""
   [[ -n "$ran" ]] && gap=$'\n'

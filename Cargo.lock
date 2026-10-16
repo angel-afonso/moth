@@ -5000,6 +5000,8 @@ dependencies = [
  "menu",
  "polling",
  "rust-embed",
+ "serde",
+ "serde_json",
  "theme",
  "ui",
 ]

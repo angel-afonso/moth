@@ -10,8 +10,8 @@ use gpui::{
 };
 
 use crate::{
-    palette,
     theme::{UI_FONT_FAMILY, font},
+    tokens::TokensExt,
 };
 
 actions!(
@@ -279,11 +279,9 @@ impl Render for TextInput {
         } else {
             self.text.clone().into()
         };
-        let color = palette::hsla(if empty {
-            palette::TEXT_PLACEHOLDER
-        } else {
-            palette::TEXT
-        });
+        let ui = &cx.tokens().ui;
+        let color = if empty { ui.text_placeholder } else { ui.text };
+        let accent = ui.accent;
         let cursor = if empty { 0 } else { self.cursor };
         let marked = self.marked.clone();
         let focused = self.focus_handle.is_focused(window);
@@ -352,7 +350,7 @@ impl Render for TextInput {
                                     point(bounds.origin.x + cursor_x, bounds.origin.y + px(2.)),
                                     size(px(1.5), bounds.size.height - px(4.)),
                                 ),
-                                palette::hsla(palette::ACCENT),
+                                accent,
                             ));
                         }
                         window.handle_input(

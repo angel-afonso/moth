@@ -1,4 +1,5 @@
 mod assets;
+mod components;
 mod fuzzy;
 mod git;
 mod highlight;
@@ -11,6 +12,7 @@ mod terminal;
 mod terminal_view;
 mod text_input;
 mod theme;
+mod tokens;
 mod workspace;
 
 use gpui::{

@@ -1,0 +1,376 @@
+//! Componentes de la hoja "Tokens y componentes": pestaña con sus estados, tecla, tipo de
+//! sugerencia e indicadores de estado. Construidos con el crate `ui` y los tokens del tema.
+
+use std::time::Duration;
+
+use gpui::{
+    AnyElement, App, ClickEvent, ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString,
+    Window, div,
+    prelude::*, px,
+};
+use ui::{
+    ButtonCommon, Clickable, Color, Icon, IconButton, IconName, IconSize, Label, LabelCommon,
+    Tooltip, h_flex,
+};
+
+use crate::{
+    theme::MONO_FONT_FAMILY,
+    tokens::{TokensExt, metrics, tint},
+};
+
+type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+type MouseDownHandler = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+
+/// Duración legible: `120ms`, `3.4s`, `2m 5s`.
+pub fn format_duration(duration: Duration) -> String {
+    let ms = duration.as_millis();
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", duration.as_secs_f32())
+    } else {
+        format!("{}m {}s", ms / 60_000, (ms / 1000) % 60)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// Una tecla o atajo dibujado como tecla (`⌘K`, `esc`, `↑↓`).
+#[derive(IntoElement)]
+pub struct Kbd {
+    keys: SharedString,
+}
+
+impl Kbd {
+    pub fn new(keys: impl Into<SharedString>) -> Self {
+        Self { keys: keys.into() }
+    }
+}
+
+impl RenderOnce for Kbd {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ui = &cx.tokens().ui;
+        div()
+            .px(px(5.))
+            .rounded(metrics::RADIUS_KBD)
+            .bg(ui.element_background)
+            .border_1()
+            .border_color(ui.border_strong)
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(px(10.5))
+            .line_height(px(16.))
+            .text_color(ui.text_muted)
+            .child(self.keys)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// Tipo de una sugerencia, con el color de su categoría de sintaxis.
+/// `Command`, `Subcommand` y `Flag` son para el popup de completions, que todavía no existe.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuggestionKind {
+    Command,
+    Subcommand,
+    Flag,
+    Path,
+    Branch,
+    History,
+}
+
+#[derive(IntoElement)]
+pub struct KindBadge {
+    kind: SuggestionKind,
+}
+
+impl KindBadge {
+    pub fn new(kind: SuggestionKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl RenderOnce for KindBadge {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let syntax = &cx.tokens().syntax;
+        let (color, glyph) = match self.kind {
+            SuggestionKind::Command => (syntax.command, Some("C")),
+            SuggestionKind::Subcommand => (syntax.subcommand, Some("S")),
+            SuggestionKind::Flag => (syntax.flag, Some("−")),
+            SuggestionKind::Path => (syntax.path, Some("/")),
+            SuggestionKind::Branch => (syntax.command, Some("B")),
+            SuggestionKind::History => (syntax.flag, None),
+        };
+        div()
+            .size(px(18.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(metrics::RADIUS_KBD)
+            .bg(tint(color, 0.16))
+            .text_color(color)
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(px(10.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .map(|badge| match glyph {
+                Some(glyph) => badge.child(glyph),
+                None => badge.child(
+                    Icon::new(IconName::HistoryRerun)
+                        .size(IconSize::XSmall)
+                        .color(Color::Custom(color)),
+                ),
+            })
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DotState {
+    /// Proceso corriendo: verde con halo.
+    Running,
+    /// Pide atención (campana en segundo plano).
+    Attention,
+    Success,
+    Error,
+}
+
+#[derive(IntoElement)]
+pub struct StatusDot {
+    state: DotState,
+    size: f32,
+}
+
+impl StatusDot {
+    pub fn new(state: DotState) -> Self {
+        Self { state, size: 7. }
+    }
+
+    pub fn small(mut self) -> Self {
+        self.size = 6.;
+        self
+    }
+}
+
+impl RenderOnce for StatusDot {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let status = &cx.tokens().status;
+        let color = match self.state {
+            DotState::Running | DotState::Success => status.success,
+            DotState::Attention => status.warning,
+            DotState::Error => status.error,
+        };
+        let dot = div().size(px(self.size)).rounded_full().bg(color);
+        if self.state == DotState::Running {
+            div()
+                .size(px(self.size + 6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(tint(color, 0.15))
+                .child(dot)
+                .into_any_element()
+        } else {
+            dot.into_any_element()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
+/// Resultado de un bloque: `✓ 41.2s`, `✕ exit 1 · 1.3s` o `● 12s` mientras corre.
+#[derive(IntoElement)]
+pub enum BlockStatus {
+    Running(Duration),
+    Finished { exit_code: i32, duration: Duration },
+}
+
+impl RenderOnce for BlockStatus {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let status = &cx.tokens().status;
+        let (text, color) = match self {
+            BlockStatus::Running(elapsed) => {
+                (format!("● {}", format_duration(elapsed)), status.warning)
+            }
+            BlockStatus::Finished { exit_code: 0, duration } => {
+                (format!("✓ {}", format_duration(duration)), status.success)
+            }
+            BlockStatus::Finished { exit_code, duration } => (
+                format!("✕ exit {exit_code} · {}", format_duration(duration)),
+                status.error,
+            ),
+        };
+        div()
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(metrics::TEXT_META)
+            .text_color(color)
+            .child(text)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabState {
+    Idle,
+    Running,
+    Attention,
+}
+
+/// Pestaña de la barra: activa (fondo de la terminal y línea de acento), inactiva, hover,
+/// ejecutando (punto verde) o pidiendo atención (punto naranja).
+#[derive(IntoElement)]
+pub struct TabItem {
+    id: ElementId,
+    title: SharedString,
+    shortcut: Option<SharedString>,
+    selected: bool,
+    state: TabState,
+    close_tooltip: SharedString,
+    on_click: Option<ClickHandler>,
+    on_close: Option<ClickHandler>,
+    on_middle_click: Option<MouseDownHandler>,
+}
+
+impl TabItem {
+    pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            shortcut: None,
+            selected: false,
+            state: TabState::Idle,
+            close_tooltip: "Cerrar pestaña".into(),
+            on_click: None,
+            on_close: None,
+            on_middle_click: None,
+        }
+    }
+
+    pub fn shortcut(mut self, shortcut: impl Into<SharedString>) -> Self {
+        self.shortcut = Some(shortcut.into());
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn state(mut self, state: TabState) -> Self {
+        self.state = state;
+        self
+    }
+
+    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_close(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_close = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_middle_click(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_middle_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for TabItem {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ui = cx.tokens().ui.clone();
+        let selected = self.selected;
+        let close_id = ElementId::from(SharedString::from(format!("{:?}-close", self.id)));
+
+        let indicator: AnyElement = match self.state {
+            TabState::Running => StatusDot::new(DotState::Running).into_any_element(),
+            TabState::Attention => StatusDot::new(DotState::Attention).into_any_element(),
+            TabState::Idle => Icon::new(IconName::Terminal)
+                .size(IconSize::Small)
+                .color(if selected { Color::Accent } else { Color::Placeholder })
+                .into_any_element(),
+        };
+
+        h_flex()
+            .id(self.id)
+            .relative()
+            .h_full()
+            .flex_none()
+            .pl(px(14.))
+            .pr(px(6.))
+            .gap(metrics::SPACE_2)
+            .border_r_1()
+            .border_color(ui.border)
+            .cursor_pointer()
+            .map(|tab| {
+                if selected {
+                    // Se funde con la terminal: mismo fondo, sin borde inferior.
+                    tab.bg(ui.background).child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(2.))
+                            .bg(ui.accent),
+                    )
+                } else {
+                    tab.border_b_1().hover(|style| style.bg(ui.element_hover))
+                }
+            })
+            .when_some(self.on_click, |tab, handler| tab.on_click(handler))
+            .when_some(self.on_middle_click, |tab, handler| {
+                tab.on_mouse_down(MouseButton::Middle, handler)
+            })
+            .child(div().size(px(14.)).flex().items_center().justify_center().child(indicator))
+            .child(
+                div().max_w(px(200.)).child(
+                    Label::new(self.title)
+                        .color(if selected { Color::Default } else { Color::Muted })
+                        .when(selected, |label| label.weight(FontWeight::MEDIUM))
+                        .truncate(),
+                ),
+            )
+            .when_some(self.shortcut, |tab, shortcut| {
+                tab.child(
+                    div()
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(metrics::TEXT_META)
+                        .text_color(ui.text_placeholder)
+                        .child(shortcut),
+                )
+            })
+            .child(
+                IconButton::new(close_id, IconName::Close)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(if selected { Color::Muted } else { Color::Placeholder })
+                    .size(ui::ButtonSize::Medium)
+                    .tooltip(Tooltip::text(self.close_tooltip))
+                    .when_some(self.on_close, |button, handler| {
+                        button.on_click(move |event, window, cx| {
+                            cx.stop_propagation();
+                            handler(event, window, cx)
+                        })
+                    }),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_durations() {
+        assert_eq!(format_duration(Duration::from_millis(120)), "120ms");
+        assert_eq!(format_duration(Duration::from_millis(41_180)), "41.2s");
+        assert_eq!(format_duration(Duration::from_secs(125)), "2m 5s");
+    }
+}

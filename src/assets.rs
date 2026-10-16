@@ -4,13 +4,14 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AssetSource, SharedString};
 use rust_embed::RustEmbed;
 
-/// Íconos (copiados de Zed, los que espera `ui::IconName`), fuentes Geist y scripts de
-/// integración con la shell, embebidos en el binario.
+/// Íconos (copiados de Zed, los que espera `ui::IconName`), fuentes Geist, scripts de
+/// integración con la shell y temas, embebidos en el binario.
 #[derive(RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
 #[include = "fonts/**/*.ttf"]
 #[include = "shell/**/*"]
+#[include = "themes/*.json"]
 pub struct Assets;
 
 impl AssetSource for Assets {

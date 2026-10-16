@@ -1,4 +1,4 @@
-//! Estado que sobrevive entre ejecuciones: la última carpeta y las carpetas recientes.
+//! Estado que sobrevive entre ejecuciones: la última carpeta, las recientes y el tema.
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +26,22 @@ pub fn record_dir(cwd: &Path) {
         if let Err(err) = result {
             eprintln!("no se pudo guardar la carpeta actual: {err}");
         }
+    }
+}
+
+/// Nombre del tema elegido la última vez.
+pub fn saved_theme() -> Option<String> {
+    let text = std::fs::read_to_string(state_dir()?.join("theme")).ok()?;
+    Some(text.trim().to_string()).filter(|name| !name.is_empty())
+}
+
+pub fn save_theme(name: &str) {
+    let Some(dir) = state_dir() else {
+        return;
+    };
+    let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
+    if let Err(err) = result {
+        eprintln!("no se pudo guardar el tema: {err}");
     }
 }
 

@@ -20,6 +20,7 @@ use gpui::{
 use crate::{
     highlight::{Token, TokenKind},
     keys, palette,
+    tokens::{SyntaxColors, TokensExt, metrics},
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
 };
@@ -149,10 +150,10 @@ impl Render for TerminalView {
             .key_context("Terminal")
             .track_focus(&self.focus_handle)
             .size_full()
-            .px(px(28.))
-            .pt(px(18.))
+            .px(metrics::SPACE_7)
+            .pt(metrics::SPACE_5)
             .pb(px(10.))
-            .bg(palette::hsla(palette::BACKGROUND))
+            .bg(cx.tokens().terminal.background)
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(Self::key_down))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
@@ -294,13 +295,14 @@ fn layout_grid(
         text_system.shape_line(text.into(), font_size, &[run], Some(cell_width))
     };
 
+    let tokens = cx.tokens().clone();
     let term = terminal.read(cx).term.clone();
     let term = term.lock();
     let content = term.renderable_content();
     let colors = content.colors;
     let overrides = |i: usize| colors[i];
     let display_offset = content.display_offset as i32;
-    let background = palette::hsla(palette::BACKGROUND);
+    let background = tokens.terminal.background;
 
     // Celdas de la línea en edición → tipo de token. Solo si la grilla coincide con lo que
     // reportó zsh; si no (por ejemplo, durante un frame intermedio) no se colorea nada.
@@ -335,8 +337,8 @@ fn layout_grid(
         let wide = cell.flags.contains(Flags::WIDE_CHAR);
         let width = if wide { 2 } else { 1 };
 
-        let mut fg = palette::resolve(cell.fg, &overrides);
-        let mut bg = palette::resolve(cell.bg, &overrides);
+        let mut fg = palette::resolve(cell.fg, &overrides, &tokens.terminal);
+        let mut bg = palette::resolve(cell.bg, &overrides, &tokens.terminal);
         let mut default_bg = matches!(cell.bg, AnsiColor::Named(NamedColor::Background));
         if cell.flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
@@ -368,7 +370,7 @@ fn layout_grid(
 
         let mut style = style;
         if let Some(&kind) = input_cells.get(&(indexed.point.line.0, indexed.point.column.0)) {
-            apply_token_style(&mut style, kind);
+            apply_token_style(&mut style, kind, &tokens.syntax, tokens.terminal.foreground);
         }
 
         if cell.c == ' ' && style.underline.is_none() && !style.strikethrough {
@@ -419,7 +421,7 @@ fn layout_grid(
         {
             ghost_first = text.chars().next();
             let style = CellStyle {
-                fg: palette::hsla(palette::SYNTAX_GHOST),
+                fg: tokens.syntax.ghost,
                 bold: false,
                 italic: false,
                 underline: None,
@@ -433,7 +435,7 @@ fn layout_grid(
     }
 
     // Cursor
-    let accent = palette::hsla(palette::ACCENT);
+    let accent = tokens.terminal.cursor;
     let mut cursor = None;
     let mut cursor_text = None;
     let mut cursor_bounds = None;
@@ -572,24 +574,22 @@ fn token_cells(
     map
 }
 
-fn apply_token_style(style: &mut CellStyle, kind: TokenKind) {
-    use palette::*;
-    let color = match kind {
-        TokenKind::Command => SYNTAX_COMMAND,
-        TokenKind::UnknownCommand => SYNTAX_ERROR,
-        TokenKind::Subcommand | TokenKind::Keyword => SYNTAX_SUBCOMMAND,
-        TokenKind::Flag => SYNTAX_FLAG,
-        TokenKind::String => SYNTAX_STRING,
-        TokenKind::Path | TokenKind::ExistingPath => SYNTAX_PATH,
-        TokenKind::Operator => SYNTAX_OPERATOR,
-        TokenKind::Variable | TokenKind::Number => SYNTAX_NUMBER,
-        TokenKind::Comment => SYNTAX_GHOST,
-        TokenKind::Plain => TEXT,
+fn apply_token_style(style: &mut CellStyle, kind: TokenKind, syntax: &SyntaxColors, text: Hsla) {
+    style.fg = match kind {
+        TokenKind::Command => syntax.command,
+        TokenKind::UnknownCommand => syntax.error,
+        TokenKind::Subcommand | TokenKind::Keyword => syntax.subcommand,
+        TokenKind::Flag => syntax.flag,
+        TokenKind::String => syntax.string,
+        TokenKind::Path | TokenKind::ExistingPath => syntax.path,
+        TokenKind::Operator => syntax.operator,
+        TokenKind::Variable | TokenKind::Number => syntax.number,
+        TokenKind::Comment => syntax.ghost,
+        TokenKind::Plain => text,
     };
-    style.fg = hsla(color);
     style.underline = match kind {
-        TokenKind::UnknownCommand => Some((hsla(SYNTAX_ERROR).opacity(0.7), true)),
-        TokenKind::ExistingPath => Some((hsla(SYNTAX_PATH).opacity(0.45), false)),
+        TokenKind::UnknownCommand => Some((syntax.error.opacity(0.7), true)),
+        TokenKind::ExistingPath => Some((syntax.path.opacity(0.45), false)),
         _ => style.underline,
     };
 }

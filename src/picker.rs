@@ -14,10 +14,11 @@ use ui::{
 };
 
 use crate::{
+    components::{Kbd, KindBadge, SuggestionKind},
     fuzzy::fuzzy_match,
-    palette,
     text_input::{self, TextInput},
     theme::MONO_FONT_FAMILY,
+    tokens::{TokensExt, metrics},
 };
 
 const ROW_HEIGHT: f32 = 34.;
@@ -47,6 +48,7 @@ pub enum PickerAction {
     OpenDirInNewTab(PathBuf),
     InsertCommand(String),
     SwitchBranch(String),
+    SetTheme(String),
 }
 
 impl Clone for PickerAction {
@@ -57,6 +59,7 @@ impl Clone for PickerAction {
             Self::OpenDirInNewTab(dir) => Self::OpenDirInNewTab(dir.clone()),
             Self::InsertCommand(text) => Self::InsertCommand(text.clone()),
             Self::SwitchBranch(branch) => Self::SwitchBranch(branch.clone()),
+            Self::SetTheme(name) => Self::SetTheme(name.clone()),
         }
     }
 }
@@ -67,6 +70,8 @@ pub struct PickerItem {
     pub label: SharedString,
     pub detail: Option<SharedString>,
     pub icon: Option<IconName>,
+    /// Tipo de sugerencia; si está, se muestra en lugar del ícono.
+    pub kind: Option<SuggestionKind>,
     /// Acción cuyo atajo se muestra a la derecha.
     pub shortcut: Option<Box<dyn Action>>,
     pub mono: bool,
@@ -80,6 +85,7 @@ impl PickerItem {
             label: label.into(),
             detail: None,
             icon: None,
+            kind: None,
             shortcut: None,
             mono: false,
             action,
@@ -88,6 +94,11 @@ impl PickerItem {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn kind(mut self, kind: SuggestionKind) -> Self {
+        self.kind = Some(kind);
         self
     }
 
@@ -115,9 +126,13 @@ pub struct PickerConfig {
     pub hints: Vec<(SharedString, SharedString)>,
     /// Si está, elegir no hace nada y se muestra este aviso.
     pub disabled_reason: Option<SharedString>,
+    /// Elemento resaltado al abrir, con la consulta vacía (índice en la lista de elementos).
+    pub selected_item: Option<usize>,
 }
 
 pub enum PickerEvent {
+    /// Cambió el elemento resaltado (para vistas previas, como el selector de tema).
+    Selected(PickerAction),
     Confirm {
         action: PickerAction,
         secondary: bool,
@@ -198,11 +213,28 @@ impl Picker {
                     .map(|(_, ix, positions)| Row::Item { ix, positions }),
             );
         }
-        self.selected = self.rows.iter().position(|r| matches!(r, Row::Item { .. }));
+        let preferred = query
+            .is_empty()
+            .then_some(self.config.selected_item)
+            .flatten()
+            .and_then(|item| {
+                self.rows
+                    .iter()
+                    .position(|r| matches!(r, Row::Item { ix, .. } if *ix == item))
+            });
+        self.selected =
+            preferred.or_else(|| self.rows.iter().position(|r| matches!(r, Row::Item { .. })));
         if let Some(selected) = self.selected {
-            self.scroll.scroll_to_item(selected, ScrollStrategy::Top);
+            self.scroll.scroll_to_item(selected, ScrollStrategy::Center);
         }
+        self.emit_selected(cx);
         cx.notify();
+    }
+
+    fn emit_selected(&self, cx: &mut Context<Self>) {
+        if let Some(Row::Item { ix, .. }) = self.selected.and_then(|row| self.rows.get(row)) {
+            cx.emit(PickerEvent::Selected(self.items[*ix].action.clone()));
+        }
     }
 
     fn move_selection(&mut self, forward: bool, cx: &mut Context<Self>) {
@@ -236,6 +268,7 @@ impl Picker {
     fn select_row(&mut self, row: usize, cx: &mut Context<Self>) {
         self.selected = Some(row);
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        self.emit_selected(cx);
         cx.notify();
     }
 
@@ -282,6 +315,7 @@ impl Picker {
     }
 
     fn render_rows(&mut self, range: std::ops::Range<usize>, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let ui = cx.tokens().ui.clone();
         range
             .filter_map(|row_ix| {
                 let row = self.rows.get(row_ix)?;
@@ -295,7 +329,7 @@ impl Picker {
                         .items_end()
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(palette::hsla(palette::TEXT_PLACEHOLDER))
+                        .text_color(ui.text_placeholder)
                         .child(title.to_uppercase())
                         .into_any_element(),
                     Row::Item { ix, positions } => {
@@ -307,22 +341,21 @@ impl Picker {
                             .h(px(ROW_HEIGHT))
                             .px(px(10.))
                             .gap(px(10.))
-                            .rounded(px(6.))
+                            .rounded(metrics::RADIUS_ROW)
                             .cursor_pointer()
-                            .when(selected, |row| row.bg(palette::hsla(palette::ELEMENT_SELECTED)))
-                            .when(!selected, |row| {
-                                row.hover(|style| style.bg(palette::hsla(palette::ELEMENT_HOVER)))
-                            })
+                            .when(selected, |row| row.bg(ui.element_selected))
+                            .when(!selected, |row| row.hover(|style| style.bg(ui.element_hover)))
                             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                                 this.selected = Some(row_ix);
                                 this.confirm_selected(event.modifiers().platform, cx);
                             }))
-                            .when_some(item.icon, |row, icon| {
-                                row.child(
+                            .when_some(item.kind, |row, kind| row.child(KindBadge::new(kind)))
+                            .when(item.kind.is_none(), |row| {
+                                row.children(item.icon.map(|icon| {
                                     Icon::new(icon)
                                         .size(IconSize::Small)
-                                        .color(if selected { Color::Accent } else { Color::Muted }),
-                                )
+                                        .color(if selected { Color::Accent } else { Color::Muted })
+                                }))
                             })
                             .child(
                                 div()
@@ -363,7 +396,7 @@ impl Focusable for Picker {
 impl Render for Picker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let visible_rows = self.rows.len().clamp(1, MAX_VISIBLE_ROWS);
-        let border = palette::hsla(0x2B3037);
+        let ui = cx.tokens().ui.clone();
 
         v_flex()
             .key_context("Picker")
@@ -376,10 +409,10 @@ impl Render for Picker {
             .on_action(cx.listener(Self::cancel))
             .w(px(620.))
             .max_w_full()
-            .bg(palette::hsla(palette::SURFACE))
+            .bg(ui.surface)
             .border_1()
-            .border_color(border)
-            .rounded(px(12.))
+            .border_color(ui.border_strong)
+            .rounded(metrics::RADIUS_POPUP)
             .shadow_lg()
             .overflow_hidden()
             // Clic dentro del cuadro no debe cerrarlo (el fondo sí).
@@ -390,14 +423,14 @@ impl Render for Picker {
                     .px(px(16.))
                     .gap(px(10.))
                     .border_b_1()
-                    .border_color(palette::hsla(0x23272E))
+                    .border_color(ui.divider)
                     .child(
                         Icon::new(IconName::MagnifyingGlass)
                             .size(IconSize::Small)
                             .color(Color::Placeholder),
                     )
                     .child(self.input.clone())
-                    .child(ui::KeyBinding::for_action(&menu::Cancel, cx)),
+                    .child(Kbd::new("esc")),
             )
             .child(if self.rows.is_empty() {
                 div()
@@ -429,7 +462,7 @@ impl Render for Picker {
                         .py(px(8.))
                         .gap_2()
                         .border_t_1()
-                        .border_color(palette::hsla(0x23272E))
+                        .border_color(ui.divider)
                         .child(Icon::new(IconName::Warning).size(IconSize::XSmall).color(Color::Warning))
                         .child(Label::new(reason).size(LabelSize::Small).color(Color::Warning)),
                 )
@@ -441,22 +474,11 @@ impl Render for Picker {
                     .px(px(16.))
                     .py(px(8.))
                     .border_t_1()
-                    .border_color(palette::hsla(0x23272E))
+                    .border_color(ui.divider)
                     .children(self.config.hints.iter().map(|(key, label)| {
                         h_flex()
                             .gap(px(5.))
-                            .child(
-                                div()
-                                    .px(px(5.))
-                                    .rounded(px(4.))
-                                    .bg(palette::hsla(0x1F232A))
-                                    .border_1()
-                                    .border_color(border)
-                                    .font_family(MONO_FONT_FAMILY)
-                                    .text_size(px(10.5))
-                                    .text_color(palette::hsla(palette::TEXT_MUTED))
-                                    .child(key.clone()),
-                            )
+                            .child(Kbd::new(key.clone()))
                             .child(
                                 Label::new(label.clone())
                                     .size(LabelSize::Small)

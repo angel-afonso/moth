@@ -29,6 +29,7 @@ use crate::{
     palette,
     shell::{self, History, ShellEvent, ShellPty},
     state,
+    tokens::TokensExt,
 };
 
 #[derive(Clone)]
@@ -427,7 +428,7 @@ impl Terminal {
             }
             AlacEvent::PtyWrite(text) => self.write(text.into_bytes()),
             AlacEvent::ColorRequest(index, format) => {
-                self.write(format(palette::rgb_for_index(index)).into_bytes())
+                self.write(format(palette::rgb_for_index(index, &cx.tokens().terminal)).into_bytes())
             }
             AlacEvent::TextAreaSizeRequest(format) => {
                 self.write(format(self.size.window_size()).into_bytes())

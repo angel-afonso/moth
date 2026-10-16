@@ -29,6 +29,23 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 
 ⌘K abre la paleta: acciones (con sus atajos), las pestañas abiertas y las carpetas recientes, que abren en una pestaña nueva. ⌘R abre la búsqueda en el historial de zsh: arranca con lo que ya estaba escrito en el prompt, filtra con coincidencia difusa y resalta los caracteres que coinciden. ⏎ lleva el comando al prompt para editarlo y ⌘⏎ lo ejecuta. Clic en la rama de la barra de estado (o "Cambiar de rama…" en la paleta) abre el mismo buscador con las ramas locales.
 
+## Temas
+
+Los colores salen de tokens (los de la hoja "Tokens y componentes" del diseño): interfaz, estado, sintaxis de la línea de comandos y los 16 colores ANSI. Vienen dos temas, **Graphite** (oscuro) y **Graphite Light**. "Cambiar tema…" en la paleta (⌘K) abre el selector: con ↑↓ se ve una vista previa en vivo, ⏎ lo guarda y esc vuelve al anterior. El cambio recolorea también la salida que ya está en pantalla y el prompt, porque usan colores ANSI que se resuelven con el tema activo.
+
+Para crear un tema, agrega un `.json` en `~/Library/Application Support/terminalapp/themes/`. Hereda de `base` (Graphite si no se indica) y basta con los colores que cambian; el selector relee la carpeta cada vez que se abre:
+
+```json
+{
+  "name": "Graphite Naranja",
+  "base": "Graphite",
+  "ui": { "accent": "#FF9F43" },
+  "syntax": { "command": "#FF9F43" }
+}
+```
+
+Las claves disponibles están en [`assets/themes/graphite.json`](assets/themes/graphite.json). Un color inválido o una clave mal escrita invalida el tema, y el error aparece en la salida de la app.
+
 ## Integración con zsh
 
 Al abrir una pestaña con zsh, la app instala `assets/shell/zsh/` en `~/Library/Application Support/terminalapp/shell/zsh` y arranca zsh con `ZDOTDIR` apuntando ahí. Ese `.zshenv` restaura tu `ZDOTDIR`, carga tu `.zshenv` y luego la integración; `.zprofile` y `.zshrc` siguen siendo los tuyos.
@@ -59,7 +76,10 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
 - `src/state.rs`: última carpeta y carpetas recientes.
 - `src/keys.rs`: teclas especiales → secuencias de escape.
-- `src/theme.rs`, `src/palette.rs`: tema "Graphite" sobre el sistema de temas de Zed.
+- `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.
+- `src/theme.rs`: aplica el tema activo a la app y al sistema de temas de Zed (para los componentes de `ui`), cambio en caliente.
+- `src/components.rs`: componentes del diseño: `TabItem`, `Kbd`, `KindBadge`, `StatusDot`, `BlockStatus`.
+- `src/palette.rs`: colores de la grilla (ANSI, 256, truecolor) resueltos con los tokens.
 
 ## Licencias
 
