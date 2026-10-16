@@ -1,0 +1,39 @@
+[package]
+name = "terminalapp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+# El crate `ui` de Zed es GPL-3.0-or-later; al enlazarlo, el binario hereda esa licencia.
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# gpui, ui y theme deben venir del mismo commit de Zed: no hay versión publicada de `ui`.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
+ui = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
+# `font-kit`: sin ella gpui no dibuja texto en macOS. `runtime_shaders`: compila los shaders de Metal al iniciar (no requiere el Metal Toolchain de Xcode).
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a", features = ["font-kit", "runtime_shaders"] }
+theme = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
+# El mismo fork de alacritty que usa Zed en ese commit.
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
+anyhow = "1"
+futures = "0.3"
+# Misma versión mayor que usa alacritty_terminal: hace falta para envolver su `Pty`.
+polling = "3"
+rust-embed = { version = "8", features = ["include-exclude"] }
+
+# Los [patch] del workspace de Zed no se heredan a dependencias git; se replican los que usa gpui.
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+
+[profile.dev]
+debug = "limited"
+codegen-units = 16
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
