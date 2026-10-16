@@ -1,12 +1,15 @@
 mod assets;
+mod fuzzy;
 mod git;
 mod highlight;
 mod keys;
 mod palette;
+mod picker;
 mod shell;
 mod state;
 mod terminal;
 mod terminal_view;
+mod text_input;
 mod theme;
 mod workspace;
 

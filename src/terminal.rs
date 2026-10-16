@@ -285,7 +285,7 @@ impl Terminal {
                 if self.shell.cwd.as_ref() != Some(&cwd) {
                     let save = cwd.clone();
                     cx.background_executor()
-                        .spawn(async move { state::save_last_cwd(&save) })
+                        .spawn(async move { state::record_dir(&save) })
                         .detach();
                     self.shell.cwd = Some(cwd);
                     cx.emit(TerminalEvent::TitleChanged);
@@ -379,6 +379,28 @@ impl Terminal {
         let command = format!("\x05\x15{}\r", git::switch_command(branch));
         self.input(command.into_bytes(), cx);
         true
+    }
+
+    /// Escribe `command` en el prompt, reemplazando lo que hubiera; con `run`, además lo ejecuta.
+    pub fn insert_command(&mut self, command: &str, run: bool, cx: &mut Context<Self>) -> bool {
+        if !self.at_prompt() {
+            return false;
+        }
+        let mut bytes = format!("\x05\x15{command}");
+        if run {
+            bytes.push('\r');
+        }
+        self.input(bytes.into_bytes(), cx);
+        true
+    }
+
+    /// Borra el scrollback y, si la shell está en el prompt, le pide redibujar la pantalla.
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.term.lock().grid_mut().clear_history();
+        if self.at_prompt() {
+            self.input(b"\x0c".to_vec(), cx);
+        }
+        cx.notify();
     }
 
     pub fn size(&self) -> TermSize {

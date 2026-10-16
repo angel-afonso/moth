@@ -1,4 +1,4 @@
-//! Estado que sobrevive entre ejecuciones: por ahora, la última carpeta usada.
+//! Estado que sobrevive entre ejecuciones: la última carpeta y las carpetas recientes.
 
 use std::path::{Path, PathBuf};
 
@@ -12,12 +12,41 @@ pub fn last_cwd() -> Option<PathBuf> {
     read_last_cwd(&state_dir()?)
 }
 
-pub fn save_last_cwd(cwd: &Path) {
-    if let Some(dir) = state_dir()
-        && let Err(err) = write_last_cwd(&dir, cwd)
-    {
-        eprintln!("no se pudo guardar la última carpeta: {err}");
+const MAX_RECENT_DIRS: usize = 15;
+
+/// Carpetas usadas, la más reciente primero, solo las que todavía existen.
+pub fn recent_dirs() -> Vec<PathBuf> {
+    state_dir().map(|dir| read_recent(&dir)).unwrap_or_default()
+}
+
+/// Guarda `cwd` como última carpeta y al frente de las recientes.
+pub fn record_dir(cwd: &Path) {
+    if let Some(dir) = state_dir() {
+        let result = write_last_cwd(&dir, cwd).and_then(|()| write_recent(&dir, cwd));
+        if let Err(err) = result {
+            eprintln!("no se pudo guardar la carpeta actual: {err}");
+        }
     }
+}
+
+fn read_recent(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(dir.join("recent_dirs"))
+        .unwrap_or_default()
+        .lines()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
+fn write_recent(dir: &Path, cwd: &Path) -> std::io::Result<()> {
+    let mut dirs = read_recent(dir);
+    dirs.retain(|d| d != cwd);
+    dirs.insert(0, cwd.to_path_buf());
+    dirs.truncate(MAX_RECENT_DIRS);
+    let text: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+    let tmp = dir.join("recent_dirs.tmp");
+    std::fs::write(&tmp, text.join("\n"))?;
+    std::fs::rename(tmp, dir.join("recent_dirs"))
 }
 
 fn read_last_cwd(dir: &Path) -> Option<PathBuf> {
@@ -50,6 +79,22 @@ mod tests {
 
         write_last_cwd(&dir, &dir.join("ya-no-existe")).unwrap();
         assert_eq!(read_last_cwd(&dir), None);
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn keeps_recent_dirs_unique_and_most_recent_first() {
+        let dir = std::env::temp_dir().join(format!("tapp-recent-{}", std::process::id()));
+        let a = dir.join("a");
+        let b = dir.join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+
+        write_recent(&dir, &a).unwrap();
+        write_recent(&dir, &b).unwrap();
+        write_recent(&dir, &a).unwrap();
+        assert_eq!(read_recent(&dir), vec![a, b]);
 
         std::fs::remove_dir_all(dir).ok();
     }

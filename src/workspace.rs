@@ -1,20 +1,25 @@
 //! Ventana: barra de pestañas, terminal activa y barra de estado, con componentes del crate
-//! `ui` de Zed (Label, Icon, IconButton, Button, PopoverMenu, ContextMenu, Tooltip).
+//! `ui` de Zed (Label, HighlightedLabel, Icon, IconButton, Button, KeyBinding, Tooltip), más
+//! los overlays de búsqueda: paleta de comandos, historial y ramas.
 
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use gpui::{
-    Action, Anchor, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
-    KeyBinding, MouseButton, Pixels, Subscription, Window, actions, div, prelude::*, px,
+    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
+    MouseButton, Pixels, Subscription, Window, actions, div, prelude::*, px, rgba,
 };
 use ui::{
-    Button, ButtonSize, ButtonStyle, Color, ContextMenu, Icon, IconButton, IconName,
-    IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu, Tooltip, h_flex,
-    prelude::*, v_flex,
+    Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
+    LabelCommon, LabelSize, Tooltip, h_flex, prelude::*, v_flex,
 };
 
 use crate::{
-    palette, state,
+    palette,
+    picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
+    shell, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
@@ -36,6 +41,10 @@ actions!(
         ActivateTab7,
         ActivateTab8,
         ActivateLastTab,
+        ToggleCommandPalette,
+        SearchHistory,
+        SwitchBranch,
+        ClearScreen,
         Quit,
     ]
 );
@@ -44,10 +53,11 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-}", NextTab, None),
-        KeyBinding::new("cmd-{", PreviousTab, None),
+        // El último atajo de cada acción es el que se muestra en menús y botones.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        KeyBinding::new("cmd-}", NextTab, None),
+        KeyBinding::new("cmd-{", PreviousTab, None),
         KeyBinding::new("cmd-1", ActivateTab1, None),
         KeyBinding::new("cmd-2", ActivateTab2, None),
         KeyBinding::new("cmd-3", ActivateTab3, None),
@@ -60,17 +70,13 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-v", terminal_view::Paste, Some("Terminal")),
         KeyBinding::new("cmd-c", terminal_view::Copy, Some("Terminal")),
-        // Navegación de los menús de `ui` (ContextMenu usa el contexto "menu").
-        KeyBinding::new("up", menu::SelectPrevious, Some("menu")),
-        KeyBinding::new("down", menu::SelectNext, Some("menu")),
-        KeyBinding::new("ctrl-p", menu::SelectPrevious, Some("menu")),
-        KeyBinding::new("ctrl-n", menu::SelectNext, Some("menu")),
-        KeyBinding::new("home", menu::SelectFirst, Some("menu")),
-        KeyBinding::new("end", menu::SelectLast, Some("menu")),
-        KeyBinding::new("enter", menu::Confirm, Some("menu")),
-        KeyBinding::new("escape", menu::Cancel, Some("menu")),
+        KeyBinding::new("cmd-shift-p", ToggleCommandPalette, None),
+        KeyBinding::new("cmd-k", ToggleCommandPalette, None),
+        KeyBinding::new("cmd-r", SearchHistory, None),
+        KeyBinding::new("cmd-l", ClearScreen, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
+    picker::init(cx);
 }
 
 /// Alto de la barra de pestañas; los semáforos de macOS se centran en ella (ver main.rs).
@@ -83,11 +89,25 @@ struct TabEntry {
     _subscription: Subscription,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ModalKind {
+    CommandPalette,
+    History,
+    Branches,
+}
+
+struct Modal {
+    kind: ModalKind,
+    picker: Entity<Picker>,
+    _subscription: Subscription,
+}
+
 pub struct Workspace {
     tabs: Vec<TabEntry>,
     active: usize,
     should_move: bool,
     shell_name: String,
+    modal: Option<Modal>,
 }
 
 impl Workspace {
@@ -101,6 +121,7 @@ impl Workspace {
             active: 0,
             should_move: false,
             shell_name,
+            modal: None,
         };
         this.add_tab(window, cx);
         this
@@ -114,6 +135,10 @@ impl Workspace {
             .get(self.active)
             .and_then(|tab| tab.view.read(cx).terminal().read(cx).shell().cwd.clone())
             .or_else(state::last_cwd);
+        self.add_tab_in(cwd, window, cx);
+    }
+
+    fn add_tab_in(&mut self, cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         let builder = match TerminalBuilder::new(cwd) {
             Ok(builder) => builder,
             Err(err) => {
@@ -386,12 +411,35 @@ impl Workspace {
                             .border_color(border),
                     ),
             )
+            .child(
+                h_flex()
+                    .h_full()
+                    .flex_none()
+                    .px(px(10.))
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        Button::new("command-palette", "Comandos")
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::MagnifyingGlass)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .key_binding(ui::KeyBinding::for_action(&ToggleCommandPalette, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(ToggleCommandPalette.boxed_clone(), cx)
+                            }),
+                    ),
+            )
     }
 
     /// Rama actual con cambios y ahead/behind; al hacer clic, lista las ramas para cambiar.
     fn render_git(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let view = self.tabs[self.active].view.clone();
-        let terminal = view.read(cx).terminal().clone();
+        let terminal = self.tabs[self.active].view.read(cx).terminal().clone();
         let git = terminal.read(cx).shell().git.clone()?;
         let branch_color = Color::Custom(palette::hsla(palette::SYNTAX_SUBCOMMAND));
 
@@ -416,52 +464,14 @@ impl Workspace {
             changes.push(format!("!{}", git.conflicted));
         }
 
-        let menu = PopoverMenu::new("branch-menu")
-            .anchor(Anchor::BottomLeft)
-            .trigger_with_tooltip(
-                Button::new("branch", git.display_name())
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Compact)
-                    .label_size(LabelSize::Small)
-                    .color(branch_color)
-                    .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(branch_color)),
-                Tooltip::text("Cambiar de rama"),
-            )
-            .menu(move |window, cx| {
-                let shell = terminal.read(cx);
-                let at_prompt = shell.at_prompt();
-                let git = shell.shell().git.clone()?;
-                let terminal = terminal.clone();
-                let view = view.clone();
-                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                    menu = menu.header(if at_prompt {
-                        "Cambiar de rama"
-                    } else {
-                        "Termina el comando en curso para cambiar de rama"
-                    });
-                    if git.branches.is_empty() {
-                        menu = menu.label("Sin ramas locales");
-                    }
-                    for name in &git.branches {
-                        let current = git.branch.as_ref() == Some(name);
-                        let branch = name.clone();
-                        let terminal = terminal.clone();
-                        let view = view.clone();
-                        menu = menu.toggleable_entry_disabled_when(
-                            name.clone(),
-                            current,
-                            !at_prompt || current,
-                            IconPosition::Start,
-                            None,
-                            move |window, cx| {
-                                terminal.update(cx, |t, cx| t.switch_branch(&branch, cx));
-                                view.focus_handle(cx).focus(window, cx);
-                            },
-                        );
-                    }
-                    menu
-                }))
-            });
+        let menu = Button::new("branch", git.display_name())
+            .style(ButtonStyle::Subtle)
+            .size(ButtonSize::Compact)
+            .label_size(LabelSize::Small)
+            .color(branch_color)
+            .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(branch_color))
+            .tooltip(Tooltip::for_action_title("Cambiar de rama", &SwitchBranch))
+            .on_click(|_, window, cx| window.dispatch_action(SwitchBranch.boxed_clone(), cx));
 
         Some(
             h_flex()
@@ -624,6 +634,265 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
+impl Workspace {
+    fn active_terminal(&self, cx: &App) -> Entity<Terminal> {
+        self.tabs[self.active].view.read(cx).terminal().clone()
+    }
+
+    fn open_modal(
+        &mut self,
+        kind: ModalKind,
+        items: Vec<PickerItem>,
+        config: PickerConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.modal.as_ref().is_some_and(|m| m.kind == kind) {
+            self.dismiss_modal(window, cx);
+            return;
+        }
+        let picker = cx.new(|cx| Picker::new(items, config, cx));
+        let subscription = cx.subscribe_in(&picker, window, Self::on_picker_event);
+        picker.focus_handle(cx).focus(window, cx);
+        self.modal = Some(Modal {
+            kind,
+            picker,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    fn dismiss_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.take().is_some() {
+            self.tabs[self.active].view.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn on_picker_event(
+        &mut self,
+        _: &Entity<Picker>,
+        event: &PickerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let PickerEvent::Confirm { action, secondary } = event else {
+            self.dismiss_modal(window, cx);
+            return;
+        };
+        let (action, secondary) = (action.clone(), *secondary);
+        self.dismiss_modal(window, cx);
+        let terminal = self.active_terminal(cx);
+        match action {
+            // Se despacha después de devolver el foco a la terminal, para que llegue a ella.
+            PickerAction::Dispatch(action) => {
+                window.defer(cx, move |window, cx| window.dispatch_action(action, cx))
+            }
+            PickerAction::ActivateTab(ix) => self.activate(ix, window, cx),
+            PickerAction::OpenDirInNewTab(dir) => self.add_tab_in(Some(dir), window, cx),
+            PickerAction::InsertCommand(command) => {
+                terminal.update(cx, |t, cx| t.insert_command(&command, secondary, cx));
+            }
+            PickerAction::SwitchBranch(branch) => {
+                terminal.update(cx, |t, cx| t.switch_branch(&branch, cx));
+            }
+        }
+    }
+
+    fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.active_terminal(cx);
+        let shell = terminal.read(cx).shell();
+        let has_git = shell.git.is_some();
+        let cwd = shell.cwd.clone();
+
+        let mut items = vec![
+            PickerItem::new("Acciones", "Nueva pestaña", PickerAction::Dispatch(Box::new(NewTab)))
+                .icon(IconName::Plus)
+                .shortcut(NewTab),
+            PickerItem::new("Acciones", "Buscar en el historial", PickerAction::Dispatch(Box::new(SearchHistory)))
+                .icon(IconName::HistoryRerun)
+                .shortcut(SearchHistory),
+        ];
+        if has_git {
+            items.push(
+                PickerItem::new("Acciones", "Cambiar de rama…", PickerAction::Dispatch(Box::new(SwitchBranch)))
+                    .icon(IconName::GitBranch),
+            );
+        }
+        items.extend([
+            PickerItem::new("Acciones", "Limpiar pantalla", PickerAction::Dispatch(Box::new(ClearScreen)))
+                .icon(IconName::Eraser)
+                .shortcut(ClearScreen),
+            PickerItem::new("Acciones", "Copiar pantalla", PickerAction::Dispatch(Box::new(terminal_view::Copy)))
+                .icon(IconName::Copy),
+            PickerItem::new("Acciones", "Pegar", PickerAction::Dispatch(Box::new(terminal_view::Paste)))
+                .icon(IconName::Download),
+            PickerItem::new("Acciones", "Pestaña siguiente", PickerAction::Dispatch(Box::new(NextTab)))
+                .icon(IconName::ArrowRight)
+                .shortcut(NextTab),
+            PickerItem::new("Acciones", "Pestaña anterior", PickerAction::Dispatch(Box::new(PreviousTab)))
+                .icon(IconName::ArrowLeft)
+                .shortcut(PreviousTab),
+            PickerItem::new("Acciones", "Cerrar pestaña", PickerAction::Dispatch(Box::new(CloseTab)))
+                .icon(IconName::Close)
+                .shortcut(CloseTab),
+            PickerItem::new("Acciones", "Salir de terminalapp", PickerAction::Dispatch(Box::new(Quit)))
+                .icon(IconName::Exit)
+                .shortcut(Quit),
+        ]);
+
+        let activate: [Box<dyn Action>; 8] = [
+            Box::new(ActivateTab1),
+            Box::new(ActivateTab2),
+            Box::new(ActivateTab3),
+            Box::new(ActivateTab4),
+            Box::new(ActivateTab5),
+            Box::new(ActivateTab6),
+            Box::new(ActivateTab7),
+            Box::new(ActivateTab8),
+        ];
+        for ix in 0..self.tabs.len() {
+            let tab_terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
+            let mut item = PickerItem::new(
+                "Pestañas abiertas",
+                format!("Ir a {}", self.tab_title(ix, cx)),
+                PickerAction::ActivateTab(ix),
+            )
+            .icon(IconName::Terminal);
+            if let Some(dir) = &tab_terminal.shell().cwd {
+                item = item.detail(abbreviate_home(dir));
+            }
+            if let Some(action) = activate.get(ix) {
+                item.shortcut = Some(action.boxed_clone());
+            }
+            items.push(item);
+        }
+
+        for dir in state::recent_dirs()
+            .into_iter()
+            .filter(|d| Some(d) != cwd.as_ref())
+            .take(8)
+        {
+            items.push(
+                PickerItem::new("Carpetas recientes", abbreviate_home(&dir), PickerAction::OpenDirInNewTab(dir))
+                    .icon(IconName::Folder)
+                    .detail("abrir en pestaña nueva")
+                    .mono(),
+            );
+        }
+
+        let config = PickerConfig {
+            placeholder: "Buscar comandos, pestañas o carpetas…".into(),
+            query: String::new(),
+            empty_text: "Nada coincide con la búsqueda".into(),
+            hints: vec![
+                ("↑↓".into(), "navegar".into()),
+                ("⏎".into(), "ejecutar".into()),
+                ("esc".into(), "cerrar".into()),
+            ],
+            disabled_reason: None,
+        };
+        self.open_modal(ModalKind::CommandPalette, items, config, window, cx);
+    }
+
+    fn search_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.active_terminal(cx);
+        let terminal = terminal.read(cx);
+        // Arranca con lo que ya estaba escrito en el prompt, como ⌃R.
+        let query = terminal
+            .shell()
+            .line
+            .as_ref()
+            .map(|line| line.buffer.clone())
+            .unwrap_or_default();
+        let items: Vec<PickerItem> = shell::history(cx)
+            .map(|history| {
+                history
+                    .entries
+                    .iter()
+                    .rev()
+                    .map(|command| {
+                        PickerItem::new("", command.clone(), PickerAction::InsertCommand(command.clone()))
+                            .mono()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let config = PickerConfig {
+            placeholder: "Buscar en el historial…".into(),
+            query,
+            empty_text: if items.is_empty() {
+                "El historial todavía no se cargó o está vacío".into()
+            } else {
+                "Ningún comando coincide".into()
+            },
+            hints: vec![
+                ("↑↓".into(), "navegar".into()),
+                ("⏎".into(), "llevar al prompt".into()),
+                ("⌘⏎".into(), "ejecutar".into()),
+                ("esc".into(), "cerrar".into()),
+            ],
+            disabled_reason: (!terminal.at_prompt())
+                .then(|| "Hay un comando en ejecución: termina para usar el historial".into()),
+        };
+        self.open_modal(ModalKind::History, items, config, window, cx);
+    }
+
+    fn switch_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.active_terminal(cx);
+        let terminal = terminal.read(cx);
+        let Some(git) = terminal.shell().git.clone() else {
+            return;
+        };
+        let items = git
+            .branches
+            .iter()
+            .map(|branch| {
+                let current = git.branch.as_ref() == Some(branch);
+                let item = PickerItem::new("", branch.clone(), PickerAction::SwitchBranch(branch.clone()))
+                    .icon(if current { IconName::Check } else { IconName::GitBranch });
+                if current { item.detail("actual") } else { item }
+            })
+            .collect();
+        let config = PickerConfig {
+            placeholder: "Cambiar a la rama…".into(),
+            query: String::new(),
+            empty_text: "Ninguna rama coincide".into(),
+            hints: vec![
+                ("↑↓".into(), "navegar".into()),
+                ("⏎".into(), "git switch".into()),
+                ("esc".into(), "cerrar".into()),
+            ],
+            disabled_reason: (!terminal.at_prompt())
+                .then(|| "Hay un comando en ejecución: termina para cambiar de rama".into()),
+        };
+        self.open_modal(ModalKind::Branches, items, config, window, cx);
+    }
+
+    fn render_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let picker = self.modal.as_ref()?.picker.clone();
+        Some(
+            div()
+                .absolute()
+                .top(TAB_BAR_HEIGHT)
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(rgba(0x0506089e))
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px(72.))
+                .px(px(16.))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| this.dismiss_modal(window, cx)),
+                )
+                .child(picker),
+        )
+    }
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.tabs[self.active].view.focus_handle(cx)
@@ -635,6 +904,7 @@ impl Render for Workspace {
         let active = self.tabs.get(self.active).map(|tab| tab.view.clone());
 
         v_flex()
+            .relative()
             .size_full()
             .key_context("Workspace")
             .bg(palette::hsla(palette::BACKGROUND))
@@ -665,8 +935,17 @@ impl Render for Workspace {
                 let last = this.tabs.len().saturating_sub(1);
                 this.activate(last, w, cx)
             }))
+            .on_action(cx.listener(|this, _: &ToggleCommandPalette, w, cx| {
+                this.toggle_command_palette(w, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SearchHistory, w, cx| this.search_history(w, cx)))
+            .on_action(cx.listener(|this, _: &SwitchBranch, w, cx| this.switch_branch(w, cx)))
+            .on_action(cx.listener(|this, _: &ClearScreen, _, cx| {
+                this.active_terminal(cx).update(cx, |t, cx| t.clear(cx))
+            }))
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().children(active))
             .when(!self.tabs.is_empty(), |this| this.child(self.render_status_bar(cx)))
+            .children(self.render_modal(cx))
     }
 }
