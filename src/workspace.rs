@@ -610,17 +610,21 @@ fn dir_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// `~` en lugar del home y, si la ruta es larga, solo las últimas tres carpetas (como el prompt).
 fn abbreviate_home(path: &Path) -> String {
-    if let Some(home) = std::env::var_os("HOME")
-        && let Ok(rest) = path.strip_prefix(&home)
+    let (prefix, rest) = match std::env::var_os("HOME")
+        .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_path_buf))
     {
-        return if rest.as_os_str().is_empty() {
-            "~".into()
-        } else {
-            format!("~/{}", rest.display())
-        };
+        Some(rest) if rest.as_os_str().is_empty() => return "~".into(),
+        Some(rest) => ("~/", rest),
+        None => ("/", path.strip_prefix("/").unwrap_or(path).to_path_buf()),
+    };
+    let parts: Vec<_> = rest.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+    if parts.len() > 3 {
+        format!("…/{}", parts[parts.len() - 3..].join("/"))
+    } else {
+        format!("{prefix}{}", parts.join("/"))
     }
-    path.display().to_string()
 }
 
 fn format_duration(duration: Duration) -> String {

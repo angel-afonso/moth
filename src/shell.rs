@@ -83,6 +83,35 @@ fn install_dir() -> Option<PathBuf> {
     }
 }
 
+/// `LANG` para la shell cuando la app no recibió locale (lanzada desde el Finder no lo trae):
+/// sin UTF-8, zsh y muchos programas tratan mal los acentos. Se deriva del idioma de macOS,
+/// como hace Terminal.app.
+pub fn locale_env() -> Option<(String, String)> {
+    let has_locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .any(|var| std::env::var(var).is_ok_and(|v| !v.is_empty()));
+    if has_locale {
+        return None;
+    }
+    static LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let lang = LANG.get_or_init(|| {
+        let apple_locale = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLocale"])
+            .output()
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap_or_default();
+        let base = apple_locale.split('@').next().unwrap_or_default();
+        let candidate = format!("{base}.UTF-8");
+        if !base.is_empty() && Path::new("/usr/share/locale").join(&candidate).is_dir() {
+            candidate
+        } else {
+            "en_US.UTF-8".to_string()
+        }
+    });
+    Some(("LANG".to_string(), lang.clone()))
+}
+
 // ---------------------------------------------------------------------------------------
 // Detección de OSC
 

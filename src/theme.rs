@@ -14,7 +14,7 @@ pub const UI_FONT_FAMILY: &str = "Geist";
 pub const MONO_FONT_FAMILY: &str = "Geist Mono";
 pub const UI_FONT_SIZE: Pixels = px(13.);
 pub const TERMINAL_FONT_SIZE: Pixels = px(13.5);
-pub const TERMINAL_LINE_HEIGHT: Pixels = px(20.);
+pub const TERMINAL_LINE_HEIGHT: Pixels = px(22.);
 
 pub fn font(family: &'static str) -> Font {
     Font {

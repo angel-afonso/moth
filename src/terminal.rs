@@ -153,6 +153,7 @@ impl TerminalBuilder {
             ("COLORTERM".to_string(), "truecolor".to_string()),
             ("TERM_PROGRAM".to_string(), "terminalapp".to_string()),
         ]);
+        env.extend(shell::locale_env());
         env.extend(shell::integration_env().unwrap_or_default());
         // La shell se lanza directa como shell de login (`-l`, carga .zprofile y .zshrc). Sin
         // `shell`, alacritty pasa por /usr/bin/login, que imprime "Last login: …" al abrir.

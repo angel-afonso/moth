@@ -40,6 +40,10 @@ La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code)
 - muestra en la pestaña el comando en ejecución o la carpeta, y en la barra de estado la ruta y el resultado y la duración del último comando;
 - muestra el estado de git en cada prompt (rama, `↓`/`↑` respecto del upstream, `+` en stage, `~` modificados, `?` sin seguimiento, `!` en conflicto). Elegir una rama en el buscador escribe y ejecuta `git switch` en la shell, así el resultado o cualquier error queda a la vista. Solo se puede cambiar con la shell en el prompt, no con un comando en curso.
 
+Si usas el prompt de zsh por defecto de macOS, la integración lo reemplaza por uno con el estilo de la app: un encabezado tenue con la carpeta (las últimas tres si la ruta es larga), la rama, el resultado y la duración del comando anterior y la hora; debajo, `❯` en verde, o en rojo si el comando falló, con una línea en blanco entre bloques. Si tienes tu propio prompt (starship, p10k…) no se toca; para desactivarlo igual, pon `TERMINALAPP_PROMPT=0` en tu `.zshrc`.
+
+Si la app no recibe locale (al abrirla desde el Finder), le pasa a la shell un `LANG` UTF-8 según el idioma de macOS, para que los acentos y la ñ funcionen.
+
 Con otras shells la terminal funciona igual, sin estas funciones.
 
 ## Estructura
