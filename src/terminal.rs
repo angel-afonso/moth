@@ -25,6 +25,8 @@ use gpui::{App, ClipboardItem, Context, EventEmitter, Pixels, Task, px};
 
 use crate::{
     git::{self, GitStatus},
+    hosts::{self, HostIdentity},
+    ssh::{self, ResolvedHost, SshTarget},
     highlight::{self, CommandResolver, Token},
     palette,
     shell::{self, History, ShellEvent, ShellPty},
@@ -109,6 +111,44 @@ pub struct ShellState {
     pub line: Option<EditLine>,
     pub running: Option<RunningCommand>,
     pub last: Option<FinishedCommand>,
+    /// Sesión SSH interactiva en curso.
+    pub remote: Option<RemoteSession>,
+    /// Última sesión SSH que se cortó (exit 255), para reconectar.
+    pub disconnected: Option<Disconnected>,
+}
+
+pub struct RemoteSession {
+    /// El comando tal como se ejecutó, para reconectar.
+    pub command: String,
+    pub target: SshTarget,
+    pub identity: HostIdentity,
+    pub resolved: Option<ResolvedHost>,
+    pub started: Instant,
+    /// Carpeta remota, si el servidor la pone en el título (`usuario@host: ~/dir`).
+    pub remote_cwd: Option<String>,
+}
+
+impl RemoteSession {
+    /// `usuario@host` con lo mejor que se sepa.
+    pub fn user_at_host(&self) -> String {
+        let user = self
+            .resolved
+            .as_ref()
+            .map(|r| r.user.clone())
+            .or_else(|| self.target.user.clone());
+        match user {
+            Some(user) => format!("{user}@{}", self.target.alias),
+            None => self.target.alias.clone(),
+        }
+    }
+}
+
+pub struct Disconnected {
+    pub command: String,
+    pub target: SshTarget,
+    pub identity: HostIdentity,
+    pub exit_code: Option<i32>,
+    pub at: Instant,
 }
 
 pub struct Terminal {
@@ -120,6 +160,9 @@ pub struct Terminal {
     pending_command: Option<String>,
     resolver: CommandResolver,
     git_refresh: Option<Task<()>>,
+    ssh_resolve: Option<Task<()>>,
+    /// Comando a ejecutar apenas la shell muestre el prompt (pestañas de "Conectar a…").
+    startup_command: Option<String>,
     _events: Task<()>,
 }
 
@@ -230,6 +273,8 @@ impl TerminalBuilder {
             pending_command: None,
             resolver: CommandResolver::from_env(),
             git_refresh: None,
+            ssh_resolve: None,
+            startup_command: None,
             _events: events,
         }
     }
@@ -299,8 +344,12 @@ impl Terminal {
             }
             ShellEvent::CommandStart => {
                 self.shell.line = None;
+                let text = self.pending_command.take().unwrap_or_default();
+                // Un comando nuevo deja atrás la sesión cortada.
+                self.shell.disconnected = None;
+                self.start_remote_session(&text, cx);
                 self.shell.running = Some(RunningCommand {
-                    text: self.pending_command.take().unwrap_or_default(),
+                    text,
                     started: Instant::now(),
                 });
                 cx.emit(TerminalEvent::TitleChanged);
@@ -311,11 +360,27 @@ impl Terminal {
                         exit_code,
                         duration: running.started.elapsed(),
                     });
+                    if let Some(remote) = self.shell.remote.take() {
+                        self.ssh_resolve = None;
+                        // 255 es el código de ssh cuando la conexión falla o se corta.
+                        if exit_code == Some(255) {
+                            self.shell.disconnected = Some(Disconnected {
+                                command: remote.command,
+                                target: remote.target,
+                                identity: remote.identity,
+                                exit_code,
+                                at: Instant::now(),
+                            });
+                        }
+                    }
                     cx.emit(TerminalEvent::TitleChanged);
                 }
             }
             ShellEvent::Line { cursor, buffer } => {
                 self.shell.line = Some(EditLine { buffer, cursor });
+                if let Some(command) = self.startup_command.take() {
+                    self.insert_command(&command, true, cx);
+                }
                 cx.notify();
             }
             ShellEvent::LineFinished => {
@@ -364,6 +429,57 @@ impl Terminal {
             })
             .ok();
         }));
+    }
+
+    fn start_remote_session(&mut self, command: &str, cx: &mut Context<Self>) {
+        let Some(target) = ssh::parse_ssh_command(command).filter(|t| !t.remote_command) else {
+            return;
+        };
+        let rules = hosts::rules(cx);
+        let identity = rules.identify(&target.alias, None);
+        let resolve = {
+            let target = target.clone();
+            cx.background_executor().spawn(async move { ssh::resolve(&target) })
+        };
+        self.ssh_resolve = Some(cx.spawn(async move |this, cx| {
+            let resolved = resolve.await;
+            this.update(cx, |this, cx| {
+                if let Some(remote) = &mut this.shell.remote {
+                    // Con el hostname real, una regla puede coincidir aunque el alias no.
+                    if let Some(resolved) = &resolved {
+                        remote.identity = rules.identify(&remote.target.alias, Some(&resolved.hostname));
+                    }
+                    remote.resolved = resolved;
+                    cx.emit(TerminalEvent::TitleChanged);
+                }
+            })
+            .ok();
+        }));
+        self.shell.remote = Some(RemoteSession {
+            command: command.to_string(),
+            target,
+            identity,
+            resolved: None,
+            started: Instant::now(),
+            remote_cwd: None,
+        });
+    }
+
+    /// Vuelve a ejecutar el `ssh` que se cortó.
+    pub fn reconnect(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(command) = self.shell.disconnected.as_ref().map(|d| d.command.clone()) else {
+            return false;
+        };
+        self.insert_command(&command, true, cx)
+    }
+
+    /// Ejecuta `command` en cuanto la shell esté lista (o ya, si lo está).
+    pub fn run_when_ready(&mut self, command: String, cx: &mut Context<Self>) {
+        if self.at_prompt() {
+            self.insert_command(&command, true, cx);
+        } else {
+            self.startup_command = Some(command);
+        }
     }
 
     /// La shell está esperando input: se le puede escribir un comando sin pisar un programa.
@@ -419,6 +535,11 @@ impl Terminal {
                 cx.notify()
             }
             AlacEvent::Title(title) => {
+                if let Some(remote) = &mut self.shell.remote
+                    && let Some(cwd) = remote_cwd_from_title(&title)
+                {
+                    remote.remote_cwd = Some(cwd);
+                }
                 self.title = Some(title);
                 cx.emit(TerminalEvent::TitleChanged);
             }
@@ -447,7 +568,12 @@ impl Terminal {
     }
 
     fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
-        self.sender.send(Msg::Input(bytes.into())).ok();
+        let bytes = bytes.into();
+        // Una escritura vacía traba la cola de escritura del event loop de alacritty: todo lo
+        // que se mande después queda sin enviarse al PTY.
+        if !bytes.is_empty() {
+            self.sender.send(Msg::Input(bytes)).ok();
+        }
     }
 
     /// Entrada del usuario: vuelve al final del scrollback antes de escribir.
@@ -489,5 +615,28 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         self.sender.send(Msg::Shutdown).ok();
+    }
+}
+
+/// Carpeta del título que ponen muchos servidores: `usuario@host: ~/dir` o `usuario@host:~/dir`.
+fn remote_cwd_from_title(title: &str) -> Option<String> {
+    let (who, rest) = title.split_once(':')?;
+    if !who.contains('@') || who.contains(' ') {
+        return None;
+    }
+    let cwd = rest.trim();
+    (cwd.starts_with('/') || cwd.starts_with('~')).then(|| cwd.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_cwd_from_title;
+
+    #[test]
+    fn reads_remote_cwd_from_titles() {
+        assert_eq!(remote_cwd_from_title("angel@prod-db-01: ~/app").as_deref(), Some("~/app"));
+        assert_eq!(remote_cwd_from_title("root@box:/var/log").as_deref(), Some("/var/log"));
+        assert_eq!(remote_cwd_from_title("vim notes.md"), None);
+        assert_eq!(remote_cwd_from_title("Make: building"), None);
     }
 }

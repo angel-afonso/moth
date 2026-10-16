@@ -16,11 +16,15 @@ use gpui::{
     TextRun, UTF16Selection, UnderlineStyle, Window, actions, canvas, div, fill, outline,
     prelude::*, point, px, size, transparent_black,
 };
+use ui::{
+    Button, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color, Icon, IconName, IconSize,
+    Label, LabelCommon, LabelSize, TintColor, h_flex, v_flex,
+};
 
 use crate::{
     highlight::{Token, TokenKind},
     keys, palette,
-    tokens::{SyntaxColors, TokensExt, metrics},
+    tokens::{SyntaxColors, TokensExt, metrics, tint},
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
 };
@@ -33,6 +37,8 @@ pub struct TerminalView {
     /// Texto en composición del IME (p. ej. una tilde muerta antes de la vocal).
     marked_text: Option<String>,
     scroll_remainder: f32,
+    /// Texto de varias líneas esperando confirmación antes de pegarse en producción.
+    pending_paste: Option<String>,
     _observe: Subscription,
 }
 
@@ -44,6 +50,7 @@ impl TerminalView {
             focus_handle: cx.focus_handle(),
             marked_text: None,
             scroll_remainder: 0.,
+            pending_paste: None,
             _observe: observe,
         }
     }
@@ -55,6 +62,17 @@ impl TerminalView {
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let m = &keystroke.modifiers;
+        // Con la confirmación de pegado abierta, el teclado no llega al servidor.
+        if self.pending_paste.is_some() {
+            match keystroke.key.as_str() {
+                "escape" => self.cancel_paste(cx),
+                "enter" if m.platform => self.confirm_paste(cx),
+                _ if m.platform => return,
+                _ => {}
+            }
+            cx.stop_propagation();
+            return;
+        }
         let plain = !(m.control || m.alt || m.shift || m.platform);
         if plain && matches!(keystroke.key.as_str(), "right" | "end")
             && let Some(rest) = self.terminal.read(cx).suggestion(cx) {
@@ -102,9 +120,103 @@ impl TerminalView {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.terminal.update(cx, |t, cx| t.paste(&text, cx));
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let production = self
+            .terminal
+            .read(cx)
+            .shell()
+            .remote
+            .as_ref()
+            .is_some_and(|remote| remote.identity.production);
+        // Varias líneas en producción se ejecutarían una tras otra: se pide confirmación.
+        if production && text.trim_end().contains('\n') {
+            self.pending_paste = Some(text);
+            cx.notify();
+            return;
         }
+        self.terminal.update(cx, |t, cx| t.paste(&text, cx));
+    }
+
+    fn confirm_paste(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = self.pending_paste.take() {
+            self.terminal.update(cx, |t, cx| t.paste(&text, cx));
+            cx.notify();
+        }
+    }
+
+    fn cancel_paste(&mut self, cx: &mut Context<Self>) {
+        self.pending_paste = None;
+        cx.notify();
+    }
+
+    fn render_paste_guard(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let text = self.pending_paste.as_ref()?;
+        let terminal = self.terminal.read(cx);
+        let remote = terminal.shell().remote.as_ref()?;
+        let host_color = remote.identity.color(cx);
+        let host = remote.target.alias.clone();
+        let lines = text.trim_end().lines().count();
+        let preview: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let ui = cx.tokens().ui.clone();
+
+        Some(
+            h_flex()
+                .absolute()
+                .left(metrics::SPACE_4)
+                .right(metrics::SPACE_4)
+                .bottom(px(12.))
+                .gap(px(14.))
+                .py(px(10.))
+                .pl(px(14.))
+                .pr(px(12.))
+                .rounded(px(10.))
+                .bg(ui.surface)
+                .border_1()
+                .border_color(tint(host_color, 0.45))
+                .shadow_lg()
+                .child(Icon::new(IconName::Lock).size(IconSize::Small).color(Color::Custom(host_color)))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(2.))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Label::new(format!("¿Pegar {lines} líneas en")))
+                                .child(
+                                    h_flex()
+                                        .child(Label::new(host).color(Color::Custom(host_color)).weight(FontWeight::SEMIBOLD))
+                                        .child(Label::new("?")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .font_family(MONO_FONT_FAMILY)
+                                .text_size(px(12.))
+                                .text_color(ui.text_placeholder)
+                                .child(Label::new(preview).size(LabelSize::Small).color(Color::Placeholder).truncate()),
+                        ),
+                )
+                .child(
+                    Button::new("paste-cancel", "Cancelar")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Large)
+                        .label_size(LabelSize::Small)
+                        .key_binding(ui::KeyBinding::for_action(&menu::Cancel, cx))
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_paste(cx))),
+                )
+                .child(
+                    Button::new("paste-confirm", "Pegar igual")
+                        .style(ButtonStyle::Tinted(TintColor::Error))
+                        .size(ButtonSize::Large)
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, _, cx| this.confirm_paste(cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -144,9 +256,19 @@ impl Render for TerminalView {
         let marked_text = self.marked_text.clone();
         let focus_handle = self.focus_handle.clone();
         let view = cx.entity();
+        let production_color = self
+            .terminal
+            .read(cx)
+            .shell()
+            .remote
+            .as_ref()
+            .filter(|remote| remote.identity.production)
+            .map(|remote| remote.identity.color(cx));
+        let paste_guard = self.render_paste_guard(cx);
 
         div()
             .id("terminal-view")
+            .relative()
             .key_context("Terminal")
             .track_focus(&self.focus_handle)
             .size_full()
@@ -154,6 +276,10 @@ impl Render for TerminalView {
             .pt(metrics::SPACE_5)
             .pb(px(10.))
             .bg(cx.tokens().terminal.background)
+            // En producción, un borde del color del host enmarca la terminal.
+            .when_some(production_color, |el, color| {
+                el.border_1().border_color(tint(color, 0.22)).rounded(px(8.)).px(px(20.)).pt(px(12.))
+            })
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(Self::key_down))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
@@ -182,6 +308,7 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+            .children(paste_guard)
     }
 }
 

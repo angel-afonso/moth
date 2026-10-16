@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString,
-    Window, div,
+    AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, MouseButton, MouseDownEvent,
+    SharedString, Window, div,
     prelude::*, px,
 };
 use ui::{
@@ -212,6 +212,55 @@ impl RenderOnce for BlockStatus {
 
 // ---------------------------------------------------------------------------------------
 
+/// Etiqueta corta de un host remoto (`PROD`, `STG`) en su color. Punteada si la sesión se cortó.
+#[derive(IntoElement)]
+pub struct HostChip {
+    label: SharedString,
+    color: Hsla,
+    dashed: bool,
+}
+
+impl HostChip {
+    pub fn new(label: impl Into<SharedString>, color: Hsla) -> Self {
+        Self {
+            label: label.into(),
+            color,
+            dashed: false,
+        }
+    }
+
+    pub fn dashed(mut self, dashed: bool) -> Self {
+        self.dashed = dashed;
+        self
+    }
+}
+
+impl RenderOnce for HostChip {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        div()
+            .flex_none()
+            .px(px(6.))
+            .rounded(metrics::RADIUS_KBD)
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(px(10.))
+            .line_height(px(16.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .map(|chip| {
+                if self.dashed {
+                    chip.border_1()
+                        .border_dashed()
+                        .border_color(tint(self.color, 0.5))
+                        .text_color(self.color.opacity(0.7))
+                } else {
+                    chip.bg(tint(self.color, 0.16)).text_color(self.color)
+                }
+            })
+            .child(self.label)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabState {
     Idle,
@@ -225,6 +274,10 @@ pub enum TabState {
 pub struct TabItem {
     id: ElementId,
     title: SharedString,
+    /// Sesión remota: color del host y su etiqueta, si tiene.
+    remote: Option<(Hsla, Option<SharedString>)>,
+    disconnected: bool,
+    on_reconnect: Option<ClickHandler>,
     shortcut: Option<SharedString>,
     selected: bool,
     state: TabState,
@@ -239,6 +292,9 @@ impl TabItem {
         Self {
             id: id.into(),
             title: title.into(),
+            remote: None,
+            disconnected: false,
+            on_reconnect: None,
             shortcut: None,
             selected: false,
             state: TabState::Idle,
@@ -264,6 +320,18 @@ impl TabItem {
         self
     }
 
+    pub fn remote(mut self, color: Hsla, label: Option<SharedString>) -> Self {
+        self.remote = Some((color, label));
+        self
+    }
+
+    /// La sesión remota se cortó: título tachado y botón de reconectar en lugar de cerrar.
+    pub fn disconnected(mut self, on_reconnect: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.disconnected = true;
+        self.on_reconnect = Some(Box::new(on_reconnect));
+        self
+    }
+
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -286,17 +354,29 @@ impl TabItem {
 impl RenderOnce for TabItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let ui = cx.tokens().ui.clone();
+        let warning = cx.tokens().status.warning;
         let selected = self.selected;
+        let disconnected = self.disconnected;
         let close_id = ElementId::from(SharedString::from(format!("{:?}-close", self.id)));
+        let host_color = self.remote.as_ref().map(|(color, _)| *color);
 
-        let indicator: AnyElement = match self.state {
-            TabState::Running => StatusDot::new(DotState::Running).into_any_element(),
-            TabState::Attention => StatusDot::new(DotState::Attention).into_any_element(),
-            TabState::Idle => Icon::new(IconName::Terminal)
+        let indicator: AnyElement = match (self.state, host_color, disconnected) {
+            (TabState::Attention, _, _) => StatusDot::new(DotState::Attention).into_any_element(),
+            (_, Some(_), true) => Icon::new(IconName::LockOff)
+                .size(IconSize::Small)
+                .color(Color::Placeholder)
+                .into_any_element(),
+            (_, Some(color), false) => Icon::new(IconName::ArrowRightLeft)
+                .size(IconSize::Small)
+                .color(Color::Custom(color))
+                .into_any_element(),
+            (TabState::Running, None, _) => StatusDot::new(DotState::Running).into_any_element(),
+            _ => Icon::new(IconName::Terminal)
                 .size(IconSize::Small)
                 .color(if selected { Color::Accent } else { Color::Placeholder })
                 .into_any_element(),
         };
+        let accent = host_color.filter(|_| !disconnected).unwrap_or(ui.accent);
 
         h_flex()
             .id(self.id)
@@ -319,7 +399,7 @@ impl RenderOnce for TabItem {
                             .left_0()
                             .right_0()
                             .h(px(2.))
-                            .bg(ui.accent),
+                            .bg(accent),
                     )
                 } else {
                     tab.border_b_1().hover(|style| style.bg(ui.element_hover))
@@ -333,10 +413,21 @@ impl RenderOnce for TabItem {
             .child(
                 div().max_w(px(200.)).child(
                     Label::new(self.title)
-                        .color(if selected { Color::Default } else { Color::Muted })
-                        .when(selected, |label| label.weight(FontWeight::MEDIUM))
+                        .color(if disconnected {
+                            Color::Placeholder
+                        } else if selected {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                        .when(selected && !disconnected, |label| label.weight(FontWeight::MEDIUM))
+                        .when(disconnected, |label| label.strikethrough())
                         .truncate(),
                 ),
+            )
+            .when_some(
+                self.remote.and_then(|(color, label)| label.map(|l| (color, l))),
+                |tab, (color, label)| tab.child(HostChip::new(label, color).dashed(disconnected)),
             )
             .when_some(self.shortcut, |tab, shortcut| {
                 tab.child(
@@ -347,7 +438,23 @@ impl RenderOnce for TabItem {
                         .child(shortcut),
                 )
             })
-            .child(
+            .when_some(self.on_reconnect, |tab, handler| {
+                let reconnect_id = ElementId::from(SharedString::from(format!("{close_id:?}-reconnect")));
+                tab.child(
+                    div().rounded(metrics::RADIUS_ROW).bg(tint(warning, 0.14)).child(
+                        IconButton::new(reconnect_id, IconName::RotateCw)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Warning)
+                            .size(ui::ButtonSize::Medium)
+                            .tooltip(Tooltip::text("Reconectar (⌘⇧R)"))
+                            .on_click(move |event, window, cx| {
+                                cx.stop_propagation();
+                                handler(event, window, cx)
+                            }),
+                    ),
+                )
+            })
+            .when(!disconnected, |tab| tab.child(
                 IconButton::new(close_id, IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .icon_color(if selected { Color::Muted } else { Color::Placeholder })
@@ -359,7 +466,7 @@ impl RenderOnce for TabItem {
                             handler(event, window, cx)
                         })
                     }),
-            )
+            ))
     }
 }
 

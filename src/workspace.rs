@@ -18,12 +18,14 @@ use ui::{
 
 use crate::{
     components::{BlockStatus, DotState, StatusDot, SuggestionKind, TabItem, TabState},
+    hosts::{self, RulesSource},
+    ssh,
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
     shell, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{self, Themes},
-    tokens::{Appearance, Tokens, TokensExt, metrics},
+    tokens::{Appearance, Tokens, TokensExt, metrics, tint},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
 };
 
@@ -47,6 +49,8 @@ actions!(
         SearchHistory,
         SwitchBranch,
         SelectTheme,
+        ConnectToHost,
+        Reconnect,
         ClearScreen,
         Quit,
     ]
@@ -77,7 +81,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", ToggleCommandPalette, None),
         KeyBinding::new("cmd-r", SearchHistory, None),
         KeyBinding::new("cmd-l", ClearScreen, None),
+        KeyBinding::new("cmd-shift-r", Reconnect, None),
     ]);
+    hosts::reload(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     picker::init(cx);
 }
@@ -98,6 +104,7 @@ enum ModalKind {
     History,
     Branches,
     Themes,
+    Hosts,
 }
 
 struct Modal {
@@ -220,6 +227,13 @@ impl Workspace {
     fn tab_title(&self, ix: usize, cx: &App) -> SharedString {
         let terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
         let shell = terminal.shell();
+        // En SSH, el host; si se cortó, el host también (tachado en la pestaña).
+        if let Some(remote) = &shell.remote {
+            return remote.target.alias.clone().into();
+        }
+        if let (Some(disconnected), None) = (&shell.disconnected, &shell.running) {
+            return disconnected.target.alias.clone().into();
+        }
         if let Some(running) = shell.running.as_ref().filter(|r| !r.text.trim().is_empty()) {
             return short_command(&running.text).into();
         }
@@ -251,9 +265,28 @@ impl Workspace {
         } else {
             TabState::Idle
         };
+        let shell = self.tabs[ix].view.read(cx).terminal().read(cx).shell();
+        let remote = shell
+            .remote
+            .as_ref()
+            .map(|r| (r.identity.color(cx), r.identity.label.clone()))
+            .or_else(|| {
+                shell
+                    .disconnected
+                    .as_ref()
+                    .filter(|_| shell.running.is_none())
+                    .map(|d| (d.identity.color(cx), d.identity.label.clone()))
+            });
+        let disconnected = shell.remote.is_none() && shell.running.is_none() && shell.disconnected.is_some();
         TabItem::new(("tab", ix), self.tab_title(ix, cx))
             .selected(ix == self.active)
             .state(state)
+            .when_some(remote, |tab, (color, label)| tab.remote(color, label.map(Into::into)))
+            .when(disconnected, |tab| {
+                tab.disconnected(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.reconnect_tab(ix, window, cx)
+                }))
+            })
             .when(ix < 9, |tab| tab.shortcut(format!("⌘{}", ix + 1)))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.activate(ix, window, cx)
@@ -430,7 +463,10 @@ impl Workspace {
         )
     }
 
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(remote) = self.render_remote_status_bar(cx) {
+            return remote;
+        }
         let git = self.render_git(cx);
         let ui = cx.tokens().ui.clone();
         let terminal = self.tabs[self.active].view.read(cx).terminal().read(cx);
@@ -509,6 +545,7 @@ impl Workspace {
                             .color(Color::Placeholder),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -634,6 +671,17 @@ impl Workspace {
                 terminal.update(cx, |t, cx| t.switch_branch(&branch, cx));
             }
             PickerAction::SetTheme(name) => theme::select(&name, cx),
+            PickerAction::RunCommand(command) => {
+                if secondary {
+                    terminal.update(cx, |t, cx| t.insert_command(&command, true, cx));
+                } else {
+                    let cwd = terminal.read(cx).shell().cwd.clone();
+                    self.add_tab_in(cwd, window, cx);
+                    let terminal = self.active_terminal(cx);
+                    terminal.update(cx, |t, cx| t.run_when_ready(command, cx));
+                }
+            }
+            PickerAction::ReconnectTab(ix) => self.reconnect_tab(ix, window, cx),
         }
     }
 
@@ -651,6 +699,13 @@ impl Workspace {
                 .icon(IconName::HistoryRerun)
                 .shortcut(SearchHistory),
         ];
+        if self.active_terminal(cx).read(cx).shell().disconnected.is_some() {
+            items.push(
+                PickerItem::new("Acciones", "Reconectar", PickerAction::Dispatch(Box::new(Reconnect)))
+                    .icon(IconName::RotateCw)
+                    .shortcut(Reconnect),
+            );
+        }
         if has_git {
             items.push(
                 PickerItem::new("Acciones", "Cambiar de rama…", PickerAction::Dispatch(Box::new(SwitchBranch)))
@@ -658,6 +713,8 @@ impl Workspace {
             );
         }
         items.extend([
+            PickerItem::new("Acciones", "Conectar a…", PickerAction::Dispatch(Box::new(ConnectToHost)))
+                .icon(IconName::Server),
             PickerItem::new("Acciones", "Cambiar tema…", PickerAction::Dispatch(Box::new(SelectTheme)))
                 .icon(IconName::Sparkle),
             PickerItem::new("Acciones", "Limpiar pantalla", PickerAction::Dispatch(Box::new(ClearScreen)))
@@ -848,6 +905,287 @@ impl Workspace {
         self.open_modal(ModalKind::Themes, items, config, window, cx);
     }
 
+    fn active_is_production(&self, cx: &App) -> bool {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| tab.view.read(cx).terminal().read(cx).shell().remote.as_ref().map(|r| r.identity.production))
+            .unwrap_or(false)
+    }
+
+    fn reconnect_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(ix) else {
+            return;
+        };
+        let terminal = tab.view.read(cx).terminal().clone();
+        if terminal.update(cx, |t, cx| t.reconnect(cx)) {
+            self.activate(ix, window, cx);
+        }
+    }
+
+    /// Franja bajo las pestañas cuando la sesión activa es de producción.
+    fn render_production_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let terminal = self.active_terminal(cx);
+        let terminal = terminal.read(cx);
+        let remote = terminal.shell().remote.as_ref().filter(|r| r.identity.production)?;
+        let color = remote.identity.color(cx);
+        let label = remote
+            .identity
+            .label
+            .clone()
+            .map(|l| if l.eq_ignore_ascii_case("prod") { "PRODUCCIÓN".to_string() } else { l.to_uppercase() })
+            .unwrap_or_else(|| "PRODUCCIÓN".into());
+        let reason = match (&remote.identity.matched, &hosts::rules(cx).source) {
+            (Some(pattern), RulesSource::File(_)) => format!("· coincide con {pattern} en hosts.json"),
+            (Some(pattern), RulesSource::Defaults) => format!("· coincide con {pattern} (regla por defecto)"),
+            (None, _) => String::new(),
+        };
+        Some(
+            h_flex()
+                .h(px(30.))
+                .flex_none()
+                .px(metrics::SPACE_4)
+                .gap(px(10.))
+                .justify_between()
+                .overflow_hidden()
+                .bg(tint(color, 0.12))
+                .border_b_1()
+                .border_color(tint(color, 0.35))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .min_w_0()
+                        .child(Icon::new(IconName::Warning).size(IconSize::Small).color(Color::Custom(color)))
+                        .child(
+                            Label::new(label)
+                                .size(LabelSize::Small)
+                                .weight(gpui::FontWeight::SEMIBOLD)
+                                .color(Color::Custom(color)),
+                        )
+                        .child(
+                            div()
+                                .font_family(MONO_FONT_FAMILY)
+                                .child(Label::new(remote.user_at_host()).size(LabelSize::Small)),
+                        )
+                        .child(Label::new(reason).size(LabelSize::Small).color(Color::Muted).truncate()),
+                )
+                .child(
+                    h_flex()
+                        .gap(px(6.))
+                        .flex_none()
+                        .child(Icon::new(IconName::Lock).size(IconSize::XSmall).color(Color::Muted))
+                        .child(Label::new("Pegado protegido").size(LabelSize::Small).color(Color::Muted)),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_remote_status_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let ui = cx.tokens().ui.clone();
+        let terminal = self.active_terminal(cx);
+        let terminal = terminal.read(cx);
+        let size = terminal.size();
+        let remote = terminal.shell().remote.as_ref()?;
+        let color = remote.identity.color(cx);
+        let address = remote
+            .resolved
+            .as_ref()
+            .map(|r| format!("{}:{}", r.hostname, r.port));
+        let minutes = remote.started.elapsed().as_secs() / 60;
+        let connected = if minutes == 0 {
+            "conectado · recién".to_string()
+        } else if minutes < 60 {
+            format!("conectado · {minutes} min")
+        } else {
+            format!("conectado · {}h {}min", minutes / 60, minutes % 60)
+        };
+        let tab_count = self.tabs.len();
+
+        Some(
+            h_flex()
+                .h(px(28.))
+                .flex_none()
+                .px(px(14.))
+                .gap(metrics::SPACE_4)
+                .justify_between()
+                .overflow_hidden()
+                .bg(ui.chrome)
+                .border_t_1()
+                .border_color(ui.border)
+                .child(
+                    h_flex()
+                        .gap(metrics::SPACE_4)
+                        .min_w_0()
+                        .child(
+                            h_flex()
+                                .gap(px(6.))
+                                .flex_none()
+                                .child(div().size(px(6.)).rounded_full().bg(color))
+                                .child(Label::new("ssh").size(LabelSize::Small).color(Color::Muted)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap(px(6.))
+                                .flex_none()
+                                .child(Icon::new(IconName::ArrowRightLeft).size(IconSize::XSmall).color(Color::Custom(color)))
+                                .child(
+                                    div().font_family(MONO_FONT_FAMILY).child(
+                                        Label::new(remote.user_at_host())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Custom(color)),
+                                    ),
+                                ),
+                        )
+                        .when_some(address, |this, address| {
+                            this.child(
+                                div().font_family(MONO_FONT_FAMILY).child(
+                                    Label::new(address).size(LabelSize::XSmall).color(Color::Placeholder),
+                                ),
+                            )
+                        })
+                        .when_some(remote.remote_cwd.clone(), |this, cwd| {
+                            this.child(
+                                div().min_w_0().child(
+                                    Label::new(cwd).size(LabelSize::Small).color(Color::Placeholder).truncate(),
+                                ),
+                            )
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .gap(metrics::SPACE_4)
+                        .flex_none()
+                        .font_family(MONO_FONT_FAMILY)
+                        .child(Label::new(connected).size(LabelSize::XSmall).color(Color::Placeholder))
+                        .child(
+                            Label::new(if tab_count == 1 {
+                                "1 pestaña".to_string()
+                            } else {
+                                format!("{tab_count} pestañas")
+                            })
+                            .size(LabelSize::XSmall)
+                            .color(Color::Placeholder),
+                        )
+                        .child(
+                            Label::new(format!("{}×{}", size.columns, size.lines))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Placeholder),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn connect_to_host(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        hosts::reload(cx);
+        let rules = hosts::rules(cx);
+        let terminal_colors = cx.tokens().terminal.clone();
+        let identity_parts = |alias: &str, hostname: Option<&str>| {
+            let identity = rules.identify(alias, hostname);
+            (identity.color.resolve(&terminal_colors), identity.label)
+        };
+        let mut items = Vec::new();
+
+        // Sesiones cortadas, de cualquier pestaña.
+        for (ix, tab) in self.tabs.iter().enumerate() {
+            let shell = tab.view.read(cx).terminal().read(cx).shell();
+            let Some(d) = shell.disconnected.as_ref().filter(|_| shell.running.is_none()) else {
+                continue;
+            };
+            let minutes = d.at.elapsed().as_secs() / 60;
+            let ago = if minutes == 0 { "recién".to_string() } else { format!("hace {minutes} min") };
+            let mut item = PickerItem::new("Reconectar", d.target.alias.clone(), PickerAction::ReconnectTab(ix))
+                .icon(IconName::RotateCw)
+                .detail(format!("se cortó {ago} · exit {}", d.exit_code.unwrap_or(255)))
+                .mono();
+            if let Some(label) = d.identity.label.clone() {
+                item = item.chip(label, d.identity.color(cx));
+            }
+            if ix == self.active {
+                item.shortcut = Some(Box::new(Reconnect));
+            }
+            items.push(item);
+        }
+
+        // Pestañas con sesión abierta, para avisarlo en cada host.
+        let open_tabs: Vec<(usize, String)> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, tab)| {
+                let shell = tab.view.read(cx).terminal().read(cx).shell();
+                shell.remote.as_ref().map(|r| (ix, r.target.alias.clone()))
+            })
+            .collect();
+
+        let config_hosts = ssh::config_hosts();
+        for host in &config_hosts {
+            let (color, label) = identity_parts(&host.alias, host.hostname.as_deref());
+            let open = open_tabs
+                .iter()
+                .find(|(_, alias)| alias == &host.alias)
+                .map(|(ix, _)| format!("abierta en ⌘{} · ", ix + 1))
+                .unwrap_or_default();
+            let mut item = PickerItem::new(
+                "~/.ssh/config",
+                host.alias.clone(),
+                PickerAction::RunCommand(format!("ssh {}", host.alias)),
+            )
+            .dot(color)
+            .detail(format!("{open}{}", host.describe()))
+            .mono();
+            if let Some(label) = label {
+                item = item.chip(label, color);
+            }
+            items.push(item);
+        }
+
+        // `ssh …` del historial a destinos que no están en el config.
+        let mut seen: Vec<String> = config_hosts.iter().map(|h| h.alias.clone()).collect();
+        if let Some(history) = shell::history(cx) {
+            for command in history.entries.iter().rev() {
+                let Some(target) = ssh::parse_ssh_command(command).filter(|t| !t.remote_command) else {
+                    continue;
+                };
+                let key = command.trim().to_string();
+                if seen.contains(&key) || seen.contains(&target.alias) && command.trim() == format!("ssh {}", target.alias) {
+                    continue;
+                }
+                seen.push(key);
+                let (color, label) = identity_parts(&target.alias, None);
+                let mut item = PickerItem::new("Del historial", command.clone(), PickerAction::RunCommand(command.clone()))
+                    .kind(SuggestionKind::History)
+                    .mono();
+                if let Some(label) = label {
+                    item = item.chip(label, color);
+                }
+                items.push(item);
+                if items.len() > 80 {
+                    break;
+                }
+            }
+        }
+
+        let at_prompt = self.active_terminal(cx).read(cx).at_prompt();
+        let config = PickerConfig {
+            placeholder: "Conectar a… alias, usuario@host o IP".into(),
+            query: String::new(),
+            empty_text: if items.is_empty() {
+                "No hay hosts en ~/.ssh/config ni en el historial".into()
+            } else {
+                "Ningún host coincide".into()
+            },
+            hints: vec![
+                ("↑↓".into(), "navegar".into()),
+                ("⏎".into(), "abrir en pestaña nueva".into()),
+                ("⌘⏎".into(), if at_prompt { "en esta pestaña".into() } else { "en esta pestaña (no disponible)".into() }),
+                ("esc".into(), "cerrar".into()),
+            ],
+            disabled_reason: None,
+            selected_item: None,
+        };
+        self.open_modal(ModalKind::Hosts, items, config, window, cx);
+    }
+
     fn render_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let picker = self.modal.as_ref()?.picker.clone();
         Some(
@@ -923,8 +1261,22 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &ClearScreen, _, cx| {
                 this.active_terminal(cx).update(cx, |t, cx| t.clear(cx))
             }))
+            .on_action(cx.listener(|this, _: &ConnectToHost, w, cx| this.connect_to_host(w, cx)))
+            .on_action(cx.listener(|this, _: &Reconnect, w, cx| {
+                let active = this.active;
+                this.reconnect_tab(active, w, cx)
+            }))
             .child(self.render_tab_bar(cx))
-            .child(div().flex_1().min_h_0().children(active))
+            .children(self.render_production_strip(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .when(self.active_is_production(cx), |el| {
+                        el.p(px(8.)).bg(cx.tokens().terminal.background)
+                    })
+                    .children(active),
+            )
             .when(!self.tabs.is_empty(), |this| this.child(self.render_status_bar(cx)))
             .children(self.render_modal(cx))
     }

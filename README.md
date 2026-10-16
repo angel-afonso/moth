@@ -21,6 +21,7 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | ⌘K · ⌘⇧P | Paleta de comandos |
 | ⌘R | Buscar en el historial (⏎ lo lleva al prompt, ⌘⏎ lo ejecuta) |
 | ⌘L | Limpiar pantalla y scrollback |
+| ⌘⇧R | Reconectar la sesión SSH que se cortó |
 | ⌘V | Pegar (respeta bracketed paste) |
 | ⌘C | Copiar la pantalla visible (todavía no hay selección) |
 | → / Fin | Aceptar la sugerencia del historial |
@@ -28,6 +29,29 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 ## Paleta de comandos e historial
 
 ⌘K abre la paleta: acciones (con sus atajos), las pestañas abiertas y las carpetas recientes, que abren en una pestaña nueva. ⌘R abre la búsqueda en el historial de zsh: arranca con lo que ya estaba escrito en el prompt, filtra con coincidencia difusa y resalta los caracteres que coinciden. ⏎ lleva el comando al prompt para editarlo y ⌘⏎ lo ejecuta. Clic en la rama de la barra de estado (o "Cambiar de rama…" en la paleta) abre el mismo buscador con las ramas locales.
+
+## Sesiones SSH
+
+Cuando ejecutas `ssh` (con la integración de zsh), la app reconoce el destino (`user@host`, `-p`, `-J`, `-l`, `ssh://…`) y lo resuelve con `ssh -G`, que aplica tu `~/.ssh/config` sin conectarse. Mientras dure la sesión:
+
+- la pestaña muestra el host con un ícono ⇄, su chip (`PROD`, `STG`…) y la línea superior en el color del host;
+- la barra de estado cambia a `usuario@host`, `hostname:puerto`, la carpeta remota (si el servidor la pone en el título, como hacen Debian y Ubuntu) y el tiempo conectado;
+- si el host es de producción, aparece una franja bajo las pestañas, un borde alrededor de la terminal, y pegar varias líneas pide confirmación (esc cancela, ⌘⏎ pega igual).
+
+Si `ssh` termina con exit 255 (la conexión se cortó), la pestaña queda tachada con un botón para reconectar (también ⌘⇧R o desde la paleta). "Conectar a…" en ⌘K lista las sesiones cortadas, los hosts de `~/.ssh/config` (con sus `Include`) y los `ssh` del historial; ⏎ abre una pestaña nueva y ⌘⏎ conecta en la actual.
+
+La identidad de cada host se define en `~/Library/Application Support/terminalapp/hosts.json`. Cada regla se compara (glob con `*` y `?`) contra el alias y contra el hostname real; gana la primera que coincide:
+
+```json
+{
+  "hosts": [
+    { "match": "prod-*", "label": "PROD", "color": "red", "production": true },
+    { "match": "*.staging.internal", "label": "STG", "color": "cyan" }
+  ]
+}
+```
+
+`color` acepta colores ANSI del tema (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`) o un hex. Sin ese archivo se usan reglas por defecto: `*prod*`, `*production*` y `*live*` como producción, y `*staging*` y `*stg*` como STG. Si creas el archivo, reemplaza esas reglas. Los hosts sin regla reciben un color estable según su nombre.
 
 ## Temas
 
@@ -69,6 +93,8 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/terminal.rs`: PTY + `alacritty_terminal`, eventos hacia gpui.
 - `src/terminal_view.rs`: pinta la grilla con el text system de gpui, cursor, IME.
 - `src/shell.rs`: instalación del script de zsh, detección de OSC en el PTY, historial.
+- `src/ssh.rs`: reconoce el comando `ssh`, lo resuelve con `ssh -G` y lee `~/.ssh/config`.
+- `src/hosts.rs`: reglas de `hosts.json` (etiqueta, color, producción).
 - `src/git.rs`: estado del repo (`git status --porcelain=v2`), lista de ramas, comando para cambiar.
 - `src/highlight.rs`: lexer de la línea de comandos para el coloreado.
 - `src/picker.rs`: buscador en overlay (lista virtualizada, secciones, teclado) que usan la paleta, el historial y las ramas.

@@ -14,7 +14,7 @@ use ui::{
 };
 
 use crate::{
-    components::{Kbd, KindBadge, SuggestionKind},
+    components::{HostChip, Kbd, KindBadge, SuggestionKind},
     fuzzy::fuzzy_match,
     text_input::{self, TextInput},
     theme::MONO_FONT_FAMILY,
@@ -49,6 +49,9 @@ pub enum PickerAction {
     InsertCommand(String),
     SwitchBranch(String),
     SetTheme(String),
+    /// Ejecuta un comando en una pestaña nueva (con ⌘⏎, en la actual).
+    RunCommand(String),
+    ReconnectTab(usize),
 }
 
 impl Clone for PickerAction {
@@ -60,6 +63,8 @@ impl Clone for PickerAction {
             Self::InsertCommand(text) => Self::InsertCommand(text.clone()),
             Self::SwitchBranch(branch) => Self::SwitchBranch(branch.clone()),
             Self::SetTheme(name) => Self::SetTheme(name.clone()),
+            Self::RunCommand(command) => Self::RunCommand(command.clone()),
+            Self::ReconnectTab(ix) => Self::ReconnectTab(*ix),
         }
     }
 }
@@ -72,6 +77,10 @@ pub struct PickerItem {
     pub icon: Option<IconName>,
     /// Tipo de sugerencia; si está, se muestra en lugar del ícono.
     pub kind: Option<SuggestionKind>,
+    /// Punto de color en lugar del ícono (hosts).
+    pub dot: Option<gpui::Hsla>,
+    /// Chip después del texto (etiqueta del host).
+    pub chip: Option<(SharedString, gpui::Hsla)>,
     /// Acción cuyo atajo se muestra a la derecha.
     pub shortcut: Option<Box<dyn Action>>,
     pub mono: bool,
@@ -86,6 +95,8 @@ impl PickerItem {
             detail: None,
             icon: None,
             kind: None,
+            dot: None,
+            chip: None,
             shortcut: None,
             mono: false,
             action,
@@ -94,6 +105,16 @@ impl PickerItem {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn dot(mut self, color: gpui::Hsla) -> Self {
+        self.dot = Some(color);
+        self
+    }
+
+    pub fn chip(mut self, label: impl Into<SharedString>, color: gpui::Hsla) -> Self {
+        self.chip = Some((label.into(), color));
         self
     }
 
@@ -350,7 +371,17 @@ impl Picker {
                                 this.confirm_selected(event.modifiers().platform, cx);
                             }))
                             .when_some(item.kind, |row, kind| row.child(KindBadge::new(kind)))
-                            .when(item.kind.is_none(), |row| {
+                            .when_some(item.dot.filter(|_| item.kind.is_none()), |row, color| {
+                                row.child(
+                                    div()
+                                        .size(px(18.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(div().size(px(8.)).rounded_full().bg(color)),
+                                )
+                            })
+                            .when(item.kind.is_none() && item.dot.is_none(), |row| {
                                 row.children(item.icon.map(|icon| {
                                     Icon::new(icon)
                                         .size(IconSize::Small)
@@ -359,7 +390,7 @@ impl Picker {
                             })
                             .child(
                                 div()
-                                    .flex_1()
+                                    .overflow_hidden()
                                     .min_w_0()
                                     .when(item.mono, |el| el.font_family(MONO_FONT_FAMILY))
                                     .child(
@@ -368,6 +399,10 @@ impl Picker {
                                             .truncate(),
                                     ),
                             )
+                            .when_some(item.chip.clone(), |row, (label, color)| {
+                                row.child(HostChip::new(label, color))
+                            })
+                            .child(div().flex_1())
                             .when_some(item.detail.clone(), |row, detail| {
                                 row.child(
                                     Label::new(detail)
