@@ -14,7 +14,13 @@ pub struct Rect {
 }
 
 fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
-    Rect { x0, y0, x1, y1, alpha: 1. }
+    Rect {
+        x0,
+        y0,
+        x1,
+        y1,
+        alpha: 1.,
+    }
 }
 
 /// Rectángulos para dibujar `c` en una celda de `w`×`h` píxeles, o `None` si se dibuja con
@@ -33,7 +39,12 @@ fn block(c: char, w: f32, h: f32) -> Option<Vec<Rect>> {
     let ur = rect(hw, 0., w, hh);
     let ll = rect(0., hh, hw, h);
     let lr = rect(hw, hh, w, h);
-    let shade = |alpha: f32| vec![Rect { alpha, ..rect(0., 0., w, h) }];
+    let shade = |alpha: f32| {
+        vec![Rect {
+            alpha,
+            ..rect(0., 0., w, h)
+        }]
+    };
     Some(match c {
         '▀' => vec![rect(0., 0., w, hh)],
         '▁'..='▇' => {
@@ -75,7 +86,14 @@ struct Arms {
 }
 
 fn arms(c: char) -> Option<Arms> {
-    let a = |up, right, down, left| Some(Arms { up, right, down, left });
+    let a = |up, right, down, left| {
+        Some(Arms {
+            up,
+            right,
+            down,
+            left,
+        })
+    };
     match c {
         '─' => a(0, 1, 0, 1),
         '━' => a(0, 2, 0, 2),
@@ -184,7 +202,9 @@ mod tests {
     const H: f32 = 22.;
 
     fn covers(rects: &[Rect], x: f32, y: f32) -> bool {
-        rects.iter().any(|r| x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1)
+        rects
+            .iter()
+            .any(|r| x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1)
     }
 
     #[test]

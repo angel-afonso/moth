@@ -186,7 +186,8 @@ fn hashed_color(name: &str) -> HostColor {
 impl HostRules {
     pub fn identify(&self, alias: &str, hostname: Option<&str>) -> HostIdentity {
         let rule = self.rules.iter().find(|rule| {
-            glob_match(&rule.pattern, alias) || hostname.is_some_and(|h| glob_match(&rule.pattern, h))
+            glob_match(&rule.pattern, alias)
+                || hostname.is_some_and(|h| glob_match(&rule.pattern, h))
         });
         match rule {
             Some(rule) => HostIdentity {

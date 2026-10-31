@@ -282,7 +282,12 @@ impl EventedReadWrite for ShellPty {
     type Reader = ScanningReader;
     type Writer = File;
 
-    unsafe fn register(&mut self, poll: &Arc<Poller>, event: Event, mode: PollMode) -> io::Result<()> {
+    unsafe fn register(
+        &mut self,
+        poll: &Arc<Poller>,
+        event: Event,
+        mode: PollMode,
+    ) -> io::Result<()> {
         unsafe { self.pty.register(poll, event, mode) }
     }
 
@@ -472,7 +477,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tapp-hist-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("hist");
-        std::fs::write(&file, b": 1700000000:0;ls\n: 1700000001:0;cargo build\n: 1700000002:0;ls\n").unwrap();
+        std::fs::write(
+            &file,
+            b": 1700000000:0;ls\n: 1700000001:0;cargo build\n: 1700000002:0;ls\n",
+        )
+        .unwrap();
         assert_eq!(read_history_file(&file), vec!["cargo build", "ls"]);
         std::fs::remove_dir_all(dir).ok();
     }

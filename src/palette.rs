@@ -27,7 +27,11 @@ fn to_rgb(color: Hsla) -> Rgb {
 }
 
 /// Resuelve un índice de la paleta de 256 colores de xterm.
-pub fn indexed(index: u8, overrides: &dyn Fn(usize) -> Option<Rgb>, colors: &TerminalColors) -> Hsla {
+pub fn indexed(
+    index: u8,
+    overrides: &dyn Fn(usize) -> Option<Rgb>,
+    colors: &TerminalColors,
+) -> Hsla {
     if let Some(c) = overrides(index as usize) {
         return from_rgb(c);
     }
@@ -69,7 +73,11 @@ pub fn named(color: NamedColor, colors: &TerminalColors) -> Hsla {
     }
 }
 
-pub fn resolve(color: AnsiColor, overrides: &dyn Fn(usize) -> Option<Rgb>, colors: &TerminalColors) -> Hsla {
+pub fn resolve(
+    color: AnsiColor,
+    overrides: &dyn Fn(usize) -> Option<Rgb>,
+    colors: &TerminalColors,
+) -> Hsla {
     match color {
         AnsiColor::Spec(c) => from_rgb(c),
         AnsiColor::Indexed(i) => indexed(i, overrides, colors),

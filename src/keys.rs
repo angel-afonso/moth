@@ -120,7 +120,10 @@ mod tests {
         assert_eq!(esc("ctrl-c", TermMode::NONE).as_deref(), Some("\x03"));
         assert_eq!(esc("up", TermMode::NONE).as_deref(), Some("\x1b[A"));
         assert_eq!(esc("up", TermMode::APP_CURSOR).as_deref(), Some("\x1bOA"));
-        assert_eq!(esc("shift-right", TermMode::NONE).as_deref(), Some("\x1b[1;2C"));
+        assert_eq!(
+            esc("shift-right", TermMode::NONE).as_deref(),
+            Some("\x1b[1;2C")
+        );
     }
 
     #[test]

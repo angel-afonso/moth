@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, MouseButton, MouseDownEvent,
-    SharedString, Window, div,
-    prelude::*, px,
+    SharedString, Window, div, prelude::*, px,
 };
 use ui::{
     ButtonCommon, Clickable, Color, Icon, IconButton, IconName, IconSize, Label, LabelCommon,
@@ -192,10 +191,14 @@ impl RenderOnce for BlockStatus {
             BlockStatus::Running(elapsed) => {
                 (format!("● {}", format_duration(elapsed)), status.warning)
             }
-            BlockStatus::Finished { exit_code: 0, duration } => {
-                (format!("✓ {}", format_duration(duration)), status.success)
-            }
-            BlockStatus::Finished { exit_code, duration } => (
+            BlockStatus::Finished {
+                exit_code: 0,
+                duration,
+            } => (format!("✓ {}", format_duration(duration)), status.success),
+            BlockStatus::Finished {
+                exit_code,
+                duration,
+            } => (
                 format!("✕ exit {exit_code} · {}", format_duration(duration)),
                 status.error,
             ),
@@ -324,18 +327,27 @@ impl TabItem {
     }
 
     /// La sesión remota se cortó: título tachado y botón de reconectar en lugar de cerrar.
-    pub fn disconnected(mut self, on_reconnect: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn disconnected(
+        mut self,
+        on_reconnect: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.disconnected = true;
         self.on_reconnect = Some(Box::new(on_reconnect));
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 
-    pub fn on_close(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_close(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_close = Some(Box::new(handler));
         self
     }
@@ -371,7 +383,11 @@ impl RenderOnce for TabItem {
             (TabState::Running, None, _) => StatusDot::new(DotState::Running).into_any_element(),
             _ => Icon::new(IconName::Terminal)
                 .size(IconSize::Small)
-                .color(if selected { Color::Accent } else { Color::Placeholder })
+                .color(if selected {
+                    Color::Accent
+                } else {
+                    Color::Placeholder
+                })
                 .into_any_element(),
         };
         let accent = host_color.filter(|_| !disconnected).unwrap_or(ui.accent);
@@ -407,7 +423,14 @@ impl RenderOnce for TabItem {
             .when_some(self.on_middle_click, |tab, handler| {
                 tab.on_mouse_down(MouseButton::Middle, handler)
             })
-            .child(div().size(px(14.)).flex().items_center().justify_center().child(indicator))
+            .child(
+                div()
+                    .size(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(indicator),
+            )
             .child(
                 div().max_w(px(200.)).child(
                     Label::new(self.title)
@@ -418,13 +441,16 @@ impl RenderOnce for TabItem {
                         } else {
                             Color::Muted
                         })
-                        .when(selected && !disconnected, |label| label.weight(FontWeight::MEDIUM))
+                        .when(selected && !disconnected, |label| {
+                            label.weight(FontWeight::MEDIUM)
+                        })
                         .when(disconnected, |label| label.strikethrough())
                         .truncate(),
                 ),
             )
             .when_some(
-                self.remote.and_then(|(color, label)| label.map(|l| (color, l))),
+                self.remote
+                    .and_then(|(color, label)| label.map(|l| (color, l))),
                 |tab, (color, label)| tab.child(HostChip::new(label, color).dashed(disconnected)),
             )
             .when_some(self.shortcut, |tab, shortcut| {
@@ -437,34 +463,44 @@ impl RenderOnce for TabItem {
                 )
             })
             .when_some(self.on_reconnect, |tab, handler| {
-                let reconnect_id = ElementId::from(SharedString::from(format!("{close_id:?}-reconnect")));
+                let reconnect_id =
+                    ElementId::from(SharedString::from(format!("{close_id:?}-reconnect")));
                 tab.child(
-                    div().rounded(metrics::RADIUS_ROW).bg(tint(warning, 0.14)).child(
-                        IconButton::new(reconnect_id, IconName::RotateCw)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Warning)
-                            .size(ui::ButtonSize::Medium)
-                            .tooltip(Tooltip::text("Reconectar (⌘⇧R)"))
-                            .on_click(move |event, window, cx| {
-                                cx.stop_propagation();
-                                handler(event, window, cx)
-                            }),
-                    ),
+                    div()
+                        .rounded(metrics::RADIUS_ROW)
+                        .bg(tint(warning, 0.14))
+                        .child(
+                            IconButton::new(reconnect_id, IconName::RotateCw)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Warning)
+                                .size(ui::ButtonSize::Medium)
+                                .tooltip(Tooltip::text("Reconectar (⌘⇧R)"))
+                                .on_click(move |event, window, cx| {
+                                    cx.stop_propagation();
+                                    handler(event, window, cx)
+                                }),
+                        ),
                 )
             })
-            .when(!disconnected, |tab| tab.child(
-                IconButton::new(close_id, IconName::Close)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(if selected { Color::Muted } else { Color::Placeholder })
-                    .size(ui::ButtonSize::Medium)
-                    .tooltip(Tooltip::text(self.close_tooltip))
-                    .when_some(self.on_close, |button, handler| {
-                        button.on_click(move |event, window, cx| {
-                            cx.stop_propagation();
-                            handler(event, window, cx)
+            .when(!disconnected, |tab| {
+                tab.child(
+                    IconButton::new(close_id, IconName::Close)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(if selected {
+                            Color::Muted
+                        } else {
+                            Color::Placeholder
                         })
-                    }),
-            ))
+                        .size(ui::ButtonSize::Medium)
+                        .tooltip(Tooltip::text(self.close_tooltip))
+                        .when_some(self.on_close, |button, handler| {
+                            button.on_click(move |event, window, cx| {
+                                cx.stop_propagation();
+                                handler(event, window, cx)
+                            })
+                        }),
+                )
+            })
     }
 }
 

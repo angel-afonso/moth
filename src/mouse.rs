@@ -109,36 +109,92 @@ mod tests {
 
     #[test]
     fn nothing_without_mouse_mode() {
-        assert_eq!(report(Some(Button::Left), Action::Press, 0, 0, Mods::default(), TermMode::NONE), None);
+        assert_eq!(
+            report(
+                Some(Button::Left),
+                Action::Press,
+                0,
+                0,
+                Mods::default(),
+                TermMode::NONE
+            ),
+            None
+        );
     }
 
     #[test]
     fn sgr_press_release_and_drag() {
         let mode = TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE;
         let m = Mods::default();
-        assert_eq!(s(report(Some(Button::Left), Action::Press, 9, 4, m, mode)).unwrap(), "\x1b[<0;10;5M");
-        assert_eq!(s(report(Some(Button::Left), Action::Release, 9, 4, m, mode)).unwrap(), "\x1b[<0;10;5m");
-        assert_eq!(s(report(Some(Button::Left), Action::Motion, 11, 4, m, mode)).unwrap(), "\x1b[<32;12;5M");
-        assert_eq!(s(report(Some(Button::WheelDown), Action::Press, 0, 0, m, mode)).unwrap(), "\x1b[<65;1;1M");
+        assert_eq!(
+            s(report(Some(Button::Left), Action::Press, 9, 4, m, mode)).unwrap(),
+            "\x1b[<0;10;5M"
+        );
+        assert_eq!(
+            s(report(Some(Button::Left), Action::Release, 9, 4, m, mode)).unwrap(),
+            "\x1b[<0;10;5m"
+        );
+        assert_eq!(
+            s(report(Some(Button::Left), Action::Motion, 11, 4, m, mode)).unwrap(),
+            "\x1b[<32;12;5M"
+        );
+        assert_eq!(
+            s(report(
+                Some(Button::WheelDown),
+                Action::Press,
+                0,
+                0,
+                m,
+                mode
+            ))
+            .unwrap(),
+            "\x1b[<65;1;1M"
+        );
         let ctrl = Mods { control: true, ..m };
-        assert_eq!(s(report(Some(Button::Right), Action::Press, 0, 0, ctrl, mode)).unwrap(), "\x1b[<18;1;1M");
+        assert_eq!(
+            s(report(Some(Button::Right), Action::Press, 0, 0, ctrl, mode)).unwrap(),
+            "\x1b[<18;1;1M"
+        );
         // Movimiento sin botón solo con MOUSE_MOTION.
         assert_eq!(report(None, Action::Motion, 1, 1, m, mode), None);
         let any = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
-        assert_eq!(s(report(None, Action::Motion, 1, 1, m, any)).unwrap(), "\x1b[<35;2;2M");
+        assert_eq!(
+            s(report(None, Action::Motion, 1, 1, m, any)).unwrap(),
+            "\x1b[<35;2;2M"
+        );
     }
 
     #[test]
     fn x10_format() {
         let mode = TermMode::MOUSE_REPORT_CLICK;
         let m = Mods::default();
-        assert_eq!(report(Some(Button::Left), Action::Press, 0, 0, m, mode).unwrap(), b"\x1b[M !!".to_vec());
+        assert_eq!(
+            report(Some(Button::Left), Action::Press, 0, 0, m, mode).unwrap(),
+            b"\x1b[M !!".to_vec()
+        );
         // La liberación no indica el botón.
-        assert_eq!(report(Some(Button::Right), Action::Release, 0, 0, m, mode).unwrap(), b"\x1b[M#!!".to_vec());
+        assert_eq!(
+            report(Some(Button::Right), Action::Release, 0, 0, m, mode).unwrap(),
+            b"\x1b[M#!!".to_vec()
+        );
         // Fuera de rango en X10 no se reporta.
-        assert_eq!(report(Some(Button::Left), Action::Press, 300, 0, m, mode), None);
+        assert_eq!(
+            report(Some(Button::Left), Action::Press, 300, 0, m, mode),
+            None
+        );
         // Con UTF8_MOUSE sí, codificado en UTF-8.
-        let utf8 = report(Some(Button::Left), Action::Press, 300, 0, m, mode | TermMode::UTF8_MOUSE).unwrap();
-        assert_eq!(String::from_utf8(utf8).unwrap(), format!("\x1b[M {}!", char::from_u32(32 + 301).unwrap()));
+        let utf8 = report(
+            Some(Button::Left),
+            Action::Press,
+            300,
+            0,
+            m,
+            mode | TermMode::UTF8_MOUSE,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(utf8).unwrap(),
+            format!("\x1b[M {}!", char::from_u32(32 + 301).unwrap())
+        );
     }
 }

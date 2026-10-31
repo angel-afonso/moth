@@ -26,11 +26,11 @@ use gpui::{App, ClipboardItem, Context, EventEmitter, Pixels, Task, px};
 use crate::{
     completions,
     git::{self, GitStatus},
-    hosts::{self, HostIdentity},
-    ssh::{self, ResolvedHost, SshTarget},
     highlight::{self, CommandResolver, Token},
+    hosts::{self, HostIdentity},
     palette,
     shell::{self, History, ShellEvent, ShellPty},
+    ssh::{self, ResolvedHost, SshTarget},
     state,
     tokens::TokensExt,
 };
@@ -389,7 +389,8 @@ impl Terminal {
                 cx.notify();
             }
             ShellEvent::HistoryFile(path) => {
-                let already = shell::history(cx).is_some_and(|h| h.loaded_from.as_ref() == Some(&path));
+                let already =
+                    shell::history(cx).is_some_and(|h| h.loaded_from.as_ref() == Some(&path));
                 if !already {
                     let read = cx.background_executor().spawn({
                         let path = path.clone();
@@ -440,7 +441,8 @@ impl Terminal {
         let identity = rules.identify(&target.alias, None);
         let resolve = {
             let target = target.clone();
-            cx.background_executor().spawn(async move { ssh::resolve(&target) })
+            cx.background_executor()
+                .spawn(async move { ssh::resolve(&target) })
         };
         self.ssh_resolve = Some(cx.spawn(async move |this, cx| {
             let resolved = resolve.await;
@@ -448,7 +450,8 @@ impl Terminal {
                 if let Some(remote) = &mut this.shell.remote {
                     // Con el hostname real, una regla puede coincidir aunque el alias no.
                     if let Some(resolved) = &resolved {
-                        remote.identity = rules.identify(&remote.target.alias, Some(&resolved.hostname));
+                        remote.identity =
+                            rules.identify(&remote.target.alias, Some(&resolved.hostname));
                     }
                     remote.resolved = resolved;
                     cx.emit(TerminalEvent::TitleChanged);
@@ -476,7 +479,9 @@ impl Terminal {
             .map_or(line.buffer.len(), |(i, _)| i);
         let git = self.shell.git.clone();
         let branches = git.as_ref().map(|g| g.branches.clone()).unwrap_or_default();
-        let history = shell::history(cx).map(|h| h.entries.clone()).unwrap_or_default();
+        let history = shell::history(cx)
+            .map(|h| h.entries.clone())
+            .unwrap_or_default();
         let hosts: Vec<(String, String)> = ssh::config_hosts()
             .into_iter()
             .map(|h| {
@@ -485,11 +490,17 @@ impl Terminal {
             })
             .collect();
         let default_specs = completions::Specs::default();
-        let specs = cx.try_global::<completions::Specs>().unwrap_or(&default_specs);
+        let specs = cx
+            .try_global::<completions::Specs>()
+            .unwrap_or(&default_specs);
         let cwd = self.shell.cwd.clone();
         let resolver = std::cell::RefCell::new(std::mem::take(&mut self.resolver));
         let commands = |prefix: &str| resolver.borrow_mut().names_with_prefix(prefix);
-        let scripts = || cwd.as_deref().map(completions::package_scripts).unwrap_or_default();
+        let scripts = || {
+            cwd.as_deref()
+                .map(completions::package_scripts)
+                .unwrap_or_default()
+        };
         let result = completions::complete(&completions::Context {
             buffer: &line.buffer,
             cursor,
@@ -590,13 +601,14 @@ impl Terminal {
                 cx.emit(TerminalEvent::TitleChanged);
             }
             AlacEvent::PtyWrite(text) => self.write(text.into_bytes()),
-            AlacEvent::ColorRequest(index, format) => {
-                self.write(format(palette::rgb_for_index(index, &cx.tokens().terminal)).into_bytes())
-            }
+            AlacEvent::ColorRequest(index, format) => self
+                .write(format(palette::rgb_for_index(index, &cx.tokens().terminal)).into_bytes()),
             AlacEvent::TextAreaSizeRequest(format) => {
                 self.write(format(self.size.window_size()).into_bytes())
             }
-            AlacEvent::ClipboardStore(_, text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+            AlacEvent::ClipboardStore(_, text) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text))
+            }
             AlacEvent::ClipboardLoad(_, format) => {
                 let text = cx
                     .read_from_clipboard()
@@ -680,8 +692,14 @@ mod tests {
 
     #[test]
     fn reads_remote_cwd_from_titles() {
-        assert_eq!(remote_cwd_from_title("angel@prod-db-01: ~/app").as_deref(), Some("~/app"));
-        assert_eq!(remote_cwd_from_title("root@box:/var/log").as_deref(), Some("/var/log"));
+        assert_eq!(
+            remote_cwd_from_title("angel@prod-db-01: ~/app").as_deref(),
+            Some("~/app")
+        );
+        assert_eq!(
+            remote_cwd_from_title("root@box:/var/log").as_deref(),
+            Some("/var/log")
+        );
         assert_eq!(remote_cwd_from_title("vim notes.md"), None);
         assert_eq!(remote_cwd_from_title("Make: building"), None);
     }

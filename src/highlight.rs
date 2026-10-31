@@ -32,9 +32,32 @@ pub struct Token {
 
 /// Herramientas cuyo primer argumento es un subcomando (`git push`, `cargo build`).
 const SUBCOMMAND_TOOLS: &[&str] = &[
-    "git", "cargo", "npm", "pnpm", "yarn", "bun", "docker", "kubectl", "brew", "go", "rustup",
-    "gh", "pip", "pip3", "uv", "poetry", "systemctl", "launchctl", "terraform", "helm", "deno",
-    "swift", "xcrun", "npx", "make", "just",
+    "git",
+    "cargo",
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "docker",
+    "kubectl",
+    "brew",
+    "go",
+    "rustup",
+    "gh",
+    "pip",
+    "pip3",
+    "uv",
+    "poetry",
+    "systemctl",
+    "launchctl",
+    "terraform",
+    "helm",
+    "deno",
+    "swift",
+    "xcrun",
+    "npx",
+    "make",
+    "just",
 ];
 
 /// Prefijos tras los que la siguiente palabra vuelve a ser un comando.
@@ -50,12 +73,65 @@ const KEYWORDS: &[&str] = &[
 
 /// Builtins de zsh habituales; la shell además envía su lista real al iniciar.
 const BUILTINS: &[&str] = &[
-    "cd", "echo", "export", "source", ".", "alias", "unalias", "unset", "exit", "history",
-    "pwd", "pushd", "popd", "type", "which", "eval", "exec", "set", "local", "read", "printf",
-    "test", "[", "true", "false", "kill", "jobs", "fg", "bg", "wait", "ulimit", "umask",
-    "setopt", "unsetopt", "autoload", "bindkey", "zle", "print", "whence", "rehash", "hash",
-    "trap", "return", "shift", "getopts", "let", "typeset", "declare", "functions", "emulate",
-    "disown", "builtin", "command", "time", "sudo", "dirs", "logout", "zmodload", "compdef",
+    "cd",
+    "echo",
+    "export",
+    "source",
+    ".",
+    "alias",
+    "unalias",
+    "unset",
+    "exit",
+    "history",
+    "pwd",
+    "pushd",
+    "popd",
+    "type",
+    "which",
+    "eval",
+    "exec",
+    "set",
+    "local",
+    "read",
+    "printf",
+    "test",
+    "[",
+    "true",
+    "false",
+    "kill",
+    "jobs",
+    "fg",
+    "bg",
+    "wait",
+    "ulimit",
+    "umask",
+    "setopt",
+    "unsetopt",
+    "autoload",
+    "bindkey",
+    "zle",
+    "print",
+    "whence",
+    "rehash",
+    "hash",
+    "trap",
+    "return",
+    "shift",
+    "getopts",
+    "let",
+    "typeset",
+    "declare",
+    "functions",
+    "emulate",
+    "disown",
+    "builtin",
+    "command",
+    "time",
+    "sudo",
+    "dirs",
+    "logout",
+    "zmodload",
+    "compdef",
 ];
 
 /// Resuelve si una palabra es un comando ejecutable. Guarda en caché las búsquedas en PATH.
@@ -88,7 +164,12 @@ impl CommandResolver {
         let executables = self.executables.get_or_insert_with(|| {
             let mut names: Vec<String> = path
                 .iter()
-                .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok))
+                .flat_map(|dir| {
+                    std::fs::read_dir(dir)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Result::ok)
+                })
                 .filter(|entry| is_executable(&entry.path()))
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
                 .collect();
@@ -141,9 +222,10 @@ fn is_executable(path: &Path) -> bool {
 
 pub fn expand_path(word: &str, cwd: Option<&Path>) -> PathBuf {
     if let Some(rest) = word.strip_prefix('~')
-        && let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest.trim_start_matches('/'));
-        }
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest.trim_start_matches('/'));
+    }
     let path = Path::new(word);
     match cwd {
         Some(cwd) if path.is_relative() => cwd.join(path),
@@ -315,7 +397,11 @@ pub fn highlight(
                 }
             }
             _ if word.starts_with('-') => TokenKind::Flag,
-            Expect::Subcommand if word.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') => {
+            Expect::Subcommand
+                if word
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_') =>
+            {
                 expect = Expect::Argument;
                 TokenKind::Subcommand
             }

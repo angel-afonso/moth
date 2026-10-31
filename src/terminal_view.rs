@@ -12,12 +12,11 @@ use alacritty_terminal::{
 };
 use gpui::{
     App, BorderStyle, Bounds, ClipboardItem, Context, CursorStyle, Entity, FocusHandle, Focusable,
-    Font, FontStyle, FontWeight, Hsla, InputHandler, KeyDownEvent, MouseButton, MouseDownEvent,
-    Modifiers, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels,
-    Point, ScrollDelta, ScrollWheelEvent, ShapedLine, StrikethroughStyle, Subscription, TextAlign,
-    TextRun, UTF16Selection, UnderlineStyle, Window, actions, anchored, canvas, deferred, div, fill,
-    outline,
-    prelude::*, point, px, size, transparent_black,
+    Font, FontStyle, FontWeight, Hsla, InputHandler, KeyDownEvent, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, StrikethroughStyle, Subscription, TextAlign, TextRun,
+    UTF16Selection, UnderlineStyle, Window, actions, anchored, canvas, deferred, div, fill,
+    outline, point, prelude::*, px, size, transparent_black,
 };
 use ui::{
     Button, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color, HighlightedLabel, Icon,
@@ -25,13 +24,14 @@ use ui::{
 };
 
 use crate::{
-    highlight::{Token, TokenKind},
     completions,
     components::{Kbd, KindBadge, SuggestionKind},
-    glyphs, keys, links, mouse, palette,
-    tokens::{SyntaxColors, TokensExt, metrics, tint},
+    glyphs,
+    highlight::{Token, TokenKind},
+    keys, links, mouse, palette,
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
+    tokens::{SyntaxColors, TokensExt, metrics, tint},
 };
 
 actions!(terminal, [Paste, Copy]);
@@ -196,13 +196,15 @@ impl TerminalView {
             return;
         }
 
-        if plain && matches!(keystroke.key.as_str(), "right" | "end")
-            && let Some(rest) = self.terminal.read(cx).suggestion(cx) {
-                self.terminal
-                    .update(cx, |t, cx| t.input(rest.into_bytes(), cx));
-                cx.stop_propagation();
-                return;
-            }
+        if plain
+            && matches!(keystroke.key.as_str(), "right" | "end")
+            && let Some(rest) = self.terminal.read(cx).suggestion(cx)
+        {
+            self.terminal
+                .update(cx, |t, cx| t.input(rest.into_bytes(), cx));
+            cx.stop_propagation();
+            return;
+        }
 
         let mode = self.terminal.read(cx).mode();
         if let Some(esc) = keys::to_esc_str(&event.keystroke, mode) {
@@ -230,7 +232,11 @@ impl TerminalView {
         } else if column < 0. || row < 0. || column >= columns || row >= lines {
             return None;
         }
-        let side = if column.fract() < 0.5 { Side::Left } else { Side::Right };
+        let side = if column.fract() < 0.5 {
+            Side::Left
+        } else {
+            Side::Right
+        };
         Some((
             AlacPoint::new(
                 alacritty_terminal::index::Line(row as i32 - geometry.display_offset),
@@ -241,7 +247,8 @@ impl TerminalView {
     }
 
     fn grid_point(&self, position: Point<Pixels>, term: &Term<Listener>) -> Option<AlacPoint> {
-        self.grid_point_side(position, term, false).map(|(point, _)| point)
+        self.grid_point_side(position, term, false)
+            .map(|(point, _)| point)
     }
 
     /// Link bajo el mouse. En la línea que se está escribiendo no hay links: ahí el clic
@@ -251,7 +258,11 @@ impl TerminalView {
         let term = terminal.term.clone();
         let term = term.lock();
         let point = self.grid_point(position, &term)?;
-        if let Some(edit) = terminal.shell().line.as_ref().filter(|_| terminal.at_prompt())
+        if let Some(edit) = terminal
+            .shell()
+            .line
+            .as_ref()
+            .filter(|_| terminal.at_prompt())
             && locate_input(&term, edit).is_some_and(|cells| cells.contains(&point))
         {
             return None;
@@ -287,7 +298,9 @@ impl TerminalView {
                 control: modifiers.control,
             };
             let line = (point.line.0 + term.grid().display_offset() as i32).max(0) as usize;
-            if action == mouse::Action::Motion && self.last_motion_cell == Some((point.column.0, line)) {
+            if action == mouse::Action::Motion
+                && self.last_motion_cell == Some((point.column.0, line))
+            {
                 return true;
             }
             self.last_motion_cell = Some((point.column.0, line));
@@ -306,8 +319,13 @@ impl TerminalView {
         self.focus_handle.focus(window, cx);
         let shift = event.modifiers.shift;
         if self.reports_mouse(shift, cx) {
-            self.reported_press =
-                self.send_mouse(Some(mouse::Button::Left), mouse::Action::Press, event.position, &event.modifiers, cx);
+            self.reported_press = self.send_mouse(
+                Some(mouse::Button::Left),
+                mouse::Action::Press,
+                event.position,
+                &event.modifiers,
+                cx,
+            );
             return;
         }
         // El clic que solo activa la ventana no abre links.
@@ -346,14 +364,24 @@ impl TerminalView {
             }
         }
         drop(term);
-        self.press = Some(Press { point, side, dragged });
+        self.press = Some(Press {
+            point,
+            side,
+            dragged,
+        });
         cx.notify();
     }
 
     fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.pressed_button == Some(MouseButton::Left) {
             if self.reported_press {
-                self.send_mouse(Some(mouse::Button::Left), mouse::Action::Motion, event.position, &event.modifiers, cx);
+                self.send_mouse(
+                    Some(mouse::Button::Left),
+                    mouse::Action::Motion,
+                    event.position,
+                    &event.modifiers,
+                    cx,
+                );
                 return;
             }
             if let Some(mut press) = self.press {
@@ -366,7 +394,11 @@ impl TerminalView {
                     if point == press.point && side == press.side {
                         return;
                     }
-                    term.selection = Some(Selection::new(SelectionType::Simple, press.point, press.side));
+                    term.selection = Some(Selection::new(
+                        SelectionType::Simple,
+                        press.point,
+                        press.side,
+                    ));
                     press.dragged = true;
                 }
                 if let Some(selection) = term.selection.as_mut() {
@@ -379,7 +411,13 @@ impl TerminalView {
             }
         }
         if event.pressed_button.is_none() && self.reports_mouse(event.modifiers.shift, cx) {
-            self.send_mouse(None, mouse::Action::Motion, event.position, &event.modifiers, cx);
+            self.send_mouse(
+                None,
+                mouse::Action::Motion,
+                event.position,
+                &event.modifiers,
+                cx,
+            );
         }
         let link = self.link_under(event.position, cx);
         if link != self.hovered_link {
@@ -390,11 +428,20 @@ impl TerminalView {
 
     fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.reported_press) {
-            self.send_mouse(Some(mouse::Button::Left), mouse::Action::Release, event.position, &event.modifiers, cx);
+            self.send_mouse(
+                Some(mouse::Button::Left),
+                mouse::Action::Release,
+                event.position,
+                &event.modifiers,
+                cx,
+            );
             return;
         }
         if let Some(url) = self.link_press.take() {
-            if self.link_under(event.position, cx).is_some_and(|link| link.url == url) {
+            if self
+                .link_under(event.position, cx)
+                .is_some_and(|link| link.url == url)
+            {
                 cx.open_url(&url);
             }
             return;
@@ -433,7 +480,12 @@ impl TerminalView {
             return;
         };
         let terminal = self.terminal.read(cx);
-        let Some(edit) = terminal.shell().line.clone().filter(|_| terminal.at_prompt()) else {
+        let Some(edit) = terminal
+            .shell()
+            .line
+            .clone()
+            .filter(|_| terminal.at_prompt())
+        else {
             return;
         };
         let column = (position.x - geometry.origin.x) / geometry.cell_width;
@@ -453,7 +505,11 @@ impl TerminalView {
             .map(|p| CharCell {
                 line: p.line.0,
                 column: p.column.0,
-                width: if term.grid()[*p].flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 },
+                width: if term.grid()[*p].flags.contains(Flags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                },
             })
             .collect();
         let app_cursor = term.mode().contains(TermMode::APP_CURSOR);
@@ -490,9 +546,19 @@ impl TerminalView {
 
         // Si el programa pide el mouse, la rueda va como eventos de rueda.
         if self.reports_mouse(event.modifiers.shift, cx) {
-            let button = if lines > 0. { mouse::Button::WheelUp } else { mouse::Button::WheelDown };
+            let button = if lines > 0. {
+                mouse::Button::WheelUp
+            } else {
+                mouse::Button::WheelDown
+            };
             for _ in 0..lines.abs() as usize {
-                self.send_mouse(Some(button), mouse::Action::Press, event.position, &event.modifiers, cx);
+                self.send_mouse(
+                    Some(button),
+                    mouse::Action::Press,
+                    event.position,
+                    &event.modifiers,
+                    cx,
+                );
             }
             return;
         }
@@ -571,15 +637,26 @@ impl TerminalView {
     }
 
     /// Escribe el candidato (el elegido si no se pasa otro) en la línea; con `run`, ejecuta.
-    fn accept_completion(&mut self, candidate: Option<completions::Candidate>, run: bool, cx: &mut Context<Self>) {
+    fn accept_completion(
+        &mut self,
+        candidate: Option<completions::Candidate>,
+        run: bool,
+        cx: &mut Context<Self>,
+    ) {
         let menu = self.completion.take();
-        let Some(candidate) = candidate.or_else(|| menu.and_then(|m| m.completion.items.get(m.selected).cloned())) else {
+        let Some(candidate) =
+            candidate.or_else(|| menu.and_then(|m| m.completion.items.get(m.selected).cloned()))
+        else {
             return;
         };
         let Some(line) = self.terminal.read(cx).shell().line.clone() else {
             return;
         };
-        let cursor = line.buffer.char_indices().nth(line.cursor).map_or(line.buffer.len(), |(i, _)| i);
+        let cursor = line
+            .buffer
+            .char_indices()
+            .nth(line.cursor)
+            .map_or(line.buffer.len(), |(i, _)| i);
         let (buffer, new_cursor) = completions::apply(&line.buffer, cursor, &candidate);
         let back = buffer.chars().count().saturating_sub(new_cursor);
         let app_cursor = self.terminal.read(cx).mode().contains(TermMode::APP_CURSOR);
@@ -600,7 +677,11 @@ impl TerminalView {
     /// Mantiene el popup al día con la línea que reporta la shell.
     fn sync_completion(&mut self, cx: &mut Context<Self>) {
         let terminal = self.terminal.read(cx);
-        let line = terminal.shell().line.clone().filter(|_| terminal.at_prompt());
+        let line = terminal
+            .shell()
+            .line
+            .clone()
+            .filter(|_| terminal.at_prompt());
         let Some(line) = line else {
             self.completion = None;
             return;
@@ -616,13 +697,22 @@ impl TerminalView {
         if menu.line == line {
             return;
         }
-        let previous = menu.completion.items.get(menu.selected).map(|c| c.label.clone());
+        let previous = menu
+            .completion
+            .items
+            .get(menu.selected)
+            .map(|c| c.label.clone());
         match self.terminal.update(cx, |t, cx| t.complete(cx)) {
             Some(completion) => {
                 let selected = previous
                     .and_then(|label| completion.items.iter().position(|c| c.label == label))
                     .unwrap_or(0);
-                let mut menu = CompletionMenu { completion, selected: 0, top: 0, line };
+                let mut menu = CompletionMenu {
+                    completion,
+                    selected: 0,
+                    top: 0,
+                    line,
+                };
                 menu.select(selected as isize);
                 self.completion = Some(menu);
             }
@@ -637,12 +727,23 @@ impl TerminalView {
         let typed = &menu.completion.token;
         if candidate.kind == SuggestionKind::History {
             let line = &menu.line.buffer;
-            return candidate.text.strip_prefix(line.as_str()).map(str::to_string);
+            return candidate
+                .text
+                .strip_prefix(line.as_str())
+                .map(str::to_string);
         }
-        candidate.text.strip_prefix(typed.as_str()).filter(|rest| !rest.is_empty()).map(str::to_string)
+        candidate
+            .text
+            .strip_prefix(typed.as_str())
+            .filter(|rest| !rest.is_empty())
+            .map(str::to_string)
     }
 
-    fn render_completion_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    fn render_completion_menu(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         let menu = self.completion.as_ref()?;
         let geometry = self.geometry.get()?;
         let ui = cx.tokens().ui.clone();
@@ -652,19 +753,31 @@ impl TerminalView {
         let anchor_cell = {
             let term = self.terminal.read(cx).term.clone();
             let term = term.lock();
-            let replace_from = menu.completion.items.get(menu.selected).map_or(0, |c| c.replace_from);
-            let char_ix = menu.line.buffer.get(..replace_from).map_or(0, |s| s.chars().count());
+            let replace_from = menu
+                .completion
+                .items
+                .get(menu.selected)
+                .map_or(0, |c| c.replace_from);
+            let char_ix = menu
+                .line
+                .buffer
+                .get(..replace_from)
+                .map_or(0, |s| s.chars().count());
             locate_input(&term, &menu.line)
                 .and_then(|cells| cells.get(char_ix).copied())
                 .unwrap_or(term.grid().cursor.point)
         };
         let x = geometry.origin.x + geometry.cell_width * anchor_cell.column.0 as f32 - px(10.);
-        let row_top = geometry.origin.y + geometry.line_height * (anchor_cell.line.0 + geometry.display_offset) as f32;
+        let row_top = geometry.origin.y
+            + geometry.line_height * (anchor_cell.line.0 + geometry.display_offset) as f32;
         let above = row_top > window.viewport_size().height / 2.;
         let (position, corner) = if above {
             (point(x, row_top - px(6.)), gpui::Anchor::BottomLeft)
         } else {
-            (point(x, row_top + geometry.line_height + px(6.)), gpui::Anchor::TopLeft)
+            (
+                point(x, row_top + geometry.line_height + px(6.)),
+                gpui::Anchor::TopLeft,
+            )
         };
 
         let items = &menu.completion.items;
@@ -690,7 +803,9 @@ impl TerminalView {
                             .rounded(metrics::RADIUS_ROW)
                             .cursor_pointer()
                             .when(is_selected, |row| row.bg(ui.element_selected))
-                            .when(!is_selected, |row| row.hover(|style| style.bg(ui.element_hover)))
+                            .when(!is_selected, |row| {
+                                row.hover(|style| style.bg(ui.element_hover))
+                            })
                             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                                 if let Some(menu) = &mut this.completion {
                                     menu.selected = ix;
@@ -699,11 +814,23 @@ impl TerminalView {
                             }))
                             .child(KindBadge::new(item.kind))
                             .child(
-                                div().flex_none().max_w(px(260.)).overflow_hidden().font_family(MONO_FONT_FAMILY).child(
-                                    HighlightedLabel::new(item.label.clone(), item.positions.clone())
-                                        .color(if is_selected { Color::Default } else { Color::Muted })
+                                div()
+                                    .flex_none()
+                                    .max_w(px(260.))
+                                    .overflow_hidden()
+                                    .font_family(MONO_FONT_FAMILY)
+                                    .child(
+                                        HighlightedLabel::new(
+                                            item.label.clone(),
+                                            item.positions.clone(),
+                                        )
+                                        .color(if is_selected {
+                                            Color::Default
+                                        } else {
+                                            Color::Muted
+                                        })
                                         .truncate(),
-                                ),
+                                    ),
                             )
                             .child(div().flex_1())
                             .when_some(item.description.clone(), |row, description| {
@@ -711,7 +838,11 @@ impl TerminalView {
                                     div().min_w_0().child(
                                         Label::new(description)
                                             .size(LabelSize::Small)
-                                            .color(if is_selected { Color::Muted } else { Color::Placeholder })
+                                            .color(if is_selected {
+                                                Color::Muted
+                                            } else {
+                                                Color::Placeholder
+                                            })
                                             .truncate(),
                                     ),
                                 )
@@ -722,10 +853,11 @@ impl TerminalView {
             .collect::<Vec<_>>();
 
         let hint = |key: &'static str, label: &'static str| {
-            h_flex()
-                .gap(px(5.))
-                .child(Kbd::new(key))
-                .child(Label::new(label).size(LabelSize::XSmall).color(Color::Placeholder))
+            h_flex().gap(px(5.)).child(Kbd::new(key)).child(
+                Label::new(label)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Placeholder),
+            )
         };
         let list = v_flex()
             .w(px(440.))
@@ -787,9 +919,18 @@ impl TerminalView {
                                 .w(px(72.))
                                 .flex_none()
                                 .font_family(MONO_FONT_FAMILY)
-                                .child(Label::new(flag).size(LabelSize::Small).color(Color::Custom(warning))),
+                                .child(
+                                    Label::new(flag)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Custom(warning)),
+                                ),
                         )
-                        .child(Label::new(description).size(LabelSize::Small).color(Color::Muted).truncate())
+                        .child(
+                            Label::new(description)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate(),
+                        )
                 }))
         });
 
@@ -843,7 +984,11 @@ impl TerminalView {
                 .border_1()
                 .border_color(tint(host_color, 0.45))
                 .shadow_lg()
-                .child(Icon::new(IconName::Lock).size(IconSize::Small).color(Color::Custom(host_color)))
+                .child(
+                    Icon::new(IconName::Lock)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(host_color)),
+                )
                 .child(
                     v_flex()
                         .flex_1()
@@ -855,7 +1000,11 @@ impl TerminalView {
                                 .child(Label::new(format!("¿Pegar {lines} líneas en")))
                                 .child(
                                     h_flex()
-                                        .child(Label::new(host).color(Color::Custom(host_color)).weight(FontWeight::SEMIBOLD))
+                                        .child(
+                                            Label::new(host)
+                                                .color(Color::Custom(host_color))
+                                                .weight(FontWeight::SEMIBOLD),
+                                        )
                                         .child(Label::new("?")),
                                 ),
                         )
@@ -864,7 +1013,12 @@ impl TerminalView {
                                 .font_family(MONO_FONT_FAMILY)
                                 .text_size(px(12.))
                                 .text_color(ui.text_placeholder)
-                                .child(Label::new(preview).size(LabelSize::Small).color(Color::Placeholder).truncate()),
+                                .child(
+                                    Label::new(preview)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder)
+                                        .truncate(),
+                                ),
                         ),
                 )
                 .child(
@@ -965,7 +1119,11 @@ impl Render for TerminalView {
             .bg(cx.tokens().terminal.background)
             // En producción, un borde del color del host enmarca la terminal.
             .when_some(production_color, |el, color| {
-                el.border_1().border_color(tint(color, 0.22)).rounded(px(8.)).px(px(20.)).pt(px(12.))
+                el.border_1()
+                    .border_color(tint(color, 0.22))
+                    .rounded(px(8.))
+                    .px(px(20.))
+                    .pt(px(12.))
             })
             .cursor(if self.hovered_link.is_some() {
                 CursorStyle::PointingHand
@@ -981,25 +1139,49 @@ impl Render for TerminalView {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    this.other_button(mouse::Button::Right, mouse::Action::Press, e.position, &e.modifiers, cx)
+                    this.other_button(
+                        mouse::Button::Right,
+                        mouse::Action::Press,
+                        e.position,
+                        &e.modifiers,
+                        cx,
+                    )
                 }),
             )
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(|this, e: &MouseUpEvent, _, cx| {
-                    this.other_button(mouse::Button::Right, mouse::Action::Release, e.position, &e.modifiers, cx)
+                    this.other_button(
+                        mouse::Button::Right,
+                        mouse::Action::Release,
+                        e.position,
+                        &e.modifiers,
+                        cx,
+                    )
                 }),
             )
             .on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    this.other_button(mouse::Button::Middle, mouse::Action::Press, e.position, &e.modifiers, cx)
+                    this.other_button(
+                        mouse::Button::Middle,
+                        mouse::Action::Press,
+                        e.position,
+                        &e.modifiers,
+                        cx,
+                    )
                 }),
             )
             .on_mouse_up(
                 MouseButton::Middle,
                 cx.listener(|this, e: &MouseUpEvent, _, cx| {
-                    this.other_button(mouse::Button::Middle, mouse::Action::Release, e.position, &e.modifiers, cx)
+                    this.other_button(
+                        mouse::Button::Middle,
+                        mouse::Action::Release,
+                        e.position,
+                        &e.modifiers,
+                        cx,
+                    )
                 }),
             )
             .on_mouse_move(cx.listener(Self::mouse_move))
@@ -1143,12 +1325,19 @@ fn layout_grid(
             line_height,
         });
         // El candidato del popup de completions tiene prioridad sobre la sugerencia del historial.
-        (t.highlighted_line(), completion_ghost.or_else(|| t.suggestion(cx)))
+        (
+            t.highlighted_line(),
+            completion_ghost.or_else(|| t.suggestion(cx)),
+        )
     });
 
     let origin = bounds.origin;
-    let cell_origin =
-        |line: usize, column: usize| point(origin.x + cell_width * column as f32, origin.y + line_height * line as f32);
+    let cell_origin = |line: usize, column: usize| {
+        point(
+            origin.x + cell_width * column as f32,
+            origin.y + line_height * line as f32,
+        )
+    };
 
     let shape = |text: String, style: &CellStyle| -> ShapedLine {
         let run = TextRun {
@@ -1233,13 +1422,19 @@ fn layout_grid(
         }
         if !default_bg {
             backgrounds.push(fill(
-                Bounds::new(cell_origin(line, column), size(cell_width * width as f32, line_height)),
+                Bounds::new(
+                    cell_origin(line, column),
+                    size(cell_width * width as f32, line_height),
+                ),
                 bg,
             ));
         }
         if selection.is_some_and(|range| range.contains(indexed.point)) {
             backgrounds.push(fill(
-                Bounds::new(cell_origin(line, column), size(cell_width * width as f32, line_height)),
+                Bounds::new(
+                    cell_origin(line, column),
+                    size(cell_width * width as f32, line_height),
+                ),
                 tokens.terminal.selection,
             ));
         }
@@ -1287,9 +1482,9 @@ fn layout_grid(
             continue;
         }
 
-        let continues = current.as_ref().is_some_and(|s| {
-            s.line == line && s.next_column == column && s.style == style
-        });
+        let continues = current
+            .as_ref()
+            .is_some_and(|s| s.line == line && s.next_column == column && s.style == style);
         if !continues {
             flush(current.take(), &mut shaped);
             current = Some(Segment {
@@ -1320,7 +1515,9 @@ fn layout_grid(
         let viewport_line = cursor_point.line.0 + display_offset;
         let free: usize = (cursor_point.column.0..columns)
             .take_while(|&col| {
-                term.grid()[AlacPoint::new(cursor_point.line, alacritty_terminal::index::Column(col))].c == ' '
+                term.grid()
+                    [AlacPoint::new(cursor_point.line, alacritty_terminal::index::Column(col))]
+                .c == ' '
             })
             .count();
         let text: String = rest.chars().take(free).collect();
@@ -1352,8 +1549,13 @@ fn layout_grid(
     if (0..lines as i32).contains(&cursor_line) {
         let line = cursor_line as usize;
         let column = content.cursor.point.column.0;
-        let cell = &term.grid()[AlacPoint::new(content.cursor.point.line, content.cursor.point.column)];
-        let width = if cell.flags.contains(Flags::WIDE_CHAR) { 2. } else { 1. };
+        let cell =
+            &term.grid()[AlacPoint::new(content.cursor.point.line, content.cursor.point.column)];
+        let width = if cell.flags.contains(Flags::WIDE_CHAR) {
+            2.
+        } else {
+            1.
+        };
         let at = cell_origin(line, column);
         let block = Bounds::new(at, size(cell_width * width, line_height));
         cursor_bounds = Some(block);
@@ -1375,7 +1577,11 @@ fn layout_grid(
                 }
                 (CursorShape::Block, true) => {
                     cursor = Some(fill(block, accent));
-                    let under_cursor = if cell.c != ' ' { Some(cell.c) } else { ghost_first };
+                    let under_cursor = if cell.c != ' ' {
+                        Some(cell.c)
+                    } else {
+                        ghost_first
+                    };
                     if let Some(c) = under_cursor {
                         let style = CellStyle {
                             fg: background,
@@ -1434,14 +1640,23 @@ fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
                 .hyperlink()
                 .is_some_and(|h| h.id() == hyperlink.id())
         };
-        let start = (0..=point.column.0).rev().take_while(|&c| same(c)).last().unwrap_or(point.column.0);
-        let end = (point.column.0..term.columns()).take_while(|&c| same(c)).last().unwrap_or(point.column.0);
+        let start = (0..=point.column.0)
+            .rev()
+            .take_while(|&c| same(c))
+            .last()
+            .unwrap_or(point.column.0);
+        let end = (point.column.0..term.columns())
+            .take_while(|&c| same(c))
+            .last()
+            .unwrap_or(point.column.0);
         let cells = (start..=end).map(|c| (point.line.0, c)).collect();
         return Some(HoveredLink { url, cells });
     }
 
     let wraps = |line: alacritty_terminal::index::Line| {
-        grid[AlacPoint::new(line, last_column)].flags.contains(Flags::WRAPLINE)
+        grid[AlacPoint::new(line, last_column)]
+            .flags
+            .contains(Flags::WRAPLINE)
     };
     let mut first = point.line;
     while first > term.topmost_line() && wraps(first - 1) {
@@ -1458,7 +1673,10 @@ fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
     while line <= last {
         for column in 0..term.columns() {
             let cell = &grid[AlacPoint::new(line, alacritty_terminal::index::Column(column))];
-            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
                 continue;
             }
             offsets.push((text.len(), (line.0, column)));
@@ -1473,7 +1691,9 @@ fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
         .rev()
         .find(|(_, (l, c))| *l == point.line.0 && *c <= point.column.0)
         .map(|(offset, _)| *offset)?;
-    let range = links::find_urls(&text).into_iter().find(|r| r.contains(&hovered))?;
+    let range = links::find_urls(&text)
+        .into_iter()
+        .find(|r| r.contains(&hovered))?;
     let url = text[range.clone()].to_string();
     if !links::is_openable(&url) {
         return None;
@@ -1499,7 +1719,11 @@ struct CharCell {
 /// después de él, y un clic más allá del final de una fila va al final de esa fila.
 /// `None` si el clic no cae sobre la línea en edición (por ejemplo, sobre el prompt).
 fn click_target(cells: &[CharCell], line: i32, column: f32) -> Option<usize> {
-    let row: Vec<(usize, &CharCell)> = cells.iter().enumerate().filter(|(_, c)| c.line == line).collect();
+    let row: Vec<(usize, &CharCell)> = cells
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.line == line)
+        .collect();
     let (first_ix, first) = *row.first()?;
     if column < first.column as f32 {
         // A la izquierda del texto: en una fila continuada, al inicio de esa fila; en la
@@ -1556,7 +1780,11 @@ fn locate_input(term: &Term<Listener>, line: &EditLine) -> Option<Vec<AlacPoint>
     let mut point = grid.cursor.point;
     for i in cursor..chars.len() {
         if i > cursor {
-            let width = if grid[point].flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 };
+            let width = if grid[point].flags.contains(Flags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
             let next = point.add(grid, Boundary::Grid, width);
             if next == point {
                 return None;
@@ -1716,7 +1944,11 @@ mod tests {
         widths
             .iter()
             .map(|&width| {
-                let cell = CharCell { line, column, width };
+                let cell = CharCell {
+                    line,
+                    column,
+                    width,
+                };
                 column += width;
                 cell
             })

@@ -341,7 +341,11 @@ mod tests {
     fn builtin_themes_parse_and_graphite_is_first() {
         let themes = builtins();
         assert_eq!(themes[0].name, "Graphite");
-        assert!(themes.iter().any(|t| t.name == "Graphite Light" && t.appearance == Appearance::Light));
+        assert!(
+            themes
+                .iter()
+                .any(|t| t.name == "Graphite Light" && t.appearance == Appearance::Light)
+        );
         assert_eq!(hex::format(&themes[0].ui.accent), "#82AAFF");
         assert_eq!(hex::format(&themes[0].ui.overlay), "#0506089E");
     }
@@ -374,7 +378,11 @@ mod tests {
     fn user_dir_themes_override_by_name() {
         let dir = std::env::temp_dir().join(format!("tapp-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("mio.json"), r##"{ "name": "Mío", "ui": { "accent": "#00FF00" } }"##).unwrap();
+        std::fs::write(
+            dir.join("mio.json"),
+            r##"{ "name": "Mío", "ui": { "accent": "#00FF00" } }"##,
+        )
+        .unwrap();
         std::fs::write(dir.join("roto.json"), "{ no es json").unwrap();
         let themes = load_themes(Some(&dir));
         let mine = themes.iter().find(|t| t.name == "Mío").unwrap();

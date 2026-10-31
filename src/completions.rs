@@ -99,7 +99,9 @@ pub struct Context<'a> {
     pub scripts: &'a dyn Fn() -> Vec<(String, String)>,
 }
 
-const PRECOMMANDS: &[&str] = &["sudo", "env", "time", "nohup", "command", "exec", "noglob", "nice"];
+const PRECOMMANDS: &[&str] = &[
+    "sudo", "env", "time", "nohup", "command", "exec", "noglob", "nice",
+];
 const MAX_ITEMS: usize = 60;
 
 /// Palabras de un segmento con su posición de inicio, respetando comillas.
@@ -188,7 +190,12 @@ fn spec_doc(title: String, spec: &Spec) -> Doc {
         title,
         description: spec.description.clone(),
         usage: spec.usage.clone(),
-        flags: spec.flags.iter().take(6).map(|(f, d)| (f.clone(), d.clone())).collect(),
+        flags: spec
+            .flags
+            .iter()
+            .take(6)
+            .map(|(f, d)| (f.clone(), d.clone()))
+            .collect(),
     }
 }
 
@@ -200,7 +207,15 @@ struct Builder<'a> {
 
 impl Builder<'_> {
     /// Agrega un candidato si coincide con lo escrito. Con la palabra vacía entra todo.
-    fn push(&mut self, text: String, label: String, kind: SuggestionKind, description: Option<String>, doc: Option<Doc>, append_space: bool) {
+    fn push(
+        &mut self,
+        text: String,
+        label: String,
+        kind: SuggestionKind,
+        description: Option<String>,
+        doc: Option<Doc>,
+        append_space: bool,
+    ) {
         let query = self.token.trim_start_matches(['-']);
         let target = label.trim_start_matches(['-']);
         let Some(m) = fuzzy_match(query, target) else {
@@ -208,7 +223,11 @@ impl Builder<'_> {
         };
         // El matcher trabaja sin los guiones iniciales; las posiciones se corren.
         let shift = label.len() - target.len();
-        let prefix_bonus = if label.starts_with(self.token) { 500 } else { 0 };
+        let prefix_bonus = if label.starts_with(self.token) {
+            500
+        } else {
+            0
+        };
         self.items.push(Candidate {
             text,
             label,
@@ -235,7 +254,8 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
     };
     // Prefijos como `sudo` o `FOO=1` no cuentan: lo que sigue vuelve a ser un comando.
     while let Some((_, first)) = words.first() {
-        if PRECOMMANDS.contains(&first.as_str()) || (first.contains('=') && !first.starts_with('-')) {
+        if PRECOMMANDS.contains(&first.as_str()) || (first.contains('=') && !first.starts_with('-'))
+        {
             words.remove(0);
         } else {
             break;
@@ -253,11 +273,25 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
             return None;
         }
         for (name, spec) in &ctx.specs.0 {
-            b.push(name.clone(), name.clone(), SuggestionKind::Command, spec.description.clone(), Some(spec_doc(name.clone(), spec)), true);
+            b.push(
+                name.clone(),
+                name.clone(),
+                SuggestionKind::Command,
+                spec.description.clone(),
+                Some(spec_doc(name.clone(), spec)),
+                true,
+            );
         }
         for name in (ctx.commands)(&token) {
             if !ctx.specs.0.contains_key(&name) {
-                b.push(name.clone(), name, SuggestionKind::Command, None, None, true);
+                b.push(
+                    name.clone(),
+                    name,
+                    SuggestionKind::Command,
+                    None,
+                    None,
+                    true,
+                );
             }
         }
     } else {
@@ -269,14 +303,28 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
         if token.starts_with('-') {
             if let Some(active) = active {
                 for (flag, description) in &active.flags {
-                    b.push(flag.clone(), flag.clone(), SuggestionKind::Flag, Some(description.clone()), None, true);
+                    b.push(
+                        flag.clone(),
+                        flag.clone(),
+                        SuggestionKind::Flag,
+                        Some(description.clone()),
+                        None,
+                        true,
+                    );
                 }
             }
         } else if let (Some(spec), 1) = (spec, words.len())
             && !spec.subcommands.is_empty()
         {
             for (name, sub) in &spec.subcommands {
-                b.push(name.clone(), name.clone(), SuggestionKind::Subcommand, sub.description.clone(), Some(spec_doc(format!("{command} {name}"), sub)), true);
+                b.push(
+                    name.clone(),
+                    name.clone(),
+                    SuggestionKind::Subcommand,
+                    sub.description.clone(),
+                    Some(spec_doc(format!("{command} {name}"), sub)),
+                    true,
+                );
             }
         } else {
             match active.and_then(|s| s.args.as_deref()) {
@@ -284,23 +332,51 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                     for branch in ctx.branches {
                         let current = ctx.current_branch == Some(branch.as_str());
                         let description = if current { "rama actual" } else { "rama local" };
-                        b.push(escape(branch), branch.clone(), SuggestionKind::Branch, Some(description.into()), None, true);
+                        b.push(
+                            escape(branch),
+                            branch.clone(),
+                            SuggestionKind::Branch,
+                            Some(description.into()),
+                            None,
+                            true,
+                        );
                     }
                 }
                 Some("script") => {
                     for (name, command) in (ctx.scripts)() {
-                        b.push(escape(&name), name, SuggestionKind::Subcommand, Some(command), None, true);
+                        b.push(
+                            escape(&name),
+                            name,
+                            SuggestionKind::Subcommand,
+                            Some(command),
+                            None,
+                            true,
+                        );
                     }
                 }
                 Some("host") => {
                     for (alias, describe) in ctx.hosts {
-                        b.push(escape(alias), alias.clone(), SuggestionKind::Path, Some(describe.clone()), None, true);
+                        b.push(
+                            escape(alias),
+                            alias.clone(),
+                            SuggestionKind::Path,
+                            Some(describe.clone()),
+                            None,
+                            true,
+                        );
                     }
                 }
                 Some("command") => {
                     if !token.is_empty() {
                         for name in (ctx.commands)(&token) {
-                            b.push(name.clone(), name, SuggestionKind::Command, None, None, true);
+                            b.push(
+                                name.clone(),
+                                name,
+                                SuggestionKind::Command,
+                                None,
+                                None,
+                                true,
+                            );
                         }
                     }
                 }
@@ -340,12 +416,22 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
     (!items.is_empty()).then_some(Completion { token, items })
 }
 
-fn complete_paths(b: &mut Builder, token: &str, cwd: Option<&Path>, list_dir: &dyn Fn(&Path) -> Vec<(String, bool)>, dirs_only: bool) {
+fn complete_paths(
+    b: &mut Builder,
+    token: &str,
+    cwd: Option<&Path>,
+    list_dir: &dyn Fn(&Path) -> Vec<(String, bool)>,
+    dirs_only: bool,
+) {
     let (dir_part, prefix) = match token.rfind('/') {
         Some(i) => (&token[..=i], &token[i + 1..]),
         None => ("", token),
     };
-    let base = if dir_part.is_empty() { cwd.map(Path::to_path_buf).unwrap_or_default() } else { expand(dir_part, cwd) };
+    let base = if dir_part.is_empty() {
+        cwd.map(Path::to_path_buf).unwrap_or_default()
+    } else {
+        expand(dir_part, cwd)
+    };
     let mut entries = list_dir(&base);
     entries.sort();
     // El filtro difuso trabaja sobre el nombre; la palabra completa se arma después.
@@ -358,10 +444,21 @@ fn complete_paths(b: &mut Builder, token: &str, cwd: Option<&Path>, list_dir: &d
         if (name.starts_with('.') && !prefix.starts_with('.')) || (dirs_only && !is_dir) {
             continue;
         }
-        let text = format!("{dir_part}{}{}", escape(&name), if is_dir { "/" } else { "" });
+        let text = format!(
+            "{dir_part}{}{}",
+            escape(&name),
+            if is_dir { "/" } else { "" }
+        );
         let label = format!("{name}{}", if is_dir { "/" } else { "" });
         let description = Some(if is_dir { "carpeta" } else { "archivo" }.to_string());
-        names.push(text, label, SuggestionKind::Path, description, None, !is_dir);
+        names.push(
+            text,
+            label,
+            SuggestionKind::Path,
+            description,
+            None,
+            !is_dir,
+        );
     }
     b.items.extend(names.items);
 }
@@ -392,7 +489,12 @@ pub fn package_scripts(dir: &Path) -> Vec<(String, String)> {
         .map(|scripts| {
             scripts
                 .iter()
-                .map(|(name, command)| (name.clone(), command.as_str().unwrap_or_default().to_string()))
+                .map(|(name, command)| {
+                    (
+                        name.clone(),
+                        command.as_str().unwrap_or_default().to_string(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -422,20 +524,44 @@ mod tests {
 
     fn run_at(buffer: &str, cursor: usize) -> Vec<(String, SuggestionKind)> {
         let specs = load_specs();
-        let branches = vec!["main".to_string(), "feat/tabs".to_string(), "fix/scroll".to_string()];
-        let history = vec!["git checkout -b feat/completions".to_string(), "ls -la".to_string()];
+        let branches = vec![
+            "main".to_string(),
+            "feat/tabs".to_string(),
+            "fix/scroll".to_string(),
+        ];
+        let history = vec![
+            "git checkout -b feat/completions".to_string(),
+            "ls -la".to_string(),
+        ];
         let hosts = vec![("prod-db".to_string(), "angel@10.0.4.12".to_string())];
         let commands = |prefix: &str| {
-            ["gcc", "git", "gitk", "grep", "go"].iter().filter(|c| c.starts_with(prefix)).map(|c| c.to_string()).collect()
+            ["gcc", "git", "gitk", "grep", "go"]
+                .iter()
+                .filter(|c| c.starts_with(prefix))
+                .map(|c| c.to_string())
+                .collect()
         };
         let list_dir = |dir: &Path| {
             if dir.ends_with("src") {
-                vec![("main.rs".to_string(), false), ("mi archivo.rs".to_string(), false)]
+                vec![
+                    ("main.rs".to_string(), false),
+                    ("mi archivo.rs".to_string(), false),
+                ]
             } else {
-                vec![("src".to_string(), true), ("Cargo.toml".to_string(), false), (".git".to_string(), true), ("README.md".to_string(), false)]
+                vec![
+                    ("src".to_string(), true),
+                    ("Cargo.toml".to_string(), false),
+                    (".git".to_string(), true),
+                    ("README.md".to_string(), false),
+                ]
             }
         };
-        let scripts = || vec![("dev".to_string(), "vite".to_string()), ("build".to_string(), "vite build".to_string())];
+        let scripts = || {
+            vec![
+                ("dev".to_string(), "vite".to_string()),
+                ("build".to_string(), "vite build".to_string()),
+            ]
+        };
         let ctx = Context {
             buffer,
             cursor,
@@ -468,9 +594,18 @@ mod tests {
     #[test]
     fn subcommands_ranked_by_prefix_then_history() {
         let items = run("git ch");
-        assert_eq!(items[0], ("checkout".to_string(), SuggestionKind::Subcommand));
+        assert_eq!(
+            items[0],
+            ("checkout".to_string(), SuggestionKind::Subcommand)
+        );
         assert!(texts(&items).contains(&"cherry-pick"));
-        assert_eq!(items.last().unwrap(), &("git checkout -b feat/completions".to_string(), SuggestionKind::History));
+        assert_eq!(
+            items.last().unwrap(),
+            &(
+                "git checkout -b feat/completions".to_string(),
+                SuggestionKind::History
+            )
+        );
     }
 
     #[test]
@@ -501,7 +636,10 @@ mod tests {
     #[test]
     fn paths_inside_folders_escape_spaces() {
         // Primero el que empieza igual; `main.rs` también coincide (difuso), pero más abajo.
-        assert_eq!(texts(&run("cat src/mi"))[..2], ["src/mi\\ archivo.rs", "src/main.rs"]);
+        assert_eq!(
+            texts(&run("cat src/mi"))[..2],
+            ["src/mi\\ archivo.rs", "src/main.rs"]
+        );
         let items = run("cat ");
         assert!(texts(&items).contains(&"src/") && texts(&items).contains(&"Cargo.toml"));
     }
@@ -528,8 +666,16 @@ mod tests {
         };
         assert_eq!(apply("git ch", 6, &candidate), ("git checkout ".into(), 13));
         // Con texto después del cursor, se conserva y el cursor queda tras lo insertado.
-        assert_eq!(apply("git ch main", 6, &candidate), ("git checkout main".into(), 12));
-        let dir = Candidate { text: "src/".into(), append_space: false, replace_from: 3, ..candidate };
+        assert_eq!(
+            apply("git ch main", 6, &candidate),
+            ("git checkout main".into(), 12)
+        );
+        let dir = Candidate {
+            text: "src/".into(),
+            append_space: false,
+            replace_from: 3,
+            ..candidate
+        };
         assert_eq!(apply("cd s", 4, &dir), ("cd src/".into(), 7));
     }
 

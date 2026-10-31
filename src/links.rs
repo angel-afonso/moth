@@ -8,14 +8,15 @@ use std::ops::Range;
 const ALLOWED_SCHEMES: &[&str] = &["http", "https", "ftp", "file", "mailto"];
 
 pub fn is_openable(url: &str) -> bool {
-    url.split_once(':')
-        .is_some_and(|(scheme, rest)| {
-            ALLOWED_SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !rest.is_empty()
-        })
+    url.split_once(':').is_some_and(|(scheme, rest)| {
+        ALLOWED_SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !rest.is_empty()
+    })
 }
 
 fn is_url_char(c: char) -> bool {
-    !c.is_whitespace() && !c.is_control() && !matches!(c, '<' | '>' | '"' | '`' | '{' | '}' | '|' | '\\' | '^')
+    !c.is_whitespace()
+        && !c.is_control()
+        && !matches!(c, '<' | '>' | '"' | '`' | '{' | '}' | '|' | '\\' | '^')
 }
 
 /// URLs dentro de `text`, como rangos en bytes. Reconoce `esquema://…` y `mailto:…`, y quita
@@ -28,8 +29,14 @@ pub fn find_urls(text: &str) -> Vec<Range<usize>> {
         let Some(found) = ALLOWED_SCHEMES
             .iter()
             .filter_map(|scheme| {
-                let marker = if *scheme == "mailto" { "mailto:".to_string() } else { format!("{scheme}://") };
-                rest.to_ascii_lowercase().find(&marker).map(|i| (i, marker.len()))
+                let marker = if *scheme == "mailto" {
+                    "mailto:".to_string()
+                } else {
+                    format!("{scheme}://")
+                };
+                rest.to_ascii_lowercase()
+                    .find(&marker)
+                    .map(|i| (i, marker.len()))
             })
             .min_by_key(|(i, _)| *i)
         else {
@@ -38,7 +45,10 @@ pub fn find_urls(text: &str) -> Vec<Range<usize>> {
         let (offset, marker_len) = found;
         let start = search_from + offset;
         // El esquema no puede ser la cola de otra palabra (`xhttp://`).
-        let preceded_by_word = text[..start].chars().next_back().is_some_and(|c| c.is_alphanumeric());
+        let preceded_by_word = text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric());
 
         let body_start = start + marker_len;
         let body_len = text[body_start..]
@@ -92,21 +102,39 @@ mod tests {
         );
         assert_eq!(
             urls("ver http://localhost:3000/api?q=1&x=2 y ftp://files.example.com/a.tgz"),
-            vec!["http://localhost:3000/api?q=1&x=2", "ftp://files.example.com/a.tgz"]
+            vec![
+                "http://localhost:3000/api?q=1&x=2",
+                "ftp://files.example.com/a.tgz"
+            ]
         );
-        assert_eq!(urls("escribí a mailto:dev@example.com."), vec!["mailto:dev@example.com"]);
-        assert_eq!(urls("file:///Users/dev/report.html"), vec!["file:///Users/dev/report.html"]);
+        assert_eq!(
+            urls("escribí a mailto:dev@example.com."),
+            vec!["mailto:dev@example.com"]
+        );
+        assert_eq!(
+            urls("file:///Users/dev/report.html"),
+            vec!["file:///Users/dev/report.html"]
+        );
     }
 
     #[test]
     fn trims_sentence_punctuation_and_unbalanced_parens() {
-        assert_eq!(urls("(ver https://example.com/docs)."), vec!["https://example.com/docs"]);
+        assert_eq!(
+            urls("(ver https://example.com/docs)."),
+            vec!["https://example.com/docs"]
+        );
         assert_eq!(
             urls("https://en.wikipedia.org/wiki/Rust_(programming_language)"),
             vec!["https://en.wikipedia.org/wiki/Rust_(programming_language)"]
         );
-        assert_eq!(urls("<https://example.com/a>"), vec!["https://example.com/a"]);
-        assert_eq!(urls("\"https://example.com/b\","), vec!["https://example.com/b"]);
+        assert_eq!(
+            urls("<https://example.com/a>"),
+            vec!["https://example.com/a"]
+        );
+        assert_eq!(
+            urls("\"https://example.com/b\","),
+            vec!["https://example.com/b"]
+        );
     }
 
     #[test]

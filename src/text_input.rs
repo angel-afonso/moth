@@ -4,9 +4,9 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    KeyBinding, Pixels, Point, ShapedLine, SharedString, TextRun, UTF16Selection, Window, actions,
-    canvas, div, fill, point, prelude::*, px, size,
+    App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable, KeyBinding,
+    Pixels, Point, ShapedLine, SharedString, TextRun, UTF16Selection, Window, actions, canvas, div,
+    fill, point, prelude::*, px, size,
 };
 
 use crate::{
@@ -16,7 +16,17 @@ use crate::{
 
 actions!(
     text_input,
-    [Backspace, Delete, Left, Right, Home, End, Paste, DeleteToStart, DeleteWordLeft]
+    [
+        Backspace,
+        Delete,
+        Left,
+        Right,
+        Home,
+        End,
+        Paste,
+        DeleteToStart,
+        DeleteWordLeft
+    ]
 );
 
 pub fn init(cx: &mut App) {
@@ -164,7 +174,9 @@ impl TextInput {
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
-        self.text[..offset.min(self.text.len())].encode_utf16().count()
+        self.text[..offset.min(self.text.len())]
+            .encode_utf16()
+            .count()
     }
 
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -336,14 +348,22 @@ impl Render for TextInput {
                             }
                             _ => runs.push(base(len)),
                         }
-                        let line: ShapedLine =
-                            window.text_system().shape_line(text, font_size, &runs, None);
+                        let line: ShapedLine = window
+                            .text_system()
+                            .shape_line(text, font_size, &runs, None);
                         let cursor_x = line.x_for_index(cursor);
                         (line, cursor_x)
                     },
                     move |bounds, (line, cursor_x), window, cx| {
-                        line.paint(bounds.origin, bounds.size.height, gpui::TextAlign::Left, None, window, cx)
-                            .ok();
+                        line.paint(
+                            bounds.origin,
+                            bounds.size.height,
+                            gpui::TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
+                        .ok();
                         if focused {
                             window.paint_quad(fill(
                                 Bounds::new(

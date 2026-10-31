@@ -39,7 +39,8 @@ pub fn save_theme(name: &str) {
     let Some(dir) = state_dir() else {
         return;
     };
-    let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
+    let result =
+        std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
     if let Err(err) = result {
         eprintln!("no se pudo guardar el tema: {err}");
     }

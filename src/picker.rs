@@ -297,7 +297,12 @@ impl Picker {
         self.move_selection(true, cx);
     }
 
-    fn select_previous(&mut self, _: &menu::SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.move_selection(false, cx);
     }
 
@@ -308,7 +313,11 @@ impl Picker {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(last) = self.rows.iter().rposition(|r| matches!(r, Row::Item { .. })) {
+        if let Some(last) = self
+            .rows
+            .iter()
+            .rposition(|r| matches!(r, Row::Item { .. }))
+        {
             self.select_row(last, cx);
         }
     }
@@ -327,7 +336,12 @@ impl Picker {
         self.confirm_selected(false, cx);
     }
 
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, _: &mut Window, cx: &mut Context<Self>) {
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.confirm_selected(true, cx);
     }
 
@@ -335,7 +349,11 @@ impl Picker {
         cx.emit(PickerEvent::Dismiss);
     }
 
-    fn render_rows(&mut self, range: std::ops::Range<usize>, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+    fn render_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
         let ui = cx.tokens().ui.clone();
         range
             .filter_map(|row_ix| {
@@ -365,7 +383,9 @@ impl Picker {
                             .rounded(metrics::RADIUS_ROW)
                             .cursor_pointer()
                             .when(selected, |row| row.bg(ui.element_selected))
-                            .when(!selected, |row| row.hover(|style| style.bg(ui.element_hover)))
+                            .when(!selected, |row| {
+                                row.hover(|style| style.bg(ui.element_hover))
+                            })
                             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                                 this.selected = Some(row_ix);
                                 this.confirm_selected(event.modifiers().platform, cx);
@@ -383,9 +403,11 @@ impl Picker {
                             })
                             .when(item.kind.is_none() && item.dot.is_none(), |row| {
                                 row.children(item.icon.map(|icon| {
-                                    Icon::new(icon)
-                                        .size(IconSize::Small)
-                                        .color(if selected { Color::Accent } else { Color::Muted })
+                                    Icon::new(icon).size(IconSize::Small).color(if selected {
+                                        Color::Accent
+                                    } else {
+                                        Color::Muted
+                                    })
                                 }))
                             })
                             .child(
@@ -394,9 +416,16 @@ impl Picker {
                                     .min_w_0()
                                     .when(item.mono, |el| el.font_family(MONO_FONT_FAMILY))
                                     .child(
-                                        HighlightedLabel::new(item.label.clone(), positions.clone())
-                                            .color(if selected { Color::Default } else { Color::Muted })
-                                            .truncate(),
+                                        HighlightedLabel::new(
+                                            item.label.clone(),
+                                            positions.clone(),
+                                        )
+                                        .color(if selected {
+                                            Color::Default
+                                        } else {
+                                            Color::Muted
+                                        })
+                                        .truncate(),
                                     ),
                             )
                             .when_some(item.chip.clone(), |row, (label, color)| {
@@ -498,8 +527,16 @@ impl Render for Picker {
                         .gap_2()
                         .border_t_1()
                         .border_color(ui.divider)
-                        .child(Icon::new(IconName::Warning).size(IconSize::XSmall).color(Color::Warning))
-                        .child(Label::new(reason).size(LabelSize::Small).color(Color::Warning)),
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            Label::new(reason)
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        ),
                 )
             })
             .child(
@@ -511,14 +548,11 @@ impl Render for Picker {
                     .border_t_1()
                     .border_color(ui.divider)
                     .children(self.config.hints.iter().map(|(key, label)| {
-                        h_flex()
-                            .gap(px(5.))
-                            .child(Kbd::new(key.clone()))
-                            .child(
-                                Label::new(label.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Placeholder),
-                            )
+                        h_flex().gap(px(5.)).child(Kbd::new(key.clone())).child(
+                            Label::new(label.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Placeholder),
+                        )
                     })),
             )
     }

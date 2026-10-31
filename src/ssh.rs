@@ -76,8 +76,10 @@ pub fn parse_ssh_command(command: &str) -> Option<SshTarget> {
     let mut iter = words.iter().peekable();
     // Saltea prefijos habituales y asignaciones de variables.
     while let Some(word) = iter.peek() {
-        if matches!(word.as_str(), "command" | "exec" | "env" | "time" | "noglob")
-            || (word.contains('=') && !word.starts_with('-'))
+        if matches!(
+            word.as_str(),
+            "command" | "exec" | "env" | "time" | "noglob"
+        ) || (word.contains('=') && !word.starts_with('-'))
         {
             iter.next();
         } else {
@@ -141,7 +143,10 @@ fn build_target(
     args: Vec<String>,
     remote_command: bool,
 ) -> SshTarget {
-    let mut host = destination.strip_prefix("ssh://").unwrap_or(&destination).to_string();
+    let mut host = destination
+        .strip_prefix("ssh://")
+        .unwrap_or(&destination)
+        .to_string();
     if let Some((u, h)) = host.split_once('@') {
         user = Some(u.to_string());
         host = h.to_string();
@@ -189,7 +194,11 @@ pub fn parse_ssh_g(output: &str) -> Option<ResolvedHost> {
 /// `ssh -G` con los mismos argumentos: aplica `~/.ssh/config` sin conectarse.
 /// Bloquea: llamar desde el executor de fondo.
 pub fn resolve(target: &SshTarget) -> Option<ResolvedHost> {
-    let output = Command::new("ssh").arg("-G").args(&target.args).output().ok()?;
+    let output = Command::new("ssh")
+        .arg("-G")
+        .args(&target.args)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -251,9 +260,15 @@ pub fn parse_ssh_config(text: &str, includes: &mut Vec<String>) -> Vec<ConfigHos
             }
             "match" => current.clear(),
             "include" => includes.extend(value.split_whitespace().map(str::to_string)),
-            "hostname" => current.iter().for_each(|&i| hosts[i].hostname = Some(value.into())),
-            "user" => current.iter().for_each(|&i| hosts[i].user = Some(value.into())),
-            "port" => current.iter().for_each(|&i| hosts[i].port = value.parse().ok()),
+            "hostname" => current
+                .iter()
+                .for_each(|&i| hosts[i].hostname = Some(value.into())),
+            "user" => current
+                .iter()
+                .for_each(|&i| hosts[i].user = Some(value.into())),
+            "port" => current
+                .iter()
+                .for_each(|&i| hosts[i].port = value.parse().ok()),
             _ => {}
         }
     }
@@ -263,13 +278,19 @@ pub fn parse_ssh_config(text: &str, includes: &mut Vec<String>) -> Vec<ConfigHos
 /// Expande un `Include` (relativo a `~/.ssh`, con `*` en el nombre de archivo).
 fn expand_include(pattern: &str, ssh_dir: &Path) -> Vec<PathBuf> {
     let path = if let Some(rest) = pattern.strip_prefix("~/") {
-        ssh_dir.parent().map(|home| home.join(rest)).unwrap_or_default()
+        ssh_dir
+            .parent()
+            .map(|home| home.join(rest))
+            .unwrap_or_default()
     } else if Path::new(pattern).is_absolute() {
         PathBuf::from(pattern)
     } else {
         ssh_dir.join(pattern)
     };
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if !name.contains('*') {
         return vec![path];
     }
@@ -331,15 +352,27 @@ mod tests {
         assert!(!t.remote_command);
 
         let t = parse_ssh_command("ssh -p 2222 -i ~/.ssh/key git@gitea.local").unwrap();
-        assert_eq!((t.alias.as_str(), t.user.as_deref(), t.port), ("gitea.local", Some("git"), Some(2222)));
-        assert_eq!(t.args, vec!["-p", "2222", "-i", "~/.ssh/key", "git@gitea.local"]);
+        assert_eq!(
+            (t.alias.as_str(), t.user.as_deref(), t.port),
+            ("gitea.local", Some("git"), Some(2222))
+        );
+        assert_eq!(
+            t.args,
+            vec!["-p", "2222", "-i", "~/.ssh/key", "git@gitea.local"]
+        );
 
         let t = parse_ssh_command("ssh -tt -J bastion -lroot app-02").unwrap();
-        assert_eq!((t.alias.as_str(), t.user.as_deref()), ("app-02", Some("root")));
+        assert_eq!(
+            (t.alias.as_str(), t.user.as_deref()),
+            ("app-02", Some("root"))
+        );
         assert_eq!(t.jump.as_deref(), Some("bastion"));
 
         let t = parse_ssh_command("ssh ssh://deploy@example.com:2200").unwrap();
-        assert_eq!((t.alias.as_str(), t.user.as_deref(), t.port), ("example.com", Some("deploy"), Some(2200)));
+        assert_eq!(
+            (t.alias.as_str(), t.user.as_deref(), t.port),
+            ("example.com", Some("deploy"), Some(2200))
+        );
     }
 
     #[test]
@@ -349,13 +382,28 @@ mod tests {
         assert!(parse_ssh_command("sshfs host:/ /mnt").is_none());
         assert!(parse_ssh_command("git push").is_none());
         assert!(parse_ssh_command("ssh -V").is_none());
-        assert_eq!(parse_ssh_command("TERM=xterm /usr/bin/ssh box").unwrap().alias, "box");
+        assert_eq!(
+            parse_ssh_command("TERM=xterm /usr/bin/ssh box")
+                .unwrap()
+                .alias,
+            "box"
+        );
     }
 
     #[test]
     fn parses_ssh_g_output() {
-        let r = parse_ssh_g("user angel\nhostname 10.0.4.12\nport 22\nidentityfile ~/.ssh/id_ed25519\n").unwrap();
-        assert_eq!(r, ResolvedHost { hostname: "10.0.4.12".into(), user: "angel".into(), port: 22 });
+        let r = parse_ssh_g(
+            "user angel\nhostname 10.0.4.12\nport 22\nidentityfile ~/.ssh/id_ed25519\n",
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            ResolvedHost {
+                hostname: "10.0.4.12".into(),
+                user: "angel".into(),
+                port: 22
+            }
+        );
     }
 
     #[test]

@@ -8,8 +8,8 @@ use std::{
 };
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding,
-    MouseButton, MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
+    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
+    MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
 };
 use ui::{
     Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
@@ -19,14 +19,13 @@ use ui::{
 use crate::{
     components::{BlockStatus, DotState, StatusDot, SuggestionKind, TabItem, TabState},
     hosts::{self, RulesSource},
-    ssh,
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
-    shell, state,
+    shell, ssh, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{self, Themes},
-    tokens::{Appearance, Tokens, TokensExt, metrics, tint},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
+    tokens::{Appearance, Tokens, TokensExt, metrics, tint},
 };
 
 actions!(
@@ -278,26 +277,29 @@ impl Workspace {
                     .filter(|_| shell.running.is_none())
                     .map(|d| (d.identity.color(cx), d.identity.label.clone()))
             });
-        let disconnected = shell.remote.is_none() && shell.running.is_none() && shell.disconnected.is_some();
+        let disconnected =
+            shell.remote.is_none() && shell.running.is_none() && shell.disconnected.is_some();
         TabItem::new(("tab", ix), self.tab_title(ix, cx))
             .selected(ix == self.active)
             .state(state)
-            .when_some(remote, |tab, (color, label)| tab.remote(color, label.map(Into::into)))
+            .when_some(remote, |tab, (color, label)| {
+                tab.remote(color, label.map(Into::into))
+            })
             .when(disconnected, |tab| {
                 tab.disconnected(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.reconnect_tab(ix, window, cx)
                 }))
             })
             .when(ix < 9, |tab| tab.shortcut(format!("⌘{}", ix + 1)))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.activate(ix, window, cx)
-            }))
-            .on_close(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.close(ix, window, cx)
-            }))
-            .on_middle_click(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                this.close(ix, window, cx)
-            }))
+            .on_click(
+                cx.listener(move |this, _: &ClickEvent, window, cx| this.activate(ix, window, cx)),
+            )
+            .on_close(
+                cx.listener(move |this, _: &ClickEvent, window, cx| this.close(ix, window, cx)),
+            )
+            .on_middle_click(
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| this.close(ix, window, cx)),
+            )
     }
 
     /// Zona arrastrable (barra de título transparente en macOS).
@@ -438,7 +440,11 @@ impl Workspace {
             .size(ButtonSize::Compact)
             .label_size(LabelSize::Small)
             .color(branch_color)
-            .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(branch_color))
+            .start_icon(
+                Icon::new(IconName::GitBranch)
+                    .size(IconSize::XSmall)
+                    .color(branch_color),
+            )
             .tooltip(Tooltip::for_action_title("Cambiar de rama", &SwitchBranch))
             .on_click(|_, window, cx| window.dispatch_action(SwitchBranch.boxed_clone(), cx));
 
@@ -482,8 +488,18 @@ impl Workspace {
             ),
             (None, Some(last)) => {
                 let exit_code = last.exit_code.unwrap_or(0);
-                let dot = if exit_code == 0 { DotState::Success } else { DotState::Error };
-                (dot, Some(BlockStatus::Finished { exit_code, duration: last.duration }))
+                let dot = if exit_code == 0 {
+                    DotState::Success
+                } else {
+                    DotState::Error
+                };
+                (
+                    dot,
+                    Some(BlockStatus::Finished {
+                        exit_code,
+                        duration: last.duration,
+                    }),
+                )
             }
             (None, None) => (DotState::Success, None),
         };
@@ -577,14 +593,16 @@ fn abbreviate_home(path: &Path) -> String {
         Some(rest) => ("~/", rest),
         None => ("/", path.strip_prefix("/").unwrap_or(path).to_path_buf()),
     };
-    let parts: Vec<_> = rest.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+    let parts: Vec<_> = rest
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect();
     if parts.len() > 3 {
         format!("…/{}", parts[parts.len() - 3..].join("/"))
     } else {
         format!("{prefix}{}", parts.join("/"))
     }
 }
-
 
 impl Workspace {
     fn active_terminal(&self, cx: &App) -> Entity<Terminal> {
@@ -620,7 +638,10 @@ impl Workspace {
             if let Some(previous) = modal.restore_theme {
                 theme::apply(previous, cx);
             }
-            self.tabs[self.active].view.focus_handle(cx).focus(window, cx);
+            self.tabs[self.active]
+                .view
+                .focus_handle(cx)
+                .focus(window, cx);
             cx.notify();
         }
     }
@@ -693,50 +714,108 @@ impl Workspace {
         let cwd = shell.cwd.clone();
 
         let mut items = vec![
-            PickerItem::new("Acciones", "Nueva pestaña", PickerAction::Dispatch(Box::new(NewTab)))
-                .icon(IconName::Plus)
-                .shortcut(NewTab),
-            PickerItem::new("Acciones", "Buscar en el historial", PickerAction::Dispatch(Box::new(SearchHistory)))
-                .icon(IconName::HistoryRerun)
-                .shortcut(SearchHistory),
+            PickerItem::new(
+                "Acciones",
+                "Nueva pestaña",
+                PickerAction::Dispatch(Box::new(NewTab)),
+            )
+            .icon(IconName::Plus)
+            .shortcut(NewTab),
+            PickerItem::new(
+                "Acciones",
+                "Buscar en el historial",
+                PickerAction::Dispatch(Box::new(SearchHistory)),
+            )
+            .icon(IconName::HistoryRerun)
+            .shortcut(SearchHistory),
         ];
-        if self.active_terminal(cx).read(cx).shell().disconnected.is_some() {
+        if self
+            .active_terminal(cx)
+            .read(cx)
+            .shell()
+            .disconnected
+            .is_some()
+        {
             items.push(
-                PickerItem::new("Acciones", "Reconectar", PickerAction::Dispatch(Box::new(Reconnect)))
-                    .icon(IconName::RotateCw)
-                    .shortcut(Reconnect),
+                PickerItem::new(
+                    "Acciones",
+                    "Reconectar",
+                    PickerAction::Dispatch(Box::new(Reconnect)),
+                )
+                .icon(IconName::RotateCw)
+                .shortcut(Reconnect),
             );
         }
         if has_git {
             items.push(
-                PickerItem::new("Acciones", "Cambiar de rama…", PickerAction::Dispatch(Box::new(SwitchBranch)))
-                    .icon(IconName::GitBranch),
+                PickerItem::new(
+                    "Acciones",
+                    "Cambiar de rama…",
+                    PickerAction::Dispatch(Box::new(SwitchBranch)),
+                )
+                .icon(IconName::GitBranch),
             );
         }
         items.extend([
-            PickerItem::new("Acciones", "Conectar a…", PickerAction::Dispatch(Box::new(ConnectToHost)))
-                .icon(IconName::Server),
-            PickerItem::new("Acciones", "Cambiar tema…", PickerAction::Dispatch(Box::new(SelectTheme)))
-                .icon(IconName::Sparkle),
-            PickerItem::new("Acciones", "Limpiar pantalla", PickerAction::Dispatch(Box::new(ClearScreen)))
-                .icon(IconName::Eraser)
-                .shortcut(ClearScreen),
-            PickerItem::new("Acciones", "Copiar pantalla", PickerAction::Dispatch(Box::new(terminal_view::Copy)))
-                .icon(IconName::Copy),
-            PickerItem::new("Acciones", "Pegar", PickerAction::Dispatch(Box::new(terminal_view::Paste)))
-                .icon(IconName::Download),
-            PickerItem::new("Acciones", "Pestaña siguiente", PickerAction::Dispatch(Box::new(NextTab)))
-                .icon(IconName::ArrowRight)
-                .shortcut(NextTab),
-            PickerItem::new("Acciones", "Pestaña anterior", PickerAction::Dispatch(Box::new(PreviousTab)))
-                .icon(IconName::ArrowLeft)
-                .shortcut(PreviousTab),
-            PickerItem::new("Acciones", "Cerrar pestaña", PickerAction::Dispatch(Box::new(CloseTab)))
-                .icon(IconName::Close)
-                .shortcut(CloseTab),
-            PickerItem::new("Acciones", "Salir de terminalapp", PickerAction::Dispatch(Box::new(Quit)))
-                .icon(IconName::Exit)
-                .shortcut(Quit),
+            PickerItem::new(
+                "Acciones",
+                "Conectar a…",
+                PickerAction::Dispatch(Box::new(ConnectToHost)),
+            )
+            .icon(IconName::Server),
+            PickerItem::new(
+                "Acciones",
+                "Cambiar tema…",
+                PickerAction::Dispatch(Box::new(SelectTheme)),
+            )
+            .icon(IconName::Sparkle),
+            PickerItem::new(
+                "Acciones",
+                "Limpiar pantalla",
+                PickerAction::Dispatch(Box::new(ClearScreen)),
+            )
+            .icon(IconName::Eraser)
+            .shortcut(ClearScreen),
+            PickerItem::new(
+                "Acciones",
+                "Copiar pantalla",
+                PickerAction::Dispatch(Box::new(terminal_view::Copy)),
+            )
+            .icon(IconName::Copy),
+            PickerItem::new(
+                "Acciones",
+                "Pegar",
+                PickerAction::Dispatch(Box::new(terminal_view::Paste)),
+            )
+            .icon(IconName::Download),
+            PickerItem::new(
+                "Acciones",
+                "Pestaña siguiente",
+                PickerAction::Dispatch(Box::new(NextTab)),
+            )
+            .icon(IconName::ArrowRight)
+            .shortcut(NextTab),
+            PickerItem::new(
+                "Acciones",
+                "Pestaña anterior",
+                PickerAction::Dispatch(Box::new(PreviousTab)),
+            )
+            .icon(IconName::ArrowLeft)
+            .shortcut(PreviousTab),
+            PickerItem::new(
+                "Acciones",
+                "Cerrar pestaña",
+                PickerAction::Dispatch(Box::new(CloseTab)),
+            )
+            .icon(IconName::Close)
+            .shortcut(CloseTab),
+            PickerItem::new(
+                "Acciones",
+                "Salir de terminalapp",
+                PickerAction::Dispatch(Box::new(Quit)),
+            )
+            .icon(IconName::Exit)
+            .shortcut(Quit),
         ]);
 
         let activate: [Box<dyn Action>; 8] = [
@@ -772,10 +851,14 @@ impl Workspace {
             .take(8)
         {
             items.push(
-                PickerItem::new("Carpetas recientes", abbreviate_home(&dir), PickerAction::OpenDirInNewTab(dir))
-                    .kind(SuggestionKind::Path)
-                    .detail("abrir en pestaña nueva")
-                    .mono(),
+                PickerItem::new(
+                    "Carpetas recientes",
+                    abbreviate_home(&dir),
+                    PickerAction::OpenDirInNewTab(dir),
+                )
+                .kind(SuggestionKind::Path)
+                .detail("abrir en pestaña nueva")
+                .mono(),
             );
         }
 
@@ -811,9 +894,13 @@ impl Workspace {
                     .iter()
                     .rev()
                     .map(|command| {
-                        PickerItem::new("", command.clone(), PickerAction::InsertCommand(command.clone()))
-                            .kind(SuggestionKind::History)
-                            .mono()
+                        PickerItem::new(
+                            "",
+                            command.clone(),
+                            PickerAction::InsertCommand(command.clone()),
+                        )
+                        .kind(SuggestionKind::History)
+                        .mono()
                     })
                     .collect()
             })
@@ -850,8 +937,12 @@ impl Workspace {
             .iter()
             .map(|branch| {
                 let current = git.branch.as_ref() == Some(branch);
-                let item = PickerItem::new("", branch.clone(), PickerAction::SwitchBranch(branch.clone()))
-                    .kind(SuggestionKind::Branch);
+                let item = PickerItem::new(
+                    "",
+                    branch.clone(),
+                    PickerAction::SwitchBranch(branch.clone()),
+                )
+                .kind(SuggestionKind::Branch);
                 if current { item.detail("actual") } else { item }
             })
             .collect();
@@ -882,9 +973,14 @@ impl Workspace {
                     Appearance::Dark => "oscuro",
                     Appearance::Light => "claro",
                 };
-                let mut item = PickerItem::new("", t.name.clone(), PickerAction::SetTheme(t.name.clone()))
-                    .icon(if t.name == current { IconName::Check } else { IconName::Sparkle })
-                    .detail(appearance);
+                let mut item =
+                    PickerItem::new("", t.name.clone(), PickerAction::SetTheme(t.name.clone()))
+                        .icon(if t.name == current {
+                            IconName::Check
+                        } else {
+                            IconName::Sparkle
+                        })
+                        .detail(appearance);
                 if t.name == current {
                     item = item.detail(format!("{appearance} · actual"));
                 }
@@ -909,7 +1005,16 @@ impl Workspace {
     fn active_is_production(&self, cx: &App) -> bool {
         self.tabs
             .get(self.active)
-            .and_then(|tab| tab.view.read(cx).terminal().read(cx).shell().remote.as_ref().map(|r| r.identity.production))
+            .and_then(|tab| {
+                tab.view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .shell()
+                    .remote
+                    .as_ref()
+                    .map(|r| r.identity.production)
+            })
             .unwrap_or(false)
     }
 
@@ -927,17 +1032,31 @@ impl Workspace {
     fn render_production_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let terminal = self.active_terminal(cx);
         let terminal = terminal.read(cx);
-        let remote = terminal.shell().remote.as_ref().filter(|r| r.identity.production)?;
+        let remote = terminal
+            .shell()
+            .remote
+            .as_ref()
+            .filter(|r| r.identity.production)?;
         let color = remote.identity.color(cx);
         let label = remote
             .identity
             .label
             .clone()
-            .map(|l| if l.eq_ignore_ascii_case("prod") { "PRODUCCIÓN".to_string() } else { l.to_uppercase() })
+            .map(|l| {
+                if l.eq_ignore_ascii_case("prod") {
+                    "PRODUCCIÓN".to_string()
+                } else {
+                    l.to_uppercase()
+                }
+            })
             .unwrap_or_else(|| "PRODUCCIÓN".into());
         let reason = match (&remote.identity.matched, &hosts::rules(cx).source) {
-            (Some(pattern), RulesSource::File(_)) => format!("· coincide con {pattern} en hosts.json"),
-            (Some(pattern), RulesSource::Defaults) => format!("· coincide con {pattern} (regla por defecto)"),
+            (Some(pattern), RulesSource::File(_)) => {
+                format!("· coincide con {pattern} en hosts.json")
+            }
+            (Some(pattern), RulesSource::Defaults) => {
+                format!("· coincide con {pattern} (regla por defecto)")
+            }
             (None, _) => String::new(),
         };
         Some(
@@ -955,7 +1074,11 @@ impl Workspace {
                     h_flex()
                         .gap(px(10.))
                         .min_w_0()
-                        .child(Icon::new(IconName::Warning).size(IconSize::Small).color(Color::Custom(color)))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Custom(color)),
+                        )
                         .child(
                             Label::new(label)
                                 .size(LabelSize::Small)
@@ -967,14 +1090,27 @@ impl Workspace {
                                 .font_family(MONO_FONT_FAMILY)
                                 .child(Label::new(remote.user_at_host()).size(LabelSize::Small)),
                         )
-                        .child(Label::new(reason).size(LabelSize::Small).color(Color::Muted).truncate()),
+                        .child(
+                            Label::new(reason)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate(),
+                        ),
                 )
                 .child(
                     h_flex()
                         .gap(px(6.))
                         .flex_none()
-                        .child(Icon::new(IconName::Lock).size(IconSize::XSmall).color(Color::Muted))
-                        .child(Label::new("Pegado protegido").size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            Icon::new(IconName::Lock)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Pegado protegido")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -1021,13 +1157,19 @@ impl Workspace {
                                 .gap(px(6.))
                                 .flex_none()
                                 .child(div().size(px(6.)).rounded_full().bg(color))
-                                .child(Label::new("ssh").size(LabelSize::Small).color(Color::Muted)),
+                                .child(
+                                    Label::new("ssh").size(LabelSize::Small).color(Color::Muted),
+                                ),
                         )
                         .child(
                             h_flex()
                                 .gap(px(6.))
                                 .flex_none()
-                                .child(Icon::new(IconName::ArrowRightLeft).size(IconSize::XSmall).color(Color::Custom(color)))
+                                .child(
+                                    Icon::new(IconName::ArrowRightLeft)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Custom(color)),
+                                )
                                 .child(
                                     div().font_family(MONO_FONT_FAMILY).child(
                                         Label::new(remote.user_at_host())
@@ -1039,14 +1181,19 @@ impl Workspace {
                         .when_some(address, |this, address| {
                             this.child(
                                 div().font_family(MONO_FONT_FAMILY).child(
-                                    Label::new(address).size(LabelSize::XSmall).color(Color::Placeholder),
+                                    Label::new(address)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Placeholder),
                                 ),
                             )
                         })
                         .when_some(remote.remote_cwd.clone(), |this, cwd| {
                             this.child(
                                 div().min_w_0().child(
-                                    Label::new(cwd).size(LabelSize::Small).color(Color::Placeholder).truncate(),
+                                    Label::new(cwd)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder)
+                                        .truncate(),
                                 ),
                             )
                         }),
@@ -1056,7 +1203,11 @@ impl Workspace {
                         .gap(metrics::SPACE_4)
                         .flex_none()
                         .font_family(MONO_FONT_FAMILY)
-                        .child(Label::new(connected).size(LabelSize::XSmall).color(Color::Placeholder))
+                        .child(
+                            Label::new(connected)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Placeholder),
+                        )
                         .child(
                             Label::new(if tab_count == 1 {
                                 "1 pestaña".to_string()
@@ -1089,15 +1240,30 @@ impl Workspace {
         // Sesiones cortadas, de cualquier pestaña.
         for (ix, tab) in self.tabs.iter().enumerate() {
             let shell = tab.view.read(cx).terminal().read(cx).shell();
-            let Some(d) = shell.disconnected.as_ref().filter(|_| shell.running.is_none()) else {
+            let Some(d) = shell
+                .disconnected
+                .as_ref()
+                .filter(|_| shell.running.is_none())
+            else {
                 continue;
             };
             let minutes = d.at.elapsed().as_secs() / 60;
-            let ago = if minutes == 0 { "recién".to_string() } else { format!("hace {minutes} min") };
-            let mut item = PickerItem::new("Reconectar", d.target.alias.clone(), PickerAction::ReconnectTab(ix))
-                .icon(IconName::RotateCw)
-                .detail(format!("se cortó {ago} · exit {}", d.exit_code.unwrap_or(255)))
-                .mono();
+            let ago = if minutes == 0 {
+                "recién".to_string()
+            } else {
+                format!("hace {minutes} min")
+            };
+            let mut item = PickerItem::new(
+                "Reconectar",
+                d.target.alias.clone(),
+                PickerAction::ReconnectTab(ix),
+            )
+            .icon(IconName::RotateCw)
+            .detail(format!(
+                "se cortó {ago} · exit {}",
+                d.exit_code.unwrap_or(255)
+            ))
+            .mono();
             if let Some(label) = d.identity.label.clone() {
                 item = item.chip(label, d.identity.color(cx));
             }
@@ -1144,18 +1310,26 @@ impl Workspace {
         let mut seen: Vec<String> = config_hosts.iter().map(|h| h.alias.clone()).collect();
         if let Some(history) = shell::history(cx) {
             for command in history.entries.iter().rev() {
-                let Some(target) = ssh::parse_ssh_command(command).filter(|t| !t.remote_command) else {
+                let Some(target) = ssh::parse_ssh_command(command).filter(|t| !t.remote_command)
+                else {
                     continue;
                 };
                 let key = command.trim().to_string();
-                if seen.contains(&key) || seen.contains(&target.alias) && command.trim() == format!("ssh {}", target.alias) {
+                if seen.contains(&key)
+                    || seen.contains(&target.alias)
+                        && command.trim() == format!("ssh {}", target.alias)
+                {
                     continue;
                 }
                 seen.push(key);
                 let (color, label) = identity_parts(&target.alias, None);
-                let mut item = PickerItem::new("Del historial", command.clone(), PickerAction::RunCommand(command.clone()))
-                    .kind(SuggestionKind::History)
-                    .mono();
+                let mut item = PickerItem::new(
+                    "Del historial",
+                    command.clone(),
+                    PickerAction::RunCommand(command.clone()),
+                )
+                .kind(SuggestionKind::History)
+                .mono();
                 if let Some(label) = label {
                     item = item.chip(label, color);
                 }
@@ -1178,7 +1352,14 @@ impl Workspace {
             hints: vec![
                 ("↑↓".into(), "navegar".into()),
                 ("⏎".into(), "abrir en pestaña nueva".into()),
-                ("⌘⏎".into(), if at_prompt { "en esta pestaña".into() } else { "en esta pestaña (no disponible)".into() }),
+                (
+                    "⌘⏎".into(),
+                    if at_prompt {
+                        "en esta pestaña".into()
+                    } else {
+                        "en esta pestaña (no disponible)".into()
+                    },
+                ),
                 ("esc".into(), "cerrar".into()),
             ],
             disabled_reason: None,
@@ -1230,9 +1411,9 @@ impl Render for Workspace {
             .font_family(UI_FONT_FAMILY)
             .text_size(UI_FONT_SIZE)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
-            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
-                this.close(this.active, window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &CloseTab, window, cx| this.close(this.active, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &NextTab, window, cx| {
                 let next = (this.active + 1) % this.tabs.len();
                 this.activate(next, window, cx)
@@ -1278,7 +1459,9 @@ impl Render for Workspace {
                     })
                     .children(active),
             )
-            .when(!self.tabs.is_empty(), |this| this.child(self.render_status_bar(cx)))
+            .when(!self.tabs.is_empty(), |this| {
+                this.child(self.render_status_bar(cx))
+            })
             .children(self.render_modal(cx))
     }
 }
