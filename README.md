@@ -16,6 +16,9 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | --- | --- |
 | ⌘T | Nueva pestaña |
 | ⌘W · clic central | Cerrar pestaña |
+| ⌘⇧T | Reabrir la última pestaña cerrada en su carpeta |
+| ⌘+ / ⌘− / ⌘0 | Aumentar / reducir / restablecer el tamaño del texto |
+| ⌘F | Buscar en la salida y el scrollback |
 | ⌘1…⌘8, ⌘9 | Ir a la pestaña N / a la última |
 | ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Pestaña siguiente / anterior |
 | ⌘K · ⌘⇧P | Paleta de comandos |
@@ -26,6 +29,32 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | ⌘C | Copiar la selección (sin selección, la pantalla visible) |
 | Tab | Abrir el popup de completions (↑↓ elegir, Tab completar, ⏎ ejecutar, esc cerrar) |
 | → / Fin | Aceptar la sugerencia del historial |
+| ⌥← / ⌥→ · ⌥⌦ | Palabra anterior / siguiente · borrar la palabra siguiente (en el prompt) |
+| ⌘← / ⌘→ · ⌘⌫ | Inicio / fin de la línea · borrar la línea (en el prompt) |
+
+## Teclado
+
+En el prompt, ⌥ y ⌘ editan como en el resto de macOS (mandan `ESC b`/`ESC f` y `⌃A`/`⌃E`/`⌃U`, que entienden zsh, bash y readline). En programas de pantalla completa (vim, less, htop) esas teclas mandan las secuencias estándar de xterm.
+
+Por defecto ⌥+letra escribe el carácter de macOS, porque en teclados como el español ⌥ es la forma de escribir `@`, `#` o `|`. "Usar ⌥ como Meta" en la paleta (⌘K) hace que ⌥+tecla mande `ESC` + tecla (⌥B, ⌥F, ⌥. en zsh); la opción se guarda entre ejecuciones.
+
+## Cerrar pestañas y salir
+
+Si una pestaña tiene un comando en curso o una sesión SSH, ⌘W, ⌘Q, el botón de cerrar de la pestaña o el de la ventana piden confirmación con la lista de lo que se cortaría (⏎ confirma, esc cancela; repetir el atajo también confirma). Requiere la integración de zsh para saber qué está corriendo.
+
+Cuando la shell termina con `exit` o ⌃D, la pestaña se cierra. Si la mata una señal o sale con error apenas abre (un `.zshrc` roto, por ejemplo), la pestaña queda abierta con la salida y un aviso: ⏎ abre una shell nueva en la misma carpeta y ⌘W cierra.
+
+## Avisos, zoom y recuperación de pestañas
+
+Cuando un comando dura al menos 10 segundos y termina en una pestaña inactiva o con la ventana en segundo plano, la app marca la pestaña y muestra un aviso con el comando, su resultado y duración. El aviso se cierra con su botón; son avisos dentro de la app, sin notificaciones del sistema. Requiere la integración de zsh.
+
+El zoom cambia el texto de todas las pestañas, ajusta el tamaño de las celdas y se guarda entre ejecuciones. El rango es de 8 a 32 puntos y ⌘0 restaura 13,5 puntos.
+
+⌘⇧T recupera hasta las últimas 20 carpetas de pestañas cerradas, incluso tras reiniciar la app. Abre una shell nueva: no restaura procesos ni ejecuta de nuevo comandos SSH. Si la carpeta ya no existe, se omite.
+
+## Buscar en la salida
+
+⌘F abre un campo sobre la terminal. Busca texto literal en la pantalla y el scrollback, incluidas las líneas partidas; resalta la coincidencia y desplaza la vista hasta ella. ⏎ busca la siguiente, ⇧⏎ la anterior y Esc cierra el buscador. Los botones ↑ y ↓ también navegan y la búsqueda vuelve al principio o al final al llegar al extremo. Las consultas en minúsculas ignoran mayúsculas; incluir una mayúscula hace que la búsqueda distinga el caso.
 
 ## Selección y mouse
 
@@ -81,7 +110,13 @@ Para crear un tema, agrega un `.json` en `~/Library/Application Support/terminal
 }
 ```
 
-Las claves disponibles están en [`assets/themes/graphite.json`](assets/themes/graphite.json). Un color inválido o una clave mal escrita invalida el tema, y el error aparece en la salida de la app.
+Las claves disponibles están en [`assets/themes/graphite.json`](assets/themes/graphite.json). Un color inválido o una clave mal escrita invalida el tema, y el error queda en el log de la app.
+
+## Log y seguridad
+
+Los errores de la app (un tema o `hosts.json` inválidos, una pestaña que no se pudo abrir) se guardan en `~/Library/Logs/terminalapp/terminalapp.log`, además de la salida estándar.
+
+Los programas pueden copiar al portapapeles con OSC 52 (útil para copiar desde vim o tmux en un servidor remoto), pero no leerlo: así un servidor SSH o un archivo con secuencias de escape no pueden llevarse lo que copiaste.
 
 ## Integración con zsh
 
@@ -114,7 +149,8 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/picker.rs`: buscador en overlay (lista virtualizada, secciones, teclado) que usan la paleta, el historial y las ramas.
 - `src/text_input.rs`: campo de texto de una línea con IME (el crate `ui` no trae uno).
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
-- `src/state.rs`: última carpeta y carpetas recientes.
+- `src/state.rs`: última carpeta, carpetas recientes, tema, zoom y ⌥ como Meta.
+- `src/log.rs`: errores a stderr y a `~/Library/Logs/terminalapp/`.
 - `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
 - `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).
 - `src/mouse.rs`: reporte de mouse a los programas que lo piden (SGR y X10).

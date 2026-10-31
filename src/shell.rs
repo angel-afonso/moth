@@ -77,7 +77,7 @@ fn install_dir() -> Option<PathBuf> {
     match write() {
         Ok(()) => Some(dir),
         Err(err) => {
-            eprintln!("no se pudo instalar la integración de zsh: {err}");
+            crate::log::error(format!("no se pudo instalar la integración de zsh: {err}"));
             None
         }
     }

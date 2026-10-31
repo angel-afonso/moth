@@ -6,14 +6,49 @@ use std::borrow::Cow;
 use alacritty_terminal::term::TermMode;
 use gpui::Keystroke;
 
-pub fn to_esc_str(keystroke: &Keystroke, mode: TermMode) -> Option<Cow<'static, str>> {
+/// Con `option_as_meta`, ⌥+tecla manda ESC + tecla (⌥B, ⌥F, ⌥. en zsh) en vez del carácter
+/// de macOS; queda apagado por defecto porque en teclados como el español ⌥ escribe `@`, `#`, `|`…
+pub fn to_esc_str(
+    keystroke: &Keystroke,
+    mode: TermMode,
+    option_as_meta: bool,
+) -> Option<Cow<'static, str>> {
     let m = &keystroke.modifiers;
+    let key = keystroke.key.as_str();
+    // En la línea de comandos, ⌥ y ⌘ editan como en el resto de macOS (ESC b/f de readline y
+    // zsh, ⌃A/⌃E/⌃U). En pantalla completa (vim, less) se mandan las secuencias estándar, para
+    // no meter un ⌃A que vim interpreta como "incrementar".
+    if !mode.contains(TermMode::ALT_SCREEN) {
+        let only_alt = m.alt && !m.control && !m.shift && !m.platform;
+        let only_cmd = m.platform && !m.alt && !m.control && !m.shift;
+        let line_edit = match key {
+            "left" if only_alt => Some("\x1bb"),
+            "right" if only_alt => Some("\x1bf"),
+            "delete" if only_alt => Some("\x1bd"),
+            "left" if only_cmd => Some("\x01"),
+            "right" if only_cmd => Some("\x05"),
+            "backspace" if only_cmd => Some("\x15"),
+            _ => None,
+        };
+        if let Some(s) = line_edit {
+            return Some(Cow::Borrowed(s));
+        }
+    }
     if m.platform {
         return None;
     }
-    let key = keystroke.key.as_str();
     let plain = !m.alt && !m.control && !m.shift;
     let app_cursor = mode.contains(TermMode::APP_CURSOR);
+
+    if option_as_meta && m.alt && !m.control {
+        let mut chars = key.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && c.is_ascii_graphic()
+        {
+            let c = if m.shift { c.to_ascii_uppercase() } else { c };
+            return Some(Cow::Owned(format!("\x1b{c}")));
+        }
+    }
 
     let fixed: Option<&'static str> = match key {
         "enter" if plain => Some("\r"),
@@ -111,7 +146,38 @@ mod tests {
     use super::*;
 
     fn esc(key: &str, mode: TermMode) -> Option<String> {
-        to_esc_str(&Keystroke::parse(key).unwrap(), mode).map(|s| s.into_owned())
+        to_esc_str(&Keystroke::parse(key).unwrap(), mode, false).map(|s| s.into_owned())
+    }
+
+    fn meta(key: &str) -> Option<String> {
+        to_esc_str(&Keystroke::parse(key).unwrap(), TermMode::NONE, true).map(|s| s.into_owned())
+    }
+
+    #[test]
+    fn edits_the_command_line_like_macos() {
+        assert_eq!(esc("alt-left", TermMode::NONE).as_deref(), Some("\x1bb"));
+        assert_eq!(esc("alt-right", TermMode::NONE).as_deref(), Some("\x1bf"));
+        assert_eq!(esc("cmd-left", TermMode::NONE).as_deref(), Some("\x01"));
+        assert_eq!(esc("cmd-right", TermMode::NONE).as_deref(), Some("\x05"));
+        assert_eq!(
+            esc("cmd-backspace", TermMode::NONE).as_deref(),
+            Some("\x15")
+        );
+        // En vim y otras pantallas completas, las secuencias estándar.
+        assert_eq!(
+            esc("alt-left", TermMode::ALT_SCREEN).as_deref(),
+            Some("\x1b[1;3D")
+        );
+        assert_eq!(esc("cmd-left", TermMode::ALT_SCREEN), None);
+    }
+
+    #[test]
+    fn option_as_meta_only_when_enabled() {
+        assert_eq!(esc("alt-b", TermMode::NONE), None);
+        assert_eq!(meta("alt-b").as_deref(), Some("\x1bb"));
+        assert_eq!(meta("alt-shift-b").as_deref(), Some("\x1bB"));
+        assert_eq!(meta("alt-.").as_deref(), Some("\x1b."));
+        assert_eq!(meta("alt-enter").as_deref(), Some("\x1b\r"));
     }
 
     #[test]

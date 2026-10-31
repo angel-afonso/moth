@@ -24,7 +24,7 @@ pub fn record_dir(cwd: &Path) {
     if let Some(dir) = state_dir() {
         let result = write_last_cwd(&dir, cwd).and_then(|()| write_recent(&dir, cwd));
         if let Err(err) = result {
-            eprintln!("no se pudo guardar la carpeta actual: {err}");
+            crate::log::error(format!("no se pudo guardar la carpeta actual: {err}"));
         }
     }
 }
@@ -42,7 +42,7 @@ pub fn save_theme(name: &str) {
     let result =
         std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
     if let Err(err) = result {
-        eprintln!("no se pudo guardar el tema: {err}");
+        crate::log::error(format!("no se pudo guardar el tema: {err}"));
     }
 }
 
@@ -78,6 +78,81 @@ fn write_last_cwd(dir: &Path, cwd: &Path) -> std::io::Result<()> {
     let tmp = dir.join("last_cwd.tmp");
     std::fs::write(&tmp, cwd.as_os_str().as_encoded_bytes())?;
     std::fs::rename(tmp, dir.join("last_cwd"))
+}
+
+/// Tamaño de texto de terminal, validado antes de usarlo.
+pub fn saved_font_size() -> f32 {
+    state_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("font_size")).ok())
+        .and_then(|text| text.trim().parse::<f32>().ok())
+        .filter(|size| size.is_finite() && (8.0..=32.0).contains(size))
+        .unwrap_or(13.5)
+}
+
+pub fn save_font_size(size: f32) {
+    if let Some(dir) = state_dir()
+        && let Err(err) = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(dir.join("font_size"), size.to_string()))
+    {
+        crate::log::error(format!("no se pudo guardar el tamaño de texto: {err}"));
+    }
+}
+
+/// Si ⌥ funciona como Meta en la terminal; apagado si nunca se eligió.
+pub fn option_as_meta() -> bool {
+    state_dir().is_some_and(|dir| dir.join("option_as_meta").exists())
+}
+
+pub fn save_option_as_meta(enabled: bool) {
+    let Some(dir) = state_dir() else {
+        return;
+    };
+    let path = dir.join("option_as_meta");
+    let result = if enabled {
+        std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, ""))
+    } else {
+        std::fs::remove_file(&path).or_else(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(err),
+        })
+    };
+    if let Err(err) = result {
+        crate::log::error(format!("no se pudo guardar Option como Meta: {err}"));
+    }
+}
+
+/// Carpetas de pestañas cerradas; no guarda ni vuelve a ejecutar comandos.
+pub fn closed_dirs() -> Vec<PathBuf> {
+    state_dir()
+        .and_then(|dir| std::fs::read(dir.join("closed_tabs.json")).ok())
+        .and_then(|bytes| serde_json::from_slice::<Vec<PathBuf>>(&bytes).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|dir| dir.is_dir())
+        .rev()
+        .take(20)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+pub fn save_closed_dirs(dirs: &[PathBuf]) {
+    let Some(dir) = state_dir() else {
+        return;
+    };
+    let result = (|| -> anyhow::Result<()> {
+        std::fs::create_dir_all(&dir)?;
+        let tmp = dir.join("closed_tabs.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(dirs)?)?;
+        std::fs::rename(tmp, dir.join("closed_tabs.json"))?;
+        Ok(())
+    })();
+    if let Err(err) = result {
+        crate::log::error(format!(
+            "no se pudieron guardar las pestañas cerradas: {err}"
+        ));
+    }
 }
 
 #[cfg(test)]

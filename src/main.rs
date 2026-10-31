@@ -8,6 +8,7 @@ mod highlight;
 mod hosts;
 mod keys;
 mod links;
+mod log;
 mod mouse;
 mod palette;
 mod picker;
@@ -33,7 +34,7 @@ fn main() {
         .with_assets(Assets)
         .run(|cx: &mut App| {
             if let Err(err) = Assets.load_fonts(cx) {
-                eprintln!("{err:#}");
+                crate::log::error(format!("{err:#}"));
             }
             theme::init(cx);
             workspace::init(cx);

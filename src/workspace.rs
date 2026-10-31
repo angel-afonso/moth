@@ -8,8 +8,8 @@ use std::{
 };
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
+    Action, App, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, KeyBinding,
+    MouseButton, MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
 };
 use ui::{
     Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
@@ -33,6 +33,7 @@ actions!(
     [
         NewTab,
         CloseTab,
+        ReopenTab,
         NextTab,
         PreviousTab,
         ActivateTab1,
@@ -59,6 +60,12 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-t", ReopenTab, None),
+        KeyBinding::new("cmd-f", terminal_view::FindOutput, Some("Terminal")),
+        KeyBinding::new("cmd-=", terminal_view::ZoomIn, Some("Terminal")),
+        KeyBinding::new("cmd-+", terminal_view::ZoomIn, Some("Terminal")),
+        KeyBinding::new("cmd--", terminal_view::ZoomOut, Some("Terminal")),
+        KeyBinding::new("cmd-0", terminal_view::ResetZoom, Some("Terminal")),
         // El último atajo de cada acción es el que se muestra en menús y botones.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
@@ -81,6 +88,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-r", SearchHistory, None),
         KeyBinding::new("cmd-l", ClearScreen, None),
         KeyBinding::new("cmd-shift-r", Reconnect, None),
+        KeyBinding::new("enter", menu::Confirm, Some("ConfirmDialog")),
+        KeyBinding::new("escape", menu::Cancel, Some("ConfirmDialog")),
     ]);
     hosts::reload(cx);
     crate::completions::init(cx);
@@ -92,6 +101,7 @@ pub fn init(cx: &mut App) {
 pub const TAB_BAR_HEIGHT: Pixels = px(40.);
 
 struct TabEntry {
+    initial_dir: Option<PathBuf>,
     view: Entity<TerminalView>,
     /// La sesión sonó la campana mientras no estaba visible.
     needs_attention: bool,
@@ -107,6 +117,14 @@ enum ModalKind {
     Hosts,
 }
 
+/// Qué se quiere cerrar; si hay procesos en curso se pide confirmación antes.
+#[derive(Clone, Copy, PartialEq)]
+enum CloseTarget {
+    Tab(EntityId),
+    Window,
+    Quit,
+}
+
 struct Modal {
     kind: ModalKind,
     picker: Entity<Picker>,
@@ -117,10 +135,15 @@ struct Modal {
 
 pub struct Workspace {
     tabs: Vec<TabEntry>,
+    closed_dirs: Vec<PathBuf>,
+    command_notice: Option<String>,
     active: usize,
     should_move: bool,
     shell_name: String,
     modal: Option<Modal>,
+    /// Cierre esperando confirmación porque cortaría procesos.
+    pending_close: Option<CloseTarget>,
+    confirm_focus: FocusHandle,
 }
 
 impl Workspace {
@@ -131,11 +154,24 @@ impl Workspace {
             .unwrap_or_else(|| "shell".into());
         let mut this = Self {
             tabs: Vec::new(),
+            closed_dirs: state::closed_dirs(),
+            command_notice: None,
             active: 0,
             should_move: false,
             shell_name,
             modal: None,
+            pending_close: None,
+            confirm_focus: cx.focus_handle(),
         };
+        // El botón rojo de la ventana también pasa por la confirmación.
+        let workspace = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            workspace
+                .update(cx, |this, cx| {
+                    this.should_close(CloseTarget::Window, window, cx)
+                })
+                .unwrap_or(true)
+        });
         this.add_tab(window, cx);
         this
     }
@@ -152,22 +188,61 @@ impl Workspace {
     }
 
     fn add_tab_in(&mut self, cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.new_tab_entry(cwd, window, cx) {
+            self.tabs.push(tab);
+            self.activate(self.tabs.len() - 1, window, cx);
+        }
+    }
+
+    fn new_tab_entry(
+        &mut self,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TabEntry> {
+        let initial_dir = cwd
+            .clone()
+            .filter(|dir| dir.is_dir())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
         let builder = match TerminalBuilder::new(cwd) {
             Ok(builder) => builder,
             Err(err) => {
-                eprintln!("no se pudo abrir la terminal: {err:#}");
-                return;
+                crate::log::error(format!("no se pudo abrir la terminal: {err:#}"));
+                self.command_notice = Some(format!("No se pudo abrir la terminal: {err}"));
+                cx.notify();
+                return None;
             }
         };
         let terminal = cx.new(|cx| builder.build(cx));
         let subscription = cx.subscribe_in(&terminal, window, Self::on_terminal_event);
         let view = cx.new(|cx| TerminalView::new(terminal, cx));
-        self.tabs.push(TabEntry {
+        Some(TabEntry {
+            initial_dir,
             view,
             needs_attention: false,
             _subscription: subscription,
-        });
-        self.activate(self.tabs.len() - 1, window, cx);
+        })
+    }
+
+    /// Reemplaza la shell que terminó con error por una nueva en la misma carpeta.
+    fn restart_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ix = self.active;
+        let Some(tab) = self.tabs.get(ix) else {
+            return;
+        };
+        let cwd = tab
+            .view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .shell()
+            .cwd
+            .clone()
+            .or_else(|| tab.initial_dir.clone());
+        if let Some(tab) = self.new_tab_entry(cwd, window, cx) {
+            self.tabs[ix] = tab;
+            self.activate(ix, window, cx);
+        }
     }
 
     fn on_terminal_event(
@@ -192,7 +267,37 @@ impl Workspace {
                     cx.notify();
                 }
             }
-            TerminalEvent::Exited => self.close(ix, window, cx),
+            TerminalEvent::CommandFinished {
+                command,
+                exit_code,
+                duration,
+            } => {
+                if duration.as_secs() >= 10 && (ix != self.active || !window.is_window_active()) {
+                    self.tabs[ix].needs_attention = true;
+                    let result = match exit_code {
+                        Some(0) => "terminó correctamente".to_string(),
+                        Some(code) => format!("terminó con código {code}"),
+                        None => "terminó (resultado desconocido)".to_string(),
+                    };
+                    self.command_notice = Some(format!(
+                        "{} · {} · {}",
+                        short_command(command),
+                        result,
+                        crate::components::format_duration(*duration)
+                    ));
+                    cx.notify();
+                }
+            }
+            TerminalEvent::Exited => {
+                if terminal.read(cx).exit_failure().is_some() {
+                    if ix != self.active {
+                        self.tabs[ix].needs_attention = true;
+                    }
+                    cx.notify();
+                } else {
+                    self.close(ix, window, cx);
+                }
+            }
         }
     }
 
@@ -210,7 +315,26 @@ impl Workspace {
         if ix >= self.tabs.len() {
             return;
         }
-        self.tabs.remove(ix);
+        if let Some(dir) = self.tabs[ix]
+            .view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .shell()
+            .cwd
+            .clone()
+            .or_else(|| self.tabs[ix].initial_dir.clone())
+        {
+            self.closed_dirs.push(dir);
+            if self.closed_dirs.len() > 20 {
+                self.closed_dirs.remove(0);
+            }
+            state::save_closed_dirs(&self.closed_dirs);
+        }
+        let removed = self.tabs.remove(ix);
+        if self.pending_close == Some(CloseTarget::Tab(removed.view.entity_id())) {
+            self.pending_close = None;
+        }
         if self.tabs.is_empty() {
             window.remove_window();
             return;
@@ -221,6 +345,190 @@ impl Workspace {
             self.active
         };
         self.activate(next, window, cx);
+    }
+
+    /// Lo que se cortaría al cerrar la pestaña: la sesión SSH o el comando en curso.
+    fn busy_with(&self, ix: usize, cx: &App) -> Option<String> {
+        let terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
+        if terminal.has_exited() {
+            return None;
+        }
+        let shell = terminal.shell();
+        if let Some(remote) = &shell.remote {
+            return Some(format!("ssh {}", remote.user_at_host()));
+        }
+        shell
+            .running
+            .as_ref()
+            .map(|running| short_command(&running.text))
+    }
+
+    fn busy(&self, target: CloseTarget, cx: &App) -> Vec<String> {
+        (0..self.tabs.len())
+            .filter(|&ix| match target {
+                CloseTarget::Tab(id) => self.tabs[ix].view.entity_id() == id,
+                CloseTarget::Window | CloseTarget::Quit => true,
+            })
+            .filter_map(|ix| self.busy_with(ix, cx))
+            .collect()
+    }
+
+    /// Si se puede cerrar ya. Si se cortarían procesos, abre la confirmación y devuelve
+    /// `false`; pedir lo mismo con la confirmación abierta (⌘W ⌘W, ⌘Q ⌘Q) confirma.
+    fn should_close(
+        &mut self,
+        target: CloseTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.pending_close == Some(target) || self.busy(target, cx).is_empty() {
+            self.pending_close = None;
+            return true;
+        }
+        self.pending_close = Some(target);
+        self.confirm_focus.focus(window, cx);
+        cx.notify();
+        false
+    }
+
+    fn request_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if self.should_close(target, window, cx) {
+            self.perform_close(target, window, cx);
+        }
+    }
+
+    fn request_close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(ix) {
+            let target = CloseTarget::Tab(tab.view.entity_id());
+            self.request_close(target, window, cx);
+        }
+    }
+
+    fn perform_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            CloseTarget::Tab(id) => {
+                if let Some(ix) = self.tabs.iter().position(|tab| tab.view.entity_id() == id) {
+                    self.close(ix, window, cx);
+                }
+            }
+            CloseTarget::Window => window.remove_window(),
+            CloseTarget::Quit => cx.quit(),
+        }
+    }
+
+    fn confirm_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(target) = self.pending_close.take() {
+            self.perform_close(target, window, cx);
+        }
+    }
+
+    fn cancel_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_close = None;
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.view.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn render_close_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let target = self.pending_close?;
+        let busy = self.busy(target, cx);
+        let (title, confirm) = match target {
+            CloseTarget::Tab(_) => ("¿Cerrar la pestaña?", "Cerrar"),
+            CloseTarget::Window => ("¿Cerrar la ventana?", "Cerrar"),
+            CloseTarget::Quit => ("¿Salir de terminalapp?", "Salir"),
+        };
+        let detail = match busy.as_slice() {
+            [] => "Ya no hay procesos en curso.".to_string(),
+            [only] => format!("Se terminará {only}."),
+            many => format!(
+                "Se terminarán {} procesos: {}.",
+                many.len(),
+                many.join(", ")
+            ),
+        };
+        let ui = cx.tokens().ui.clone();
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(ui.overlay)
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px(120.))
+                .px(px(16.))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| this.cancel_close(window, cx)),
+                )
+                .child(
+                    v_flex()
+                        .id("close-confirm")
+                        .key_context("ConfirmDialog")
+                        .track_focus(&self.confirm_focus)
+                        .on_action(
+                            cx.listener(|this, _: &menu::Confirm, w, cx| this.confirm_close(w, cx)),
+                        )
+                        .on_action(
+                            cx.listener(|this, _: &menu::Cancel, w, cx| this.cancel_close(w, cx)),
+                        )
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .w(px(420.))
+                        .max_w_full()
+                        .gap(px(6.))
+                        .p(px(16.))
+                        .rounded(px(10.))
+                        .bg(ui.surface)
+                        .border_1()
+                        .border_color(ui.border)
+                        .shadow_lg()
+                        .child(Label::new(title).weight(gpui::FontWeight::SEMIBOLD))
+                        .child(Label::new(detail).color(Color::Muted))
+                        .child(
+                            h_flex()
+                                .pt(px(10.))
+                                .gap(px(8.))
+                                .justify_end()
+                                .child(
+                                    Button::new("close-cancel", "Cancelar")
+                                        .style(ButtonStyle::Outlined)
+                                        .size(ButtonSize::Large)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(ui::KeyBinding::for_action(&menu::Cancel, cx))
+                                        .on_click(
+                                            cx.listener(|this, _, w, cx| this.cancel_close(w, cx)),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("close-confirm-button", confirm)
+                                        .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                        .size(ButtonSize::Large)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(ui::KeyBinding::for_action(&menu::Confirm, cx))
+                                        .on_click(
+                                            cx.listener(|this, _, w, cx| this.confirm_close(w, cx)),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn reopen_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some(dir) = self.closed_dirs.pop() {
+            if dir.is_dir() {
+                let count = self.tabs.len();
+                self.add_tab_in(Some(dir.clone()), window, cx);
+                if self.tabs.len() == count {
+                    self.closed_dirs.push(dir);
+                }
+                state::save_closed_dirs(&self.closed_dirs);
+                break;
+            }
+            state::save_closed_dirs(&self.closed_dirs);
+        }
     }
 
     /// El comando en ejecución, si no la carpeta actual, si no el título que puso la shell.
@@ -294,12 +602,12 @@ impl Workspace {
             .on_click(
                 cx.listener(move |this, _: &ClickEvent, window, cx| this.activate(ix, window, cx)),
             )
-            .on_close(
-                cx.listener(move |this, _: &ClickEvent, window, cx| this.close(ix, window, cx)),
-            )
-            .on_middle_click(
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| this.close(ix, window, cx)),
-            )
+            .on_close(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.request_close_tab(ix, window, cx)
+            }))
+            .on_middle_click(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                this.request_close_tab(ix, window, cx)
+            }))
     }
 
     /// Zona arrastrable (barra de título transparente en macOS).
@@ -757,6 +1065,42 @@ impl Workspace {
             );
         }
         items.extend([
+            PickerItem::new(
+                "Acciones",
+                "Reabrir pestaña cerrada",
+                PickerAction::Dispatch(Box::new(ReopenTab)),
+            )
+            .shortcut(ReopenTab),
+            PickerItem::new(
+                "Acciones",
+                "Buscar en la salida",
+                PickerAction::Dispatch(Box::new(terminal_view::FindOutput)),
+            )
+            .shortcut(terminal_view::FindOutput),
+            PickerItem::new(
+                "Acciones",
+                "Aumentar texto",
+                PickerAction::Dispatch(Box::new(terminal_view::ZoomIn)),
+            ),
+            PickerItem::new(
+                "Acciones",
+                "Reducir texto",
+                PickerAction::Dispatch(Box::new(terminal_view::ZoomOut)),
+            ),
+            PickerItem::new(
+                "Acciones",
+                "Restablecer zoom",
+                PickerAction::Dispatch(Box::new(terminal_view::ResetZoom)),
+            ),
+            PickerItem::new(
+                "Acciones",
+                if cx.global::<terminal_view::OptionAsMeta>().0 {
+                    "Dejar de usar ⌥ como Meta"
+                } else {
+                    "Usar ⌥ como Meta (⌥B, ⌥F, ⌥.)"
+                },
+                PickerAction::Dispatch(Box::new(terminal_view::ToggleOptionAsMeta)),
+            ),
             PickerItem::new(
                 "Acciones",
                 "Conectar a…",
@@ -1411,8 +1755,17 @@ impl Render for Workspace {
             .font_family(UI_FONT_FAMILY)
             .text_size(UI_FONT_SIZE)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &ReopenTab, w, cx| this.reopen_tab(w, cx)))
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
+                this.request_close_tab(this.active, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &Quit, window, cx| {
+                this.request_close(CloseTarget::Quit, window, cx)
+            }))
             .on_action(
-                cx.listener(|this, _: &CloseTab, window, cx| this.close(this.active, window, cx)),
+                cx.listener(|this, _: &terminal_view::RestartShell, w, cx| {
+                    this.restart_shell(w, cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &NextTab, window, cx| {
                 let next = (this.active + 1) % this.tabs.len();
@@ -1449,6 +1802,21 @@ impl Render for Workspace {
                 this.reconnect_tab(active, w, cx)
             }))
             .child(self.render_tab_bar(cx))
+            .when_some(self.command_notice.clone(), |el, notice| {
+                el.child(
+                    h_flex()
+                        .px(px(16.))
+                        .py(px(6.))
+                        .gap(px(12.))
+                        .child(Label::new(notice))
+                        .child(Button::new("dismiss-command-notice", "Cerrar").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.command_notice = None;
+                                cx.notify();
+                            }),
+                        )),
+                )
+            })
             .children(self.render_production_strip(cx))
             .child(
                 div()
@@ -1463,5 +1831,6 @@ impl Render for Workspace {
                 this.child(self.render_status_bar(cx))
             })
             .children(self.render_modal(cx))
+            .children(self.render_close_confirm(cx))
     }
 }

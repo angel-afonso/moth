@@ -234,7 +234,7 @@ fn user_sources(dir: &Path) -> Vec<(String, Value)> {
             match serde_json::from_str(&text) {
                 Ok(value) => Some((path.display().to_string(), value)),
                 Err(err) => {
-                    eprintln!("tema inválido en {}: {err}", path.display());
+                    crate::log::error(format!("tema inválido en {}: {err}", path.display()));
                     None
                 }
             }
@@ -296,7 +296,7 @@ pub fn load_themes(user_dir: Option<&Path>) -> Vec<Arc<Tokens>> {
                 themes.retain(|t| t.name != tokens.name);
                 themes.push(Arc::new(tokens));
             }
-            Err(err) => eprintln!("tema inválido en {path}: {err:#}"),
+            Err(err) => crate::log::error(format!("tema inválido en {path}: {err:#}")),
         }
     }
     themes

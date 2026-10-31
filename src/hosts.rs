@@ -117,7 +117,9 @@ pub fn load_rules(path: Option<&Path>) -> HostRules {
                     source: RulesSource::File(path.to_path_buf()),
                 };
             }
-            Err(err) => eprintln!("hosts.json inválido ({}): {err}", path.display()),
+            Err(err) => {
+                crate::log::error(format!("hosts.json inválido ({}): {err}", path.display()))
+            }
         }
     }
     HostRules {

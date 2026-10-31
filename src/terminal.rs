@@ -3,7 +3,9 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    os::unix::process::ExitStatusExt as _,
     path::PathBuf,
+    process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -81,7 +83,13 @@ impl Dimensions for TermSize {
 pub enum TerminalEvent {
     /// Cambió algo que se muestra en la pestaña o la barra de estado (título, cwd, comando).
     TitleChanged,
+    CommandFinished {
+        command: String,
+        exit_code: Option<i32>,
+        duration: Duration,
+    },
     Bell,
+    /// La shell terminó; si fue con un error (ver `Terminal::exit_failure`), la pestaña queda abierta.
     Exited,
 }
 
@@ -164,6 +172,9 @@ pub struct Terminal {
     ssh_resolve: Option<Task<()>>,
     /// Comando a ejecutar apenas la shell muestre el prompt (pestañas de "Conectar a…").
     startup_command: Option<String>,
+    started: Instant,
+    /// La shell terminó, con su estado si se conoce.
+    exited: Option<Option<ExitStatus>>,
     _events: Task<()>,
 }
 
@@ -276,6 +287,8 @@ impl TerminalBuilder {
             git_refresh: None,
             ssh_resolve: None,
             startup_command: None,
+            started: Instant::now(),
+            exited: None,
             _events: events,
         }
     }
@@ -357,6 +370,11 @@ impl Terminal {
             }
             ShellEvent::CommandFinished(exit_code) => {
                 if let Some(running) = self.shell.running.take() {
+                    cx.emit(TerminalEvent::CommandFinished {
+                        command: running.text.clone(),
+                        exit_code,
+                        duration: running.started.elapsed(),
+                    });
                     self.shell.last = Some(FinishedCommand {
                         exit_code,
                         duration: running.started.elapsed(),
@@ -574,6 +592,27 @@ impl Terminal {
         cx.notify();
     }
 
+    fn exited(&mut self, status: Option<ExitStatus>, cx: &mut Context<Self>) {
+        if self.exited.is_none() {
+            self.exited = Some(status);
+            cx.emit(TerminalEvent::Exited);
+            cx.notify();
+        }
+    }
+
+    /// Por qué terminó la shell, si fue un error que conviene mostrar en vez de cerrar la
+    /// pestaña: la mató una señal, o salió con error apenas abrió (un `.zshrc` roto, una shell
+    /// que no existe). Un `exit` o ⌃D más tarde puede salir con el código del último comando,
+    /// así que eso no cuenta.
+    pub fn has_exited(&self) -> bool {
+        self.exited.is_some()
+    }
+
+    pub fn exit_failure(&self) -> Option<String> {
+        let status = (*self.exited.as_ref()?)?;
+        exit_failure(status, self.started.elapsed())
+    }
+
     pub fn size(&self) -> TermSize {
         self.size
     }
@@ -609,15 +648,13 @@ impl Terminal {
             AlacEvent::ClipboardStore(_, text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
             }
-            AlacEvent::ClipboardLoad(_, format) => {
-                let text = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text())
-                    .unwrap_or_default();
-                self.write(format(&text).into_bytes());
-            }
+            // Responder a OSC 52 le daría el portapapeles a cualquier programa que lo pida: un
+            // servidor SSH o un `cat` de un archivo preparado. Como alacritty, solo se permite copiar.
+            AlacEvent::ClipboardLoad(..) => {}
             AlacEvent::Bell => cx.emit(TerminalEvent::Bell),
-            AlacEvent::Exit | AlacEvent::ChildExit(_) => cx.emit(TerminalEvent::Exited),
+            // `ChildExit` trae el estado y llega antes que `Exit`; `Exit` solo si no se supo.
+            AlacEvent::ChildExit(status) => self.exited(Some(status), cx),
+            AlacEvent::Exit => self.exited(None, cx),
         }
     }
 
@@ -676,6 +713,18 @@ impl Drop for Terminal {
     }
 }
 
+fn exit_failure(status: ExitStatus, lived: Duration) -> Option<String> {
+    if let Some(signal) = status.signal() {
+        return Some(format!("La shell terminó por la señal {signal}"));
+    }
+    match status.code() {
+        Some(code) if code != 0 && lived < Duration::from_secs(5) => {
+            Some(format!("La shell terminó con código {code} al abrir"))
+        }
+        _ => None,
+    }
+}
+
 /// Carpeta del título que ponen muchos servidores: `usuario@host: ~/dir` o `usuario@host:~/dir`.
 fn remote_cwd_from_title(title: &str) -> Option<String> {
     let (who, rest) = title.split_once(':')?;
@@ -688,7 +737,25 @@ fn remote_cwd_from_title(title: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::remote_cwd_from_title;
+    use std::{os::unix::process::ExitStatusExt as _, process::ExitStatus, time::Duration};
+
+    use super::{exit_failure, remote_cwd_from_title};
+
+    #[test]
+    fn keeps_tabs_only_for_abnormal_exits() {
+        let quick = Duration::from_secs(1);
+        let later = Duration::from_secs(60);
+        // `from_raw` recibe el estado de waitpid: código en el byte alto, señal en el bajo.
+        let code = |code: i32| ExitStatus::from_raw(code << 8);
+        assert_eq!(exit_failure(code(0), quick), None);
+        assert_eq!(exit_failure(code(1), later), None);
+        assert!(exit_failure(code(127), quick).unwrap().contains("127"));
+        assert!(
+            exit_failure(ExitStatus::from_raw(9), later)
+                .unwrap()
+                .contains("señal 9")
+        );
+    }
 
     #[test]
     fn reads_remote_cwd_from_titles() {

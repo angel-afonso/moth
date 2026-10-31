@@ -5,9 +5,9 @@ use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc};
 use alacritty_terminal::{
     Term,
     grid::Dimensions,
-    index::{Boundary, Point as AlacPoint, Side},
+    index::{Boundary, Direction, Point as AlacPoint, Side},
     selection::{Selection, SelectionType},
-    term::{TermMode, cell::Flags},
+    term::{TermMode, cell::Flags, search::RegexSearch},
     vte::ansi::{Color as AnsiColor, CursorShape, NamedColor},
 };
 use gpui::{
@@ -34,10 +34,72 @@ use crate::{
     tokens::{SyntaxColors, TokensExt, metrics, tint},
 };
 
-actions!(terminal, [Paste, Copy]);
+actions!(
+    terminal,
+    [
+        Paste,
+        Copy,
+        FindOutput,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
+        ToggleOptionAsMeta,
+        RestartShell
+    ]
+);
+
+struct FontSize(f32);
+impl gpui::Global for FontSize {}
+
+pub struct OptionAsMeta(pub bool);
+impl gpui::Global for OptionAsMeta {}
+
+struct OutputSearch {
+    input: Entity<crate::text_input::TextInput>,
+    current: Option<SearchMatch>,
+    message: String,
+    _changed: Subscription,
+}
+
+/// Coincidencia de ⌘F, con el tamaño del scrollback de cuando se encontró.
+#[derive(Clone)]
+struct SearchMatch {
+    range: std::ops::RangeInclusive<AlacPoint>,
+    history_size: usize,
+}
+
+impl SearchMatch {
+    fn new(range: std::ops::RangeInclusive<AlacPoint>, term: &Term<Listener>) -> Self {
+        Self {
+            range,
+            history_size: term.grid().history_size(),
+        }
+    }
+
+    /// Dónde está ahora: cada línea que entra al scrollback corre la grilla una fila hacia
+    /// arriba. Si salió del scrollback o se limpió la pantalla, ya no está.
+    fn resolve(&self, term: &Term<Listener>) -> Option<std::ops::RangeInclusive<AlacPoint>> {
+        let shift = term.grid().history_size().checked_sub(self.history_size)? as i32;
+        let moved = |point: &AlacPoint| AlacPoint::new(point.line - shift, point.column);
+        let (start, end) = (moved(self.range.start()), moved(self.range.end()));
+        (start.line >= term.topmost_line()).then_some(start..=end)
+    }
+}
+
+fn literal_pattern(query: &str) -> String {
+    let mut pattern = String::new();
+    for c in query.chars() {
+        if "\\.^$|?*+()[]{}".contains(c) {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern
+}
 
 pub struct TerminalView {
     terminal: Entity<Terminal>,
+    search: Option<OutputSearch>,
     focus_handle: FocusHandle,
     /// Texto en composición del IME (p. ej. una tilde muerta antes de la vocal).
     marked_text: Option<String>,
@@ -111,9 +173,16 @@ struct GridGeometry {
 
 impl TerminalView {
     pub fn new(terminal: Entity<Terminal>, cx: &mut Context<Self>) -> Self {
+        if cx.try_global::<FontSize>().is_none() {
+            cx.set_global(FontSize(crate::state::saved_font_size()));
+        }
+        if cx.try_global::<OptionAsMeta>().is_none() {
+            cx.set_global(OptionAsMeta(crate::state::option_as_meta()));
+        }
         let observe = cx.observe(&terminal, |_, _, cx| cx.notify());
         Self {
             terminal,
+            search: None,
             focus_handle: cx.focus_handle(),
             marked_text: None,
             scroll_remainder: 0.,
@@ -134,9 +203,123 @@ impl TerminalView {
         &self.terminal
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn zoom(&mut self, delta: Option<f32>, cx: &mut Context<Self>) {
+        let current = cx.global::<FontSize>().0;
+        let size = delta.map_or(13.5, |delta| (current + delta).clamp(8., 32.));
+        cx.set_global(FontSize(size));
+        crate::state::save_font_size(size);
+        cx.refresh_windows();
+    }
+
+    fn find_output(&mut self, _: &FindOutput, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.is_none() {
+            self.completion = None;
+            let input = cx.new(|cx| crate::text_input::TextInput::new("Buscar en la salida…", cx));
+            let changed = cx.subscribe(&input, |this, _, _: &crate::text_input::Changed, cx| {
+                this.find_match(false, true, cx);
+            });
+            self.search = Some(OutputSearch {
+                input,
+                current: None,
+                message: String::new(),
+                _changed: changed,
+            });
+        }
+        self.search
+            .as_ref()
+            .unwrap()
+            .input
+            .focus_handle(cx)
+            .focus(window, cx);
+        cx.notify();
+    }
+
+    fn find_match(&mut self, backwards: bool, reset: bool, cx: &mut Context<Self>) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+        let query = search.input.read(cx).text().to_string();
+        if query.is_empty() {
+            search.current = None;
+            search.message.clear();
+            cx.notify();
+            return;
+        }
+        let Ok(mut regex) = RegexSearch::new(&literal_pattern(&query)) else {
+            search.current = None;
+            search.message = "Búsqueda demasiado larga".into();
+            cx.notify();
+            return;
+        };
+        let term = self.terminal.read(cx).term.clone();
+        let mut term = term.lock();
+        let direction = if backwards {
+            Direction::Left
+        } else {
+            Direction::Right
+        };
+        let origin = if !reset {
+            search
+                .current
+                .as_ref()
+                .and_then(|found| found.resolve(&term))
+                .map(|found| {
+                    if backwards {
+                        found.start().sub(&*term, Boundary::None, 1)
+                    } else {
+                        found.end().add(&*term, Boundary::None, 1)
+                    }
+                })
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            AlacPoint::new(term.topmost_line(), alacritty_terminal::index::Column(0))
+        });
+        let found = term.search_next(&mut regex, origin, direction, Side::Left, None);
+        search.current = found.map(|range| SearchMatch::new(range, &term));
+        search.message = if let Some(found) = &search.current {
+            term.scroll_to_point(*found.range.start());
+            "⏎ siguiente · ⇧⏎ anterior · esc cerrar".into()
+        } else {
+            "Sin coincidencias".into()
+        };
+        cx.notify();
+    }
+
+    fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search = None;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn toggle_option_as_meta(
+        &mut self,
+        _: &ToggleOptionAsMeta,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let enabled = !cx.global::<OptionAsMeta>().0;
+        cx.set_global(OptionAsMeta(enabled));
+        crate::state::save_option_as_meta(enabled);
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
         let keystroke = &event.keystroke;
         let m = &keystroke.modifiers;
+        // Shell terminada: ⏎ abre otra; los atajos con ⌘ (⌘W) siguen funcionando.
+        if self.terminal.read(cx).has_exited() {
+            if keystroke.key == "enter" && !(m.control || m.alt || m.shift || m.platform) {
+                window.dispatch_action(Box::new(RestartShell), cx);
+            }
+            if !m.platform {
+                cx.stop_propagation();
+            }
+            return;
+        }
         // Con la confirmación de pegado abierta, el teclado no llega al servidor.
         if self.pending_paste.is_some() {
             match keystroke.key.as_str() {
@@ -207,7 +390,8 @@ impl TerminalView {
         }
 
         let mode = self.terminal.read(cx).mode();
-        if let Some(esc) = keys::to_esc_str(&event.keystroke, mode) {
+        let option_as_meta = cx.global::<OptionAsMeta>().0;
+        if let Some(esc) = keys::to_esc_str(&event.keystroke, mode, option_as_meta) {
             self.terminal
                 .update(cx, |t, cx| t.input(esc.into_owned().into_bytes(), cx));
             cx.stop_propagation();
@@ -535,7 +719,13 @@ impl TerminalView {
     fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let delta = match event.delta {
             ScrollDelta::Lines(p) => p.y,
-            ScrollDelta::Pixels(p) => p.y / TERMINAL_LINE_HEIGHT,
+            ScrollDelta::Pixels(p) => {
+                let line_height = self
+                    .geometry
+                    .get()
+                    .map_or(TERMINAL_LINE_HEIGHT, |g| g.line_height);
+                p.y / line_height
+            }
         };
         self.scroll_remainder += delta;
         let lines = self.scroll_remainder.trunc();
@@ -1040,6 +1230,66 @@ impl TerminalView {
         )
     }
 
+    /// Aviso de que la shell terminó con error; la salida queda arriba para ver por qué.
+    fn render_exit_banner(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let message = self.terminal.read(cx).exit_failure()?;
+        let ui = cx.tokens().ui.clone();
+        let error = cx.tokens().terminal.ansi.red;
+        Some(
+            h_flex()
+                .absolute()
+                .left(metrics::SPACE_4)
+                .right(metrics::SPACE_4)
+                .bottom(px(12.))
+                .gap(px(14.))
+                .py(px(10.))
+                .pl(px(14.))
+                .pr(px(12.))
+                .rounded(px(10.))
+                .bg(ui.surface)
+                .border_1()
+                .border_color(tint(error, 0.45))
+                .shadow_lg()
+                .child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(error)),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(2.))
+                        .child(Label::new(message))
+                        .child(
+                            Label::new("La salida de arriba puede explicar por qué.")
+                                .size(LabelSize::Small)
+                                .color(Color::Placeholder),
+                        ),
+                )
+                .child(
+                    Button::new("exited-close", "Cerrar pestaña")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Large)
+                        .label_size(LabelSize::Small)
+                        .key_binding(ui::KeyBinding::for_action(&crate::workspace::CloseTab, cx))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::workspace::CloseTab), cx)
+                        }),
+                )
+                .child(
+                    Button::new("exited-restart", "Abrir shell nueva ⏎")
+                        .style(ButtonStyle::Filled)
+                        .size(ButtonSize::Large)
+                        .label_size(LabelSize::Small)
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(RestartShell), cx)
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let selected = self
             .terminal
@@ -1106,6 +1356,65 @@ impl Render for TerminalView {
         let completion_ghost = self.completion_ghost();
         let paste_guard = self.render_paste_guard(cx);
         let geometry = self.geometry.clone();
+        let font_size = px(cx.global::<FontSize>().0);
+        let search_match = self
+            .search
+            .as_ref()
+            .and_then(|search| search.current.clone());
+        let search_bar = self.search.as_ref().map(|search| {
+            v_flex()
+                .absolute()
+                .top(px(4.))
+                .right(px(12.))
+                .w(px(360.))
+                .p(px(8.))
+                .gap(px(8.))
+                .bg(cx.tokens().ui.surface)
+                .border_1()
+                .border_color(cx.tokens().ui.border)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(search.input.clone()),
+                        )
+                        .child(Button::new("previous-output-match", "↑").on_click(
+                            cx.listener(|this, _, _, cx| this.find_match(true, false, cx)),
+                        ))
+                        .child(Button::new("next-output-match", "↓").on_click(
+                            cx.listener(|this, _, _, cx| this.find_match(false, false, cx)),
+                        ))
+                        .child(
+                            Button::new("close-output-search", "×")
+                                .on_click(cx.listener(|this, _, w, cx| this.close_search(w, cx))),
+                        ),
+                )
+                .child(Label::new(search.message.clone()).size(LabelSize::Small))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        if let Some(search) = &this.search {
+                            search.input.focus_handle(cx).focus(window, cx);
+                        }
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    match event.keystroke.key.as_str() {
+                        "escape" => this.close_search(window, cx),
+                        "enter" => this.find_match(event.keystroke.modifiers.shift, false, cx),
+                        _ => return,
+                    }
+                    cx.stop_propagation();
+                }))
+        });
 
         div()
             .id("terminal-view")
@@ -1132,6 +1441,11 @@ impl Render for TerminalView {
             })
             .on_key_down(cx.listener(Self::key_down))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
+            .on_action(cx.listener(Self::find_output))
+            .on_action(cx.listener(Self::toggle_option_as_meta))
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Some(1.), cx)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Some(-1.), cx)))
+            .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.zoom(None, cx)))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::copy))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
@@ -1199,7 +1513,15 @@ impl Render for TerminalView {
                             link_cells,
                             completion_ghost,
                         };
-                        let layout = layout_grid(&terminal, bounds, overlays, window, cx);
+                        let layout = layout_grid(
+                            &terminal,
+                            bounds,
+                            overlays,
+                            font_size,
+                            search_match,
+                            window,
+                            cx,
+                        );
                         geometry.set(Some(layout.geometry));
                         layout
                     },
@@ -1217,6 +1539,8 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+            .children(search_bar)
+            .children(self.render_exit_banner(cx))
             .children(paste_guard)
             .children(completion_menu)
     }
@@ -1296,6 +1620,8 @@ fn layout_grid(
     terminal: &Entity<Terminal>,
     bounds: Bounds<Pixels>,
     overlays: Overlays,
+    font_size: Pixels,
+    search_match: Option<SearchMatch>,
     window: &mut Window,
     cx: &mut App,
 ) -> GridLayout {
@@ -1306,8 +1632,7 @@ fn layout_grid(
         completion_ghost,
     } = overlays;
     let base_font = font(MONO_FONT_FAMILY);
-    let font_size = TERMINAL_FONT_SIZE;
-    let line_height = TERMINAL_LINE_HEIGHT;
+    let line_height = TERMINAL_LINE_HEIGHT * (font_size / TERMINAL_FONT_SIZE);
     let text_system = window.text_system().clone();
     let font_id = text_system.resolve_font(&base_font);
     let cell_width = text_system
@@ -1367,6 +1692,7 @@ fn layout_grid(
     let display_offset = content.display_offset as i32;
     let background = tokens.terminal.background;
     let selection = content.selection;
+    let search_match = search_match.and_then(|found| found.resolve(&term));
 
     // Celdas de la línea en edición → tipo de token. Solo si la grilla coincide con lo que
     // reportó zsh; si no (por ejemplo, durante un frame intermedio) no se colorea nada.
@@ -1429,13 +1755,24 @@ fn layout_grid(
                 bg,
             ));
         }
-        if selection.is_some_and(|range| range.contains(indexed.point)) {
+        // La coincidencia de ⌘F en amarillo, para no confundirla con la selección.
+        let highlight = if search_match
+            .as_ref()
+            .is_some_and(|range| range.contains(&indexed.point))
+        {
+            Some(tint(tokens.terminal.ansi.yellow, 0.45))
+        } else if selection.is_some_and(|range| range.contains(indexed.point)) {
+            Some(tokens.terminal.selection)
+        } else {
+            None
+        };
+        if let Some(color) = highlight {
             backgrounds.push(fill(
                 Bounds::new(
                     cell_origin(line, column),
                     size(cell_width * width as f32, line_height),
                 ),
-                tokens.terminal.selection,
+                color,
             ));
         }
 
@@ -1938,6 +2275,112 @@ impl InputHandler for TerminalInputHandler {
 #[cfg(test)]
 mod tests {
     use super::{CharCell, click_target};
+
+    fn search_term(
+        text: &str,
+        columns: usize,
+        lines: usize,
+    ) -> alacritty_terminal::Term<alacritty_terminal::event::VoidListener> {
+        let size = crate::terminal::TermSize {
+            columns,
+            lines,
+            cell_width: gpui::px(8.),
+            line_height: gpui::px(22.),
+        };
+        let mut term = alacritty_terminal::Term::new(
+            Default::default(),
+            &size,
+            alacritty_terminal::event::VoidListener,
+        );
+        let mut parser: alacritty_terminal::vte::ansi::Processor =
+            alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut term, text.as_bytes());
+        term
+    }
+
+    #[test]
+    fn output_search_is_literal_and_finds_unicode_across_wrapped_rows() {
+        use alacritty_terminal::{
+            grid::Dimensions,
+            index::{Column, Direction, Point, Side},
+            term::search::RegexSearch,
+        };
+        let term = search_term("prefix ñ.[x] suffix", 10, 4);
+        let mut regex = RegexSearch::new(&super::literal_pattern("ñ.[x]")).unwrap();
+        let found = term
+            .search_next(
+                &mut regex,
+                Point::new(term.topmost_line(), Column(0)),
+                Direction::Right,
+                Side::Left,
+                None,
+            )
+            .unwrap();
+        assert_eq!(found.start().column, Column(7));
+        assert!(found.end().line > found.start().line);
+        let mut regex = RegexSearch::new(&super::literal_pattern("ñ.[y]")).unwrap();
+        assert!(
+            term.search_next(
+                &mut regex,
+                Point::new(term.topmost_line(), Column(0)),
+                Direction::Right,
+                Side::Left,
+                None
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn output_search_finds_scrollback_and_wraps_both_directions() {
+        use alacritty_terminal::{
+            grid::Dimensions,
+            index::{Boundary, Column, Direction, Point, Side},
+            term::search::RegexSearch,
+        };
+        let term = search_term("match first\r\nother\r\nother\r\nmatch last", 20, 2);
+        let mut regex = RegexSearch::new("match").unwrap();
+        let first = term
+            .search_next(
+                &mut regex,
+                Point::new(term.topmost_line(), Column(0)),
+                Direction::Right,
+                Side::Left,
+                None,
+            )
+            .unwrap();
+        assert!(first.start().line.0 < 0);
+        let second = term
+            .search_next(
+                &mut regex,
+                first.end().add(&term, Boundary::None, 1),
+                Direction::Right,
+                Side::Left,
+                None,
+            )
+            .unwrap();
+        assert!(second.start() > first.start());
+        let wrapped = term
+            .search_next(
+                &mut regex,
+                second.end().add(&term, Boundary::None, 1),
+                Direction::Right,
+                Side::Left,
+                None,
+            )
+            .unwrap();
+        assert_eq!(wrapped, first);
+        let previous = term
+            .search_next(
+                &mut regex,
+                first.start().sub(&term, Boundary::None, 1),
+                Direction::Left,
+                Side::Left,
+                None,
+            )
+            .unwrap();
+        assert_eq!(previous, second);
+    }
 
     fn cells(line: i32, start: usize, widths: &[usize]) -> Vec<CharCell> {
         let mut column = start;
