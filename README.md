@@ -19,6 +19,8 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | ⌘⇧T | Reabrir la última pestaña cerrada en su carpeta |
 | ⌘+ / ⌘− / ⌘0 | Aumentar / reducir / restablecer el tamaño del texto |
 | ⌘F | Buscar en la salida y el scrollback |
+| ⌘↑ / ⌘↓ | Ir al comando anterior / siguiente |
+| ⌘⇧C | Copiar la salida del comando elegido, o del último |
 | ⌘1…⌘8, ⌘9 | Ir a la pestaña N / a la última |
 | ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Pestaña siguiente / anterior |
 | ⌘K · ⌘⇧P | Paleta de comandos |
@@ -51,6 +53,16 @@ Cuando un comando dura al menos 10 segundos y termina en una pestaña inactiva o
 El zoom cambia el texto de todas las pestañas, ajusta el tamaño de las celdas y se guarda entre ejecuciones. El rango es de 8 a 32 puntos y ⌘0 restaura 13,5 puntos.
 
 ⌘⇧T recupera hasta las últimas 20 carpetas de pestañas cerradas, incluso tras reiniciar la app. Abre una shell nueva: no restaura procesos ni ejecuta de nuevo comandos SSH. Si la carpeta ya no existe, se omite.
+
+## Bloques de comandos
+
+Con la integración de zsh, la salida queda dividida en bloques: un prompt, el comando y lo que imprimió.
+
+- ⌘↑ y ⌘↓ recorren los comandos: el elegido se resalta con una barra de acento y queda arriba de la vista. Pasado el último, ⌘↓ vuelve al final; escribir cualquier cosa quita la selección.
+- ⌘⇧C copia la salida del comando elegido o, sin elegir, la del último comando. Copia solo la salida, sin el prompt ni el comando.
+- Los comandos que terminaron con error (incluido ⌃C) llevan una barra roja en el margen izquierdo.
+
+Para delimitar los bloques, el escáner del PTY inserta después de cada fin de prompt (`OSC 133;B`) unos caracteres invisibles de ancho cero que alacritty guarda en la celda. Así los bloques siguen al texto al hacer scroll, al cambiar el tamaño de la ventana o cuando el scrollback descarta líneas viejas. Esos caracteres se quitan al copiar y no se dibujan. La integración informa además cuántas filas ocupa el prompt; con temas que arman el prompt en tiempo de ejecución (p10k), ese número puede quedar corto y el bloque incluir la primera fila del prompt siguiente.
 
 ## Buscar en la salida
 
@@ -122,7 +134,7 @@ Los programas pueden copiar al portapapeles con OSC 52 (útil para copiar desde 
 
 Al abrir una pestaña con zsh, la app instala `assets/shell/zsh/` en `~/Library/Application Support/terminalapp/shell/zsh` y arranca zsh con `ZDOTDIR` apuntando ahí. Ese `.zshenv` restaura tu `ZDOTDIR`, carga tu `.zshenv` y luego la integración; `.zprofile` y `.zshrc` siguen siendo los tuyos.
 
-La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code), OSC 7 (directorio actual) y OSC 7777, propios: la línea en edición en cada tecla, el comando ejecutado, `HISTFILE`, `PATH` y los nombres de alias, funciones y builtins. La app los detecta en la salida del PTY antes de pasársela a alacritty y con eso:
+La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code; el fin de prompt lleva también las filas del prompt y si falló el comando anterior), OSC 7 (directorio actual) y OSC 7777, propios: la línea en edición en cada tecla, el comando ejecutado, `HISTFILE`, `PATH` y los nombres de alias, funciones y builtins. La app los detecta en la salida del PTY antes de pasársela a alacritty y con eso:
 
 - colorea la línea que estás escribiendo (comando, subcomando, flags, strings, rutas, operadores, variables; comando inexistente en rojo ondulado);
 - sugiere en gris el resto del comando más reciente del historial que empieza igual; → o Fin lo acepta;
@@ -152,6 +164,7 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/state.rs`: última carpeta, carpetas recientes, tema, zoom y ⌥ como Meta.
 - `src/log.rs`: errores a stderr y a `~/Library/Logs/terminalapp/`.
 - `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
+- `src/blocks.rs`: bloques de comandos: marcas invisibles en la grilla, salida de cada comando y resultado.
 - `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).
 - `src/mouse.rs`: reporte de mouse a los programas que lo piden (SGR y X10).
 - `src/links.rs`: búsqueda de URLs en la salida y esquemas permitidos.

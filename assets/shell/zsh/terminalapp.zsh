@@ -1,5 +1,6 @@
 # Integración de terminalapp con zsh.
 #   OSC 133;A/B/C/D   inicio de prompt, fin de prompt, inicio de salida, fin de comando (+ exit code)
+#                     B lleva rows=N (filas del prompt) y prev_err=0|1 (falló el comando anterior)
 #   OSC 7             directorio actual
 #   OSC 7777;...      propios: E comando ejecutado, L línea en edición, F fin de edición,
 #                     H archivo de historial, P PATH, N nombres de alias/funciones/builtins
@@ -8,7 +9,7 @@
 # (encabezado con carpeta, rama y resultado del comando anterior; `❯` debajo). Con un tema
 # propio (starship, p10k…) o con TERMINALAPP_PROMPT=0 en tu .zshrc, no se toca.
 [[ -n "$_TAPP_LOADED" ]] && return
-typeset -g _TAPP_LOADED=1 _tapp_running= _tapp_first=1 _tapp_own_prompt= _tapp_started=
+typeset -g _TAPP_LOADED=1 _tapp_running= _tapp_first=1 _tapp_own_prompt= _tapp_started= _tapp_prev_err=0
 unset TERMINALAPP_SHELL_INTEGRATION
 zmodload zsh/parameter 2>/dev/null
 zmodload zsh/datetime 2>/dev/null
@@ -21,6 +22,8 @@ _tapp_clean() { REPLY=${1//[$'\x00'-$'\x1f'$'\x7f']/ } }
 
 _tapp_precmd() {
   local ret=$? ran=$_tapp_running
+  _tapp_prev_err=0
+  [[ -n "$ran" ]] && (( ret != 0 )) && _tapp_prev_err=1
   if [[ -n "$_tapp_running" ]]; then
     _tapp_osc "133;D;$ret"
     _tapp_running=
@@ -93,8 +96,14 @@ _tapp_build_prompt() {
   PS1="$gap$header"$'\n'"%F{$mark}❯%f "
 }
 
+# Agrega al final de PS1 la marca de fin de prompt (reemplaza la del prompt anterior, que puede
+# seguir ahí si PS1 no se rearma). La app la usa para delimitar los bloques de comandos, así
+# que lleva las filas que ocupa el prompt y si falló el comando anterior.
 _tapp_mark_prompt() {
-  [[ "$PS1" == *$'\e]133;B\a'* ]] || PS1="${PS1}%{"$'\e]133;B\a'"%}"
+  local base=${PS1%"%{"$'\e]133;B'*}
+  local expanded=${(%)base}
+  local newlines=${expanded//[^$'\n']/}
+  PS1="${base}%{"$'\e]133;B;rows='"$(( ${#newlines} + 1 ));prev_err=$_tapp_prev_err"$'\a'"%}"
 }
 
 _tapp_preexec() {

@@ -339,7 +339,7 @@ impl Terminal {
     fn handle_shell_event(&mut self, event: ShellEvent, cx: &mut Context<Self>) {
         match event {
             ShellEvent::PromptStart => self.shell.integrated = true,
-            ShellEvent::PromptEnd => {}
+            ShellEvent::PromptEnd(_) => {}
             ShellEvent::Cwd(cwd) => {
                 // Llega en cada prompt: buen momento para refrescar git (cambió de rama, commit…).
                 self.refresh_git(cwd.clone(), cx);

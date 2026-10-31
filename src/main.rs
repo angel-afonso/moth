@@ -1,4 +1,5 @@
 mod assets;
+mod blocks;
 mod completions;
 mod components;
 mod fuzzy;

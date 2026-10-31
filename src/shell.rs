@@ -17,18 +17,22 @@ use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, Global};
 use polling::{Event, PollMode, Poller};
 
-use crate::assets::Assets;
+use crate::{assets::Assets, blocks::PromptMark};
 
 /// Lo que la shell nos cuenta por OSC.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShellEvent {
     PromptStart,
-    PromptEnd,
+    /// Fin del prompt: ahí empieza lo que se escribe. Deja una marca en la grilla (ver `blocks`).
+    PromptEnd(PromptMark),
     CommandStart,
     CommandFinished(Option<i32>),
     CommandText(String),
     Cwd(PathBuf),
-    Line { cursor: usize, buffer: String },
+    Line {
+        cursor: usize,
+        buffer: String,
+    },
     LineFinished,
     HistoryFile(PathBuf),
     Path(String),
@@ -135,8 +139,10 @@ pub struct OscScanner {
 }
 
 impl OscScanner {
-    pub fn feed(&mut self, bytes: &[u8], mut on_osc: impl FnMut(&[u8])) {
-        for &byte in bytes {
+    /// Llama a `on_osc` con el contenido de cada secuencia y la posición en `bytes` del
+    /// último byte de su terminador.
+    pub fn feed(&mut self, bytes: &[u8], mut on_osc: impl FnMut(&[u8], usize)) {
+        for (ix, &byte) in bytes.iter().enumerate() {
             self.state = match self.state {
                 ScanState::Ground | ScanState::Escape if byte == 0x1b => ScanState::Escape,
                 ScanState::Escape if byte == b']' => {
@@ -146,7 +152,7 @@ impl OscScanner {
                 ScanState::Ground | ScanState::Escape => ScanState::Ground,
                 ScanState::Osc => match byte {
                     0x07 => {
-                        on_osc(&self.payload);
+                        on_osc(&self.payload, ix);
                         ScanState::Ground
                     }
                     0x1b => ScanState::OscEscape,
@@ -159,7 +165,7 @@ impl OscScanner {
                 },
                 ScanState::OscEscape => match byte {
                     b'\\' => {
-                        on_osc(&self.payload);
+                        on_osc(&self.payload, ix);
                         ScanState::Ground
                     }
                     b']' => {
@@ -182,7 +188,20 @@ pub fn parse_osc(payload: &[u8]) -> Option<ShellEvent> {
             let mut parts = rest.split(';');
             match parts.next()? {
                 "A" => Some(ShellEvent::PromptStart),
-                "B" => Some(ShellEvent::PromptEnd),
+                "B" => {
+                    let mut mark = PromptMark {
+                        rows: 1,
+                        previous_failed: false,
+                    };
+                    for param in parts {
+                        match param.split_once('=') {
+                            Some(("rows", rows)) => mark.rows = rows.parse().unwrap_or(1),
+                            Some(("prev_err", err)) => mark.previous_failed = err == "1",
+                            _ => {}
+                        }
+                    }
+                    Some(ShellEvent::PromptEnd(mark))
+                }
                 "C" => Some(ShellEvent::CommandStart),
                 "D" => Some(ShellEvent::CommandFinished(
                     parts.next().and_then(|c| c.parse().ok()),
@@ -245,17 +264,50 @@ pub struct ScanningReader {
     events: UnboundedSender<ShellEvent>,
 }
 
+/// Lugar que se deja libre en cada lectura para insertar las marcas de prompt. Van en el mismo
+/// buffer y no se guardan para la lectura siguiente: el event loop de alacritty no vuelve a
+/// leer hasta que el PTY tenga datos nuevos, y lo guardado quedaría colgado.
+const MARK_ROOM: usize = 64;
+
 impl Read for ScanningReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.file.read(buf)?;
+        let room = if buf.len() > 4 * MARK_ROOM {
+            MARK_ROOM
+        } else {
+            0
+        };
+        let readable = buf.len() - room;
+        let n = self.file.read(&mut buf[..readable])?;
         let events = &self.events;
-        self.scanner.feed(&buf[..n], |payload| {
+        let mut marks = Vec::new();
+        self.scanner.feed(&buf[..n], |payload, end| {
             if let Some(event) = parse_osc(payload) {
+                if let ShellEvent::PromptEnd(mark) = &event {
+                    marks.push((end + 1, mark.encode()));
+                }
                 events.unbounded_send(event).ok();
             }
         });
-        Ok(n)
+        Ok(insert_marks(buf, n, room, &marks))
     }
+}
+
+/// Inserta cada marca en su posición mientras quepa en `room`; devuelve el largo nuevo.
+fn insert_marks(buf: &mut [u8], len: usize, room: usize, marks: &[(usize, String)]) -> usize {
+    let mut len = len;
+    let mut used = 0;
+    // De atrás hacia adelante, para que las posiciones de las anteriores sigan valiendo.
+    for (at, mark) in marks.iter().rev() {
+        let mark = mark.as_bytes();
+        if used + mark.len() > room {
+            continue;
+        }
+        buf.copy_within(*at..len, at + mark.len());
+        buf[*at..at + mark.len()].copy_from_slice(mark);
+        len += mark.len();
+        used += mark.len();
+    }
+    len
 }
 
 /// Envuelve el `Pty` de alacritty: lee por un descriptor duplicado que pasa por el escáner.
@@ -416,7 +468,7 @@ mod tests {
 
     fn scan(bytes: &[u8]) -> Vec<ShellEvent> {
         let mut out = Vec::new();
-        OscScanner::default().feed(bytes, |p| out.extend(parse_osc(p)));
+        OscScanner::default().feed(bytes, |p, _| out.extend(parse_osc(p)));
         out
     }
 
@@ -429,7 +481,10 @@ mod tests {
             events,
             vec![
                 ShellEvent::PromptStart,
-                ShellEvent::PromptEnd,
+                ShellEvent::PromptEnd(PromptMark {
+                    rows: 1,
+                    previous_failed: false
+                }),
                 ShellEvent::CommandText("ls -la".into()),
                 ShellEvent::CommandStart,
                 ShellEvent::CommandFinished(Some(1)),
@@ -441,8 +496,8 @@ mod tests {
     fn handles_sequences_split_across_reads() {
         let mut scanner = OscScanner::default();
         let mut out = Vec::new();
-        scanner.feed(b"\x1b]7777;L;3;git", |p| out.extend(parse_osc(p)));
-        scanner.feed(b" st\x07", |p| out.extend(parse_osc(p)));
+        scanner.feed(b"\x1b]7777;L;3;git", |p, _| out.extend(parse_osc(p)));
+        scanner.feed(b" st\x07", |p, _| out.extend(parse_osc(p)));
         assert_eq!(
             out,
             vec![ShellEvent::Line {
@@ -450,6 +505,38 @@ mod tests {
                 buffer: "git st".into()
             }]
         );
+    }
+
+    #[test]
+    fn prompt_end_carries_rows_and_previous_result() {
+        assert_eq!(
+            scan(b"\x1b]133;B;rows=3;prev_err=1\x07"),
+            vec![ShellEvent::PromptEnd(PromptMark {
+                rows: 3,
+                previous_failed: true
+            })]
+        );
+    }
+
+    #[test]
+    fn inserts_marks_after_the_prompt_end() {
+        let mark = PromptMark {
+            rows: 2,
+            previous_failed: false,
+        }
+        .encode();
+        let input = b"$ \x1b]133;B\x07ls";
+        let mut buf = [0u8; 64];
+        buf[..input.len()].copy_from_slice(input);
+        let mut ends = Vec::new();
+        OscScanner::default().feed(&buf[..input.len()], |_, end| ends.push(end));
+        let marks: Vec<_> = ends.iter().map(|&end| (end + 1, mark.clone())).collect();
+        let len = insert_marks(&mut buf, input.len(), 32, &marks);
+        let expected = format!("$ \x1b]133;B\x07{mark}ls");
+        assert_eq!(&buf[..len], expected.as_bytes());
+        // Sin lugar, el texto queda igual.
+        let mut buf = input.to_vec();
+        assert_eq!(insert_marks(&mut buf, input.len(), 0, &marks), input.len());
     }
 
     #[test]

@@ -4,8 +4,8 @@ use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc};
 
 use alacritty_terminal::{
     Term,
-    grid::Dimensions,
-    index::{Boundary, Direction, Point as AlacPoint, Side},
+    grid::{Dimensions, Scroll},
+    index::{Boundary, Direction, Line, Point as AlacPoint, Side},
     selection::{Selection, SelectionType},
     term::{TermMode, cell::Flags, search::RegexSearch},
     vte::ansi::{Color as AnsiColor, CursorShape, NamedColor},
@@ -24,7 +24,7 @@ use ui::{
 };
 
 use crate::{
-    completions,
+    blocks, completions,
     components::{Kbd, KindBadge, SuggestionKind},
     glyphs,
     highlight::{Token, TokenKind},
@@ -44,7 +44,10 @@ actions!(
         ZoomOut,
         ResetZoom,
         ToggleOptionAsMeta,
-        RestartShell
+        RestartShell,
+        PreviousCommand,
+        NextCommand,
+        CopyCommandOutput
     ]
 );
 
@@ -122,6 +125,8 @@ pub struct TerminalView {
     completion: Option<CompletionMenu>,
     /// Después de completar una carpeta, reabrir el popup cuando la línea quede así.
     reopen_completion_on: Option<String>,
+    /// Bloque elegido con ⌘↑/⌘↓ (su fila de entrada): se resalta y ⌘⇧C copia su salida.
+    selected_block: Option<blocks::Anchor>,
     _observe: Subscription,
 }
 
@@ -195,6 +200,7 @@ impl TerminalView {
             last_motion_cell: None,
             completion: None,
             reopen_completion_on: None,
+            selected_block: None,
             _observe: observe,
         }
     }
@@ -291,6 +297,67 @@ impl TerminalView {
         self.search = None;
         self.focus_handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// ⌘↑/⌘↓: elige el comando anterior o siguiente y lo lleva al borde de arriba. Pasado el
+    /// último vuelve al final de la salida.
+    fn select_command(&mut self, previous: bool, cx: &mut Context<Self>) {
+        let term = self.terminal.read(cx).term.clone();
+        let mut term = term.lock();
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return;
+        }
+        let commands = blocks::commands(&term);
+        let current = self
+            .selected_block
+            .and_then(|anchor| anchor.resolve(&term))
+            .and_then(|line| commands.iter().position(|block| block.input == line));
+        let next = match (current, previous) {
+            (None, true) => commands.len().checked_sub(1),
+            (None, false) => None,
+            (Some(ix), true) => Some(ix.saturating_sub(1)),
+            (Some(ix), false) => Some(ix + 1).filter(|&next| next < commands.len()),
+        };
+        match next {
+            Some(ix) => {
+                let block = &commands[ix];
+                self.selected_block = Some(blocks::Anchor::new(block.input, &term));
+                let start =
+                    blocks::trimmed_rows(&term, block).map_or(block.start, |(start, _)| start);
+                // Con el prompt en la primera fila visible (o lo más arriba que se pueda).
+                let offset = (-start.0).clamp(0, term.grid().history_size() as i32);
+                let delta = offset - term.grid().display_offset() as i32;
+                term.scroll_display(Scroll::Delta(delta));
+            }
+            None => {
+                self.selected_block = None;
+                term.scroll_display(Scroll::Bottom);
+            }
+        }
+        cx.notify();
+    }
+
+    /// ⌘⇧C: copia la salida del comando elegido, o la del último.
+    fn copy_command_output(
+        &mut self,
+        _: &CopyCommandOutput,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = {
+            let term = self.terminal.read(cx).term.clone();
+            let term = term.lock();
+            let commands = blocks::commands(&term);
+            let selected = self.selected_block.and_then(|anchor| anchor.resolve(&term));
+            commands
+                .iter()
+                .find(|block| Some(block.input) == selected)
+                .or(commands.last())
+                .map(|block| blocks::output_text(&term, block))
+        };
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
     }
 
     fn toggle_option_as_meta(
@@ -392,6 +459,7 @@ impl TerminalView {
         let mode = self.terminal.read(cx).mode();
         let option_as_meta = cx.global::<OptionAsMeta>().0;
         if let Some(esc) = keys::to_esc_str(&event.keystroke, mode, option_as_meta) {
+            self.selected_block = None;
             self.terminal
                 .update(cx, |t, cx| t.input(esc.into_owned().into_bytes(), cx));
             cx.stop_propagation();
@@ -1297,6 +1365,7 @@ impl TerminalView {
             .term
             .lock()
             .selection_to_string()
+            .map(|text| blocks::strip_marks(&text))
             .filter(|text| !text.is_empty());
         if let Some(text) = selected {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -1354,6 +1423,7 @@ impl Render for TerminalView {
         self.sync_completion(cx);
         let completion_menu = self.render_completion_menu(window, cx);
         let completion_ghost = self.completion_ghost();
+        let selected_block = self.selected_block;
         let paste_guard = self.render_paste_guard(cx);
         let geometry = self.geometry.clone();
         let font_size = px(cx.global::<FontSize>().0);
@@ -1443,6 +1513,11 @@ impl Render for TerminalView {
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .on_action(cx.listener(Self::find_output))
             .on_action(cx.listener(Self::toggle_option_as_meta))
+            .on_action(
+                cx.listener(|this, _: &PreviousCommand, _, cx| this.select_command(true, cx)),
+            )
+            .on_action(cx.listener(|this, _: &NextCommand, _, cx| this.select_command(false, cx)))
+            .on_action(cx.listener(Self::copy_command_output))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Some(1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Some(-1.), cx)))
             .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.zoom(None, cx)))
@@ -1512,6 +1587,7 @@ impl Render for TerminalView {
                             marked_text,
                             link_cells,
                             completion_ghost,
+                            selected_block,
                         };
                         let layout = layout_grid(
                             &terminal,
@@ -1594,6 +1670,61 @@ impl GridLayout {
     }
 }
 
+/// Barra en el margen izquierdo de los comandos que fallaron, y fondo y barra de acento en el
+/// bloque elegido con ⌘↑/⌘↓. Solo mira las filas visibles y las de debajo.
+fn block_decorations(
+    term: &Term<Listener>,
+    selected: Option<blocks::Anchor>,
+    tokens: &crate::tokens::Tokens,
+    origin: Point<Pixels>,
+    width: Pixels,
+    line_height: Pixels,
+    display_offset: i32,
+) -> Vec<PaintQuad> {
+    let top = Line(-display_offset);
+    let bottom = top + (term.screen_lines() as i32 - 1);
+    let selected = selected.and_then(|anchor| anchor.resolve(term));
+    let row_y = |line: Line| origin.y + line_height * (line.0 + display_offset) as f32;
+    let mut quads = Vec::new();
+    for block in blocks::visible_blocks(term, top, bottom) {
+        let is_selected = !block.partial && Some(block.input) == selected;
+        if !block.failed && !is_selected {
+            continue;
+        }
+        let Some((start, end)) = blocks::trimmed_rows(term, &block) else {
+            continue;
+        };
+        let (start, end) = (start.max(top), end.min(bottom));
+        if start > end {
+            continue;
+        }
+        let y = row_y(start);
+        let height = row_y(end) + line_height - y;
+        if is_selected {
+            quads.push(fill(
+                Bounds::new(point(origin.x - px(16.), y), size(width + px(24.), height)),
+                tint(tokens.ui.accent, 0.08),
+            ));
+        }
+        let bar = if block.failed {
+            tokens.status.error
+        } else {
+            tokens.ui.accent
+        };
+        quads.push(
+            fill(
+                Bounds::new(
+                    point(origin.x - px(14.), y + px(2.)),
+                    size(px(3.), height - px(4.)),
+                ),
+                bar,
+            )
+            .corner_radii(px(1.5)),
+        );
+    }
+    quads
+}
+
 fn styled_font(base: &Font, style: &CellStyle) -> Font {
     let mut font = base.clone();
     if style.bold {
@@ -1614,6 +1745,8 @@ struct Overlays {
     link_cells: std::collections::HashSet<(i32, usize)>,
     /// Resto del candidato elegido en el popup de completions.
     completion_ghost: Option<String>,
+    /// Bloque elegido con ⌘↑/⌘↓.
+    selected_block: Option<blocks::Anchor>,
 }
 
 fn layout_grid(
@@ -1630,6 +1763,7 @@ fn layout_grid(
         marked_text,
         link_cells,
         completion_ghost,
+        selected_block,
     } = overlays;
     let base_font = font(MONO_FONT_FAMILY);
     let line_height = TERMINAL_LINE_HEIGHT * (font_size / TERMINAL_FONT_SIZE);
@@ -1704,7 +1838,15 @@ fn layout_grid(
         .map(|(line, tokens, cells)| token_cells(&line.buffer, tokens, cells))
         .unwrap_or_default();
 
-    let mut backgrounds = Vec::new();
+    let mut backgrounds = block_decorations(
+        &term,
+        selected_block,
+        &tokens,
+        origin,
+        bounds.size.width,
+        line_height,
+        display_offset,
+    );
     // Bloques y líneas de caja dibujados como rectángulos, ajustados a píxeles del dispositivo
     // para que celdas vecinas compartan bordes exactos (sin costuras).
     let mut glyph_quads = Vec::new();
@@ -1835,7 +1977,9 @@ fn layout_grid(
         let segment = current.as_mut().unwrap();
         segment.text.push(cell.c);
         if let Some(zerowidth) = cell.zerowidth() {
-            segment.text.extend(zerowidth);
+            segment
+                .text
+                .extend(zerowidth.iter().filter(|&&c| !blocks::is_mark_char(c)));
         }
         segment.next_column = column + width;
         // Un carácter ancho cierra el segmento para que el siguiente arranque alineado a la grilla.
@@ -2221,6 +2365,7 @@ impl InputHandler for TerminalInputHandler {
         let bytes = text.as_bytes().to_vec();
         self.view.update(cx, |view, cx| {
             view.marked_text = None;
+            view.selected_block = None;
             view.terminal.update(cx, |t, cx| t.input(bytes, cx));
             cx.notify();
         });

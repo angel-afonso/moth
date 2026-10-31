@@ -66,6 +66,13 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-+", terminal_view::ZoomIn, Some("Terminal")),
         KeyBinding::new("cmd--", terminal_view::ZoomOut, Some("Terminal")),
         KeyBinding::new("cmd-0", terminal_view::ResetZoom, Some("Terminal")),
+        KeyBinding::new("cmd-up", terminal_view::PreviousCommand, Some("Terminal")),
+        KeyBinding::new("cmd-down", terminal_view::NextCommand, Some("Terminal")),
+        KeyBinding::new(
+            "cmd-shift-c",
+            terminal_view::CopyCommandOutput,
+            Some("Terminal"),
+        ),
         // El último atajo de cada acción es el que se muestra en menús y botones.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
@@ -1077,6 +1084,18 @@ impl Workspace {
                 PickerAction::Dispatch(Box::new(terminal_view::FindOutput)),
             )
             .shortcut(terminal_view::FindOutput),
+            PickerItem::new(
+                "Acciones",
+                "Copiar la salida del último comando",
+                PickerAction::Dispatch(Box::new(terminal_view::CopyCommandOutput)),
+            )
+            .shortcut(terminal_view::CopyCommandOutput),
+            PickerItem::new(
+                "Acciones",
+                "Ir al comando anterior",
+                PickerAction::Dispatch(Box::new(terminal_view::PreviousCommand)),
+            )
+            .shortcut(terminal_view::PreviousCommand),
             PickerItem::new(
                 "Acciones",
                 "Aumentar texto",
