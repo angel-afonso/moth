@@ -37,15 +37,20 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("left", Left, ctx),
         KeyBinding::new("right", Right, ctx),
         KeyBinding::new("home", Home, ctx),
-        KeyBinding::new("cmd-left", Home, ctx),
         KeyBinding::new("end", End, ctx),
-        KeyBinding::new("cmd-right", End, ctx),
-        KeyBinding::new("cmd-v", Paste, ctx),
-        KeyBinding::new("cmd-backspace", DeleteToStart, ctx),
+        KeyBinding::new("secondary-v", Paste, ctx),
         KeyBinding::new("ctrl-u", DeleteToStart, ctx),
         KeyBinding::new("alt-backspace", DeleteWordLeft, ctx),
         KeyBinding::new("ctrl-w", DeleteWordLeft, ctx),
     ]);
+    // ⌘← / ⌘→ / ⌘⌫ as in every macOS text field; elsewhere Home, End and Ctrl+U.
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([
+            KeyBinding::new("cmd-left", Home, ctx),
+            KeyBinding::new("cmd-right", End, ctx),
+            KeyBinding::new("cmd-backspace", DeleteToStart, ctx),
+        ]);
+    }
 }
 
 /// Emitted whenever the text changes.

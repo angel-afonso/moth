@@ -11,7 +11,8 @@ license = "GPL-3.0-or-later"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
 ui = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
 # `font-kit`: without it gpui draws no text on macOS. `runtime_shaders`: compiles the Metal shaders at startup (no Xcode Metal Toolchain needed).
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a", features = ["font-kit", "runtime_shaders"] }
+# `x11` and `wayland`: the Linux display servers. Each feature only affects its own platform.
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a", features = ["font-kit", "runtime_shaders", "x11", "wayland"] }
 theme = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
 menu = { git = "https://github.com/zed-industries/zed", rev = "32b16ce2ada96ba86c9052e456a2642102b39b7a" }
 # The same alacritty fork Zed uses at that commit.
@@ -23,6 +24,14 @@ serde_json = "1"
 # Same major version alacritty_terminal uses: needed to wrap its `Pty`.
 polling = "3"
 rust-embed = { version = "8", features = ["include-exclude"] }
+# To see what gpui reports (renderer and platform failures) instead of dropping it.
+log = "0.4"
+# The same image crate gpui uses, for the window icon on Linux (only PNG decoding).
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+# Embeds the icon in moth.exe (Windows only; see build.rs).
+embed-resource = "3"
 
 # Zed's workspace [patch] entries aren't inherited by git dependencies; the ones gpui needs are copied here.
 [patch.crates-io]

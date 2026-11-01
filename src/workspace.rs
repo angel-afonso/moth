@@ -10,8 +10,8 @@ use std::{
 use gpui::{
     Action, App, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, EntityId,
     FocusHandle, Focusable, Global, KeyBinding, MouseButton, MouseDownEvent, Pixels, SharedString,
-    Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, actions,
-    deferred, div, point, prelude::*, px, relative, size,
+    Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowDecorations,
+    WindowOptions, actions, deferred, div, point, prelude::*, px, relative, size,
 };
 use ui::{
     Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
@@ -25,7 +25,7 @@ use crate::{
     hosts::{self, RulesSource},
     panes::{Axis, Direction, PaneTree},
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
-    session, shell, ssh, state,
+    session, shell, shortcuts, ssh, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{self, Themes},
@@ -82,63 +82,76 @@ pub struct OpenFile {
 }
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-t", NewTab, None),
-        KeyBinding::new("cmd-n", NewWindow, None),
-        KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-shift-t", ReopenTab, None),
-        KeyBinding::new("cmd-d", SplitRight, None),
-        KeyBinding::new("cmd-shift-d", SplitDown, None),
-        KeyBinding::new("cmd-alt-left", FocusPaneLeft, None),
-        KeyBinding::new("cmd-alt-right", FocusPaneRight, None),
-        KeyBinding::new("cmd-alt-up", FocusPaneUp, None),
-        KeyBinding::new("cmd-alt-down", FocusPaneDown, None),
-        KeyBinding::new("cmd-]", NextPane, None),
-        KeyBinding::new("cmd-[", PreviousPane, None),
-        KeyBinding::new("cmd-shift-enter", TogglePaneZoom, None),
-        KeyBinding::new("cmd-f", terminal_view::FindOutput, Some("Terminal")),
-        KeyBinding::new("cmd-=", terminal_view::ZoomIn, Some("Terminal")),
-        KeyBinding::new("cmd-+", terminal_view::ZoomIn, Some("Terminal")),
-        KeyBinding::new("cmd--", terminal_view::ZoomOut, Some("Terminal")),
-        KeyBinding::new("cmd-0", terminal_view::ResetZoom, Some("Terminal")),
-        KeyBinding::new("cmd-up", terminal_view::PreviousCommand, Some("Terminal")),
-        KeyBinding::new("cmd-down", terminal_view::NextCommand, Some("Terminal")),
-        KeyBinding::new(
-            "cmd-shift-c",
-            terminal_view::CopyCommandOutput,
-            Some("Terminal"),
-        ),
-        KeyBinding::new(
-            "ctrl-space",
-            terminal_view::ShowCompletions,
-            Some("Terminal"),
-        ),
-        // The last binding for each action is the one shown in menus and buttons.
-        KeyBinding::new("ctrl-tab", NextTab, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-}", NextTab, None),
-        KeyBinding::new("cmd-{", PreviousTab, None),
-        KeyBinding::new("cmd-1", ActivateTab1, None),
-        KeyBinding::new("cmd-2", ActivateTab2, None),
-        KeyBinding::new("cmd-3", ActivateTab3, None),
-        KeyBinding::new("cmd-4", ActivateTab4, None),
-        KeyBinding::new("cmd-5", ActivateTab5, None),
-        KeyBinding::new("cmd-6", ActivateTab6, None),
-        KeyBinding::new("cmd-7", ActivateTab7, None),
-        KeyBinding::new("cmd-8", ActivateTab8, None),
-        KeyBinding::new("cmd-9", ActivateLastTab, None),
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-v", terminal_view::Paste, Some("Terminal")),
-        KeyBinding::new("cmd-c", terminal_view::Copy, Some("Terminal")),
-        KeyBinding::new("cmd-shift-p", ToggleCommandPalette, None),
-        KeyBinding::new("cmd-k", ToggleCommandPalette, None),
-        KeyBinding::new("cmd-r", SearchHistory, None),
-        KeyBinding::new("cmd-l", ClearScreen, None),
-        KeyBinding::new("cmd-shift-r", Reconnect, None),
-        KeyBinding::new("enter", menu::Confirm, Some("ConfirmDialog")),
-        KeyBinding::new("escape", menu::Cancel, Some("ConfirmDialog")),
-    ]);
+    cx.bind_keys(
+        [
+            shortcuts::bind("cmd-t", NewTab, None),
+            shortcuts::bind("cmd-n", NewWindow, None),
+            shortcuts::bind("cmd-m", Minimize, None),
+            shortcuts::bind("cmd-w", CloseTab, None),
+            shortcuts::bind("cmd-shift-t", ReopenTab, None),
+            shortcuts::bind("cmd-d", SplitRight, None),
+            shortcuts::bind("cmd-shift-d", SplitDown, None),
+            shortcuts::bind("cmd-alt-left", FocusPaneLeft, None),
+            shortcuts::bind("cmd-alt-right", FocusPaneRight, None),
+            shortcuts::bind("cmd-alt-up", FocusPaneUp, None),
+            shortcuts::bind("cmd-alt-down", FocusPaneDown, None),
+            shortcuts::bind("cmd-]", NextPane, None),
+            shortcuts::bind("cmd-[", PreviousPane, None),
+            shortcuts::bind("cmd-shift-enter", TogglePaneZoom, None),
+            shortcuts::bind("cmd-f", terminal_view::FindOutput, Some("Terminal")),
+            shortcuts::bind("cmd-=", terminal_view::ZoomIn, Some("Terminal")),
+            shortcuts::bind("cmd-+", terminal_view::ZoomIn, Some("Terminal")),
+            shortcuts::bind("cmd--", terminal_view::ZoomOut, Some("Terminal")),
+            shortcuts::bind("cmd-0", terminal_view::ResetZoom, Some("Terminal")),
+            shortcuts::bind("cmd-up", terminal_view::PreviousCommand, Some("Terminal")),
+            shortcuts::bind("cmd-down", terminal_view::NextCommand, Some("Terminal")),
+            shortcuts::bind(
+                "cmd-shift-c",
+                terminal_view::CopyCommandOutput,
+                Some("Terminal"),
+            ),
+            shortcuts::bind(
+                "ctrl-space",
+                terminal_view::ShowCompletions,
+                Some("Terminal"),
+            ),
+            // The last binding for each action is the one shown in menus and buttons.
+            shortcuts::bind("ctrl-tab", NextTab, None),
+            shortcuts::bind("ctrl-shift-tab", PreviousTab, None),
+            shortcuts::bind("cmd-}", NextTab, None),
+            shortcuts::bind("cmd-{", PreviousTab, None),
+            shortcuts::bind("cmd-1", ActivateTab1, None),
+            shortcuts::bind("cmd-2", ActivateTab2, None),
+            shortcuts::bind("cmd-3", ActivateTab3, None),
+            shortcuts::bind("cmd-4", ActivateTab4, None),
+            shortcuts::bind("cmd-5", ActivateTab5, None),
+            shortcuts::bind("cmd-6", ActivateTab6, None),
+            shortcuts::bind("cmd-7", ActivateTab7, None),
+            shortcuts::bind("cmd-8", ActivateTab8, None),
+            shortcuts::bind("cmd-9", ActivateLastTab, None),
+            shortcuts::bind("cmd-q", Quit, None),
+            shortcuts::bind("cmd-v", terminal_view::Paste, Some("Terminal")),
+            shortcuts::bind("cmd-c", terminal_view::Copy, Some("Terminal")),
+            shortcuts::bind("cmd-shift-p", ToggleCommandPalette, None),
+            shortcuts::bind("cmd-k", ToggleCommandPalette, None),
+            shortcuts::bind("cmd-r", SearchHistory, None),
+            shortcuts::bind("cmd-l", ClearScreen, None),
+            shortcuts::bind("cmd-shift-r", Reconnect, None),
+            shortcuts::bind("enter", menu::Confirm, Some("ConfirmDialog")),
+            shortcuts::bind("escape", menu::Cancel, Some("ConfirmDialog")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    // On Linux and Windows, also the keys their terminals use for tabs and the clipboard.
+    if !cfg!(target_os = "macos") {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-pagedown", NextTab, None),
+            KeyBinding::new("ctrl-pageup", PreviousTab, None),
+            KeyBinding::new("shift-insert", terminal_view::Paste, Some("Terminal")),
+            KeyBinding::new("ctrl-insert", terminal_view::Copy, Some("Terminal")),
+        ]);
+    }
     hosts::reload(cx);
     crate::completions::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -181,17 +194,41 @@ pub fn open_initial_windows(cx: &mut App) {
     }
 }
 
+/// The window icon X11 shows in the taskbar and the window switcher (Wayland and the other
+/// systems take it from the app's desktop entry or bundle).
+#[cfg(target_os = "linux")]
+fn window_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    static ICON: std::sync::OnceLock<Option<std::sync::Arc<image::RgbaImage>>> =
+        std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        let png = include_bytes!("../assets/branding/moth-256.png");
+        let icon = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
+        Some(std::sync::Arc::new(icon.to_rgba8()))
+    })
+    .clone()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn window_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    None
+}
+
 /// Opens a window with its workspace; centered when `bounds` is `None`.
 pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
     let bounds = bounds.unwrap_or_else(|| Bounds::centered(None, size(px(1100.), px(720.)), cx));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        // On macOS the tab bar is the title bar, with the traffic lights centered in it; Linux
+        // and Windows keep the system's.
         titlebar: Some(TitlebarOptions {
             title: Some("Moth".into()),
-            appears_transparent: true,
-            // Centered in the tab bar.
-            traffic_light_position: Some(point(px(14.), px(14.))),
+            appears_transparent: cfg!(target_os = "macos"),
+            traffic_light_position: cfg!(target_os = "macos").then(|| point(px(14.), px(14.))),
         }),
+        window_decorations: Some(WindowDecorations::Server),
+        // Matches the window with the desktop entry `install.sh` adds on Linux.
+        app_id: Some("moth".into()),
+        icon: window_icon(),
         window_min_size: Some(size(px(480.), px(280.))),
         ..Default::default()
     };
@@ -287,10 +324,8 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(start: Start, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let shell_name = std::env::var("SHELL")
-            .ok()
-            .and_then(|s| s.rsplit('/').next().map(str::to_string))
-            .unwrap_or_else(|| "shell".into());
+        let (program, _) = shell::shell_command(config::get(cx).shell.as_deref());
+        let shell_name = shell::shell_name(&program);
         let mut this = Self {
             tabs: Vec::new(),
             closed_dirs: state::closed_dirs(),
@@ -481,8 +516,8 @@ impl Workspace {
         let initial_dir = cwd
             .clone()
             .filter(|dir| dir.is_dir())
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
-        let builder = match TerminalBuilder::new(cwd, config::get(cx).scrollback) {
+            .or_else(state::home_dir);
+        let builder = match TerminalBuilder::new(cwd, config::get(cx)) {
             Ok(builder) => builder,
             Err(err) => {
                 crate::log::error(format!("failed to open terminal: {err:#}"));
@@ -785,13 +820,10 @@ impl Workspace {
                 terminal.update(cx, |t, cx| t.run_when_ready(command, cx));
                 None
             }
-            Launch::System => editor::spawn(
-                Path::new("/usr/bin/open"),
-                &[file.path.display().to_string()],
-                &search_path,
-            )
-            .err()
-            .map(|err| format!("Couldn't open the file: {err}")),
+            Launch::System => {
+                cx.open_with_system(&file.path);
+                None
+            }
             Launch::Missing(program) => Some(format!(
                 "Couldn't find \"{program}\" (the editor set in config.json) in the shell's PATH"
             )),
@@ -1122,7 +1154,9 @@ impl Workspace {
                     this.reconnect_tab(ix, window, cx)
                 }))
             })
-            .when(ix < 9, |tab| tab.shortcut(format!("⌘{}", ix + 1)))
+            .when(ix < 9, |tab| {
+                tab.shortcut(shortcuts::label(&format!("cmd-{}", ix + 1)))
+            })
             .on_click(
                 cx.listener(move |this, _: &ClickEvent, window, cx| this.activate(ix, window, cx)),
             )
@@ -1173,10 +1207,10 @@ impl Workspace {
             .w_full()
             .flex_none()
             .bg(ui.chrome)
-            // Room for the macOS traffic lights.
+            // Room for the macOS traffic lights; elsewhere the system draws the title bar.
             .child(
                 self.drag_region("traffic-lights", cx)
-                    .w(px(80.))
+                    .w(px(if cfg!(target_os = "macos") { 80. } else { 8. }))
                     .flex_none()
                     .border_b_1()
                     .border_color(border),
@@ -1408,7 +1442,7 @@ fn short_command(command: &str) -> String {
 }
 
 fn dir_name(path: &Path) -> String {
-    if std::env::var_os("HOME").is_some_and(|home| Path::new(&home) == path) {
+    if state::home_dir().is_some_and(|home| home == path) {
         return "~".into();
     }
     path.file_name()
@@ -1418,7 +1452,7 @@ fn dir_name(path: &Path) -> String {
 
 /// `~` in place of home and, for long paths, only the last three folders (like the prompt).
 fn abbreviate_home(path: &Path) -> String {
-    let (prefix, rest) = match std::env::var_os("HOME")
+    let (prefix, rest) = match state::home_dir()
         .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_path_buf))
     {
         Some(rest) if rest.as_os_str().is_empty() => return "~".into(),
@@ -1826,7 +1860,7 @@ impl Workspace {
             hints: vec![
                 ("↑↓".into(), "navigate".into()),
                 ("⏎".into(), "insert at prompt".into()),
-                ("⌘⏎".into(), "run".into()),
+                (shortcuts::label("cmd-enter").into(), "run".into()),
                 ("esc".into(), "close".into()),
             ],
             disabled_reason: (!terminal.at_prompt())
@@ -2204,7 +2238,12 @@ impl Workspace {
             let open = open_tabs
                 .iter()
                 .find(|(_, alias)| alias == &host.alias)
-                .map(|(ix, _)| format!("open in ⌘{} · ", ix + 1))
+                .map(|(ix, _)| {
+                    format!(
+                        "open in {} · ",
+                        shortcuts::label(&format!("cmd-{}", ix + 1))
+                    )
+                })
                 .unwrap_or_default();
             let mut item = PickerItem::new(
                 "~/.ssh/config",
@@ -2267,7 +2306,7 @@ impl Workspace {
                 ("↑↓".into(), "navigate".into()),
                 ("⏎".into(), "open in new tab".into()),
                 (
-                    "⌘⏎".into(),
+                    shortcuts::label("cmd-enter").into(),
                     if at_prompt {
                         "in this tab".into()
                     } else {

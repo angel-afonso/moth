@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashMap,
-    fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
     sync::Arc,
@@ -41,9 +40,11 @@ pub enum ShellEvent {
 
 /// Environment variables that make zsh load the integration. `None` if the shell isn't zsh
 /// or the files couldn't be written.
-pub fn integration_env() -> Option<HashMap<String, String>> {
-    let shell = std::env::var("SHELL").unwrap_or_default();
-    if !shell.ends_with("/zsh") {
+pub fn integration_env(program: &str) -> Option<HashMap<String, String>> {
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str());
+    if name != Some("zsh") {
         return None;
     }
     let dir = install_dir()?;
@@ -86,6 +87,52 @@ fn install_dir() -> Option<PathBuf> {
     }
 }
 
+/// The shell each tab runs and its arguments: `shell` from the settings (a command line) if
+/// set; otherwise `$SHELL` as a login shell on macOS and Linux, and PowerShell on Windows
+/// (PowerShell 7 when it's installed, Windows PowerShell otherwise).
+pub fn shell_command(configured: Option<&str>) -> (String, Vec<String>) {
+    if let Some(command) = configured
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    {
+        let mut parts = command.split_whitespace().map(str::to_string);
+        if let Some(program) = parts.next() {
+            return (program, parts.collect());
+        }
+    }
+    if cfg!(windows) {
+        let has_pwsh = std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| dir.join("pwsh.exe").is_file())
+        });
+        let program = if has_pwsh {
+            "pwsh.exe"
+        } else {
+            "powershell.exe"
+        };
+        return (program.into(), vec!["-NoLogo".into()]);
+    }
+    let fallback = if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    };
+    let program = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or_else(|| fallback.into());
+    // A login shell loads .zprofile/.bash_profile and the rc files. Without an explicit shell,
+    // alacritty goes through /usr/bin/login, which prints "Last login: …" on startup.
+    (program, vec!["-l".into()])
+}
+
+/// The shell's name for the tab title: `zsh`, `pwsh`…
+pub fn shell_name(program: &str) -> String {
+    let name = Path::new(program)
+        .file_stem()
+        .and_then(|name| name.to_str());
+    name.unwrap_or("shell").to_string()
+}
+
 /// `LANG` for the shell when the app didn't receive a locale (launching from Finder doesn't
 /// provide one): without UTF-8, zsh and many programs mangle non-ASCII characters. It's
 /// derived from the macOS language, as Terminal.app does.
@@ -93,7 +140,8 @@ pub fn locale_env() -> Option<(String, String)> {
     let has_locale = ["LC_ALL", "LC_CTYPE", "LANG"]
         .iter()
         .any(|var| std::env::var(var).is_ok_and(|v| !v.is_empty()));
-    if has_locale {
+    // Only macOS launches apps without a locale; elsewhere the app's environment has one.
+    if has_locale || !cfg!(target_os = "macos") {
         return None;
     }
     static LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -258,14 +306,14 @@ fn percent_decode(text: &str) -> String {
 // Scanning PTY
 
 pub struct ScanningReader {
-    file: File,
+    pty: Pty,
     scanner: OscScanner,
     events: UnboundedSender<ShellEvent>,
 }
 
 /// Space left free on each read to insert the prompt marks. They go in the same buffer and
-/// aren't held over for the next read: alacritty's event loop doesn't read again until the
-/// PTY has new data, so anything held back would be stuck.
+/// aren't kept for the next read: alacritty's event loop doesn't read again until the PTY has
+/// new data, and whatever was kept would be stuck.
 const MARK_ROOM: usize = 64;
 
 impl Read for ScanningReader {
@@ -276,7 +324,7 @@ impl Read for ScanningReader {
             0
         };
         let readable = buf.len() - room;
-        let n = self.file.read(&mut buf[..readable])?;
+        let n = self.pty.reader().read(&mut buf[..readable])?;
         let events = &self.events;
         let mut marks = Vec::new();
         self.scanner.feed(&buf[..n], |payload, end| {
@@ -309,29 +357,27 @@ fn insert_marks(buf: &mut [u8], len: usize, room: usize, marks: &[(usize, String
     len
 }
 
-/// Wraps alacritty's `Pty`: reads through a duplicated descriptor that goes through the scanner.
+/// Wraps alacritty's `Pty` (a Unix PTY or a Windows ConPTY): everything goes straight to it,
+/// except reads, which go through the scanner first.
 pub struct ShellPty {
-    pty: Pty,
     reader: ScanningReader,
 }
 
 impl ShellPty {
-    pub fn new(pty: Pty, events: UnboundedSender<ShellEvent>) -> io::Result<Self> {
-        let file = pty.file().try_clone()?;
-        Ok(Self {
-            pty,
+    pub fn new(pty: Pty, events: UnboundedSender<ShellEvent>) -> Self {
+        Self {
             reader: ScanningReader {
-                file,
+                pty,
                 scanner: OscScanner::default(),
                 events,
             },
-        })
+        }
     }
 }
 
 impl EventedReadWrite for ShellPty {
     type Reader = ScanningReader;
-    type Writer = File;
+    type Writer = <Pty as EventedReadWrite>::Writer;
 
     unsafe fn register(
         &mut self,
@@ -339,35 +385,35 @@ impl EventedReadWrite for ShellPty {
         event: Event,
         mode: PollMode,
     ) -> io::Result<()> {
-        unsafe { self.pty.register(poll, event, mode) }
+        unsafe { self.reader.pty.register(poll, event, mode) }
     }
 
     fn reregister(&mut self, poll: &Arc<Poller>, event: Event, mode: PollMode) -> io::Result<()> {
-        self.pty.reregister(poll, event, mode)
+        self.reader.pty.reregister(poll, event, mode)
     }
 
     fn deregister(&mut self, poll: &Arc<Poller>) -> io::Result<()> {
-        self.pty.deregister(poll)
+        self.reader.pty.deregister(poll)
     }
 
     fn reader(&mut self) -> &mut ScanningReader {
         &mut self.reader
     }
 
-    fn writer(&mut self) -> &mut File {
-        self.pty.writer()
+    fn writer(&mut self) -> &mut Self::Writer {
+        self.reader.pty.writer()
     }
 }
 
 impl EventedPty for ShellPty {
     fn next_child_event(&mut self) -> Option<ChildEvent> {
-        self.pty.next_child_event()
+        self.reader.pty.next_child_event()
     }
 }
 
 impl OnResize for ShellPty {
     fn on_resize(&mut self, window_size: WindowSize) {
-        self.pty.on_resize(window_size)
+        self.reader.pty.on_resize(window_size)
     }
 }
 

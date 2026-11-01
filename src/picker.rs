@@ -36,7 +36,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("pageup", menu::SelectFirst, ctx),
         KeyBinding::new("pagedown", menu::SelectLast, ctx),
         KeyBinding::new("enter", menu::Confirm, ctx),
-        KeyBinding::new("cmd-enter", menu::SecondaryConfirm, ctx),
+        KeyBinding::new("secondary-enter", menu::SecondaryConfirm, ctx),
         KeyBinding::new("escape", menu::Cancel, ctx),
     ]);
 }

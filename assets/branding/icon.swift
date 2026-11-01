@@ -135,9 +135,37 @@ for points in [16, 32, 128, 256, 512] {
         try png.write(to: iconset.appendingPathComponent(name))
     }
 }
-// The 1024 PNG next to the .icns, for the README and previews.
+// Next to the .icns: the 1024 PNG (README, previews), the 256 PNG Linux uses for the window
+// and the desktop entry, and the .ico Windows embeds in moth.exe.
+let base = output.deletingPathExtension()
 try drawIcon(size: 1024).representation(using: .png, properties: [:])!
-    .write(to: output.deletingPathExtension().appendingPathExtension("png"))
+    .write(to: base.appendingPathExtension("png"))
+try drawIcon(size: 256).representation(using: .png, properties: [:])!
+    .write(to: URL(fileURLWithPath: base.path + "-256.png"))
+
+/// An .ico file with PNG-compressed images, which Windows Vista and later read.
+func ico(sizes: [Int]) -> Data {
+    let images = sizes.map { drawIcon(size: $0).representation(using: .png, properties: [:])! }
+    var data = Data()
+    func append16(_ value: Int) { data.append(contentsOf: [UInt8(value & 0xFF), UInt8(value >> 8 & 0xFF)]) }
+    func append32(_ value: Int) { append16(value & 0xFFFF); append16(value >> 16) }
+    append16(0)
+    append16(1)
+    append16(sizes.count)
+    var offset = 6 + 16 * sizes.count
+    for (size, png) in zip(sizes, images) {
+        // 256 is written as 0: the field is a single byte.
+        data.append(contentsOf: [UInt8(size % 256), UInt8(size % 256), 0, 0])
+        append16(1)
+        append16(32)
+        append32(png.count)
+        append32(offset)
+        offset += png.count
+    }
+    images.forEach { data.append($0) }
+    return data
+}
+try ico(sizes: [16, 24, 32, 48, 64, 128, 256]).write(to: base.appendingPathExtension("ico"))
 
 let iconutil = Process()
 iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")

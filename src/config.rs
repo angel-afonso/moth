@@ -1,4 +1,5 @@
-//! User settings in `~/Library/Application Support/moth/config.json`.
+//! User settings in `config.json` inside `state::state_dir` (`~/Library/Application
+//! Support/moth` on macOS, `%APPDATA%\moth` on Windows, `~/.config/moth` on Linux).
 //! Everything is optional; the file is reloaded when the window regains focus if it changed.
 
 use std::{path::PathBuf, time::SystemTime};
@@ -14,12 +15,15 @@ pub struct Config {
     /// Editor that opens paths from the output: `zed`, `code`, `cursor`, `nvim`… or a template
     /// with `{file}`, `{line}` and `{column}`.
     pub editor: Option<String>,
+    /// The shell each new tab runs, as a command line (`zsh`, `nu`, `cmd.exe`, `wsl.exe`…);
+    /// unset, `$SHELL` on macOS and Linux and PowerShell on Windows.
+    pub shell: Option<String>,
     /// Scrollback lines for each new tab.
     pub scrollback: Option<usize>,
     /// Reopen the previous session's windows, tabs and panes (yes by default).
     pub restore_session: Option<bool>,
-    /// macOS notification when a long command finishes while the app is in the background (yes
-    /// by default).
+    /// A desktop notification when a long command finishes while the app is in the background
+    /// (yes by default).
     pub notifications: Option<bool>,
     /// What Tab does at the prompt: the shell's completion (default) or open the app's
     /// suggestions, which are otherwise always on ⌃Space.
@@ -37,6 +41,7 @@ pub enum TabCompletion {
 const TEMPLATE: &str = r#"{
   "font_family": null,
   "editor": null,
+  "shell": null,
   "scrollback": 10000,
   "restore_session": true,
   "notifications": true,

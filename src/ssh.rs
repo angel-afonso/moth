@@ -313,10 +313,10 @@ fn expand_include(pattern: &str, ssh_dir: &Path) -> Vec<PathBuf> {
 
 /// Hosts from `~/.ssh/config` and its `Include`s, in order, without duplicate aliases.
 pub fn config_hosts() -> Vec<ConfigHost> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = crate::state::home_dir() else {
         return Vec::new();
     };
-    let ssh_dir = Path::new(&home).join(".ssh");
+    let ssh_dir = home.join(".ssh");
     let mut pending = vec![ssh_dir.join("config")];
     let mut seen_files = Vec::new();
     let mut hosts: Vec<ConfigHost> = Vec::new();

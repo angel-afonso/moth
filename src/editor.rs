@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::links::FileLink;
+use crate::{links::FileLink, process};
 
 /// How to open the file.
 #[derive(Debug, PartialEq)]
@@ -11,7 +11,7 @@ pub enum Launch {
     App { program: PathBuf, args: Vec<String> },
     /// A terminal editor (vim, helix…): this command runs in a new tab.
     Terminal(String),
-    /// No editor configured or detected: the macOS default app (no line number).
+    /// No editor configured or detected: the system's default app for the file (no line).
     System,
     /// The configured editor isn't on the PATH.
     Missing(String),
@@ -19,7 +19,8 @@ pub enum Launch {
 
 /// GUI editors looked up on the PATH, in this order, when none is configured.
 const DETECTED: &[&str] = &["zed", "cursor", "code", "windsurf", "subl"];
-/// The CLI bundled inside the app, for when it isn't installed on the PATH (Zed without `zed`, say).
+/// On macOS, the CLI bundled inside the app, for when it isn't installed on the PATH (Zed
+/// without `zed`, say).
 const BUNDLED_CLIS: &[(&str, &str)] = &[
     ("zed", "Zed.app/Contents/MacOS/cli"),
     (
@@ -35,19 +36,27 @@ const BUNDLED_CLIS: &[(&str, &str)] = &[
 ];
 const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "vi", "hx", "helix", "nano", "micro", "kak"];
 
-/// The PATH of a shell without integration, or one launched from Finder, lacks Homebrew.
+/// The PATH to search when the shell didn't report its own (no integration). An app launched
+/// from Finder gets a minimal PATH without Homebrew, so its folders are added on macOS.
 pub fn fallback_path() -> String {
     let path = std::env::var("PATH").unwrap_or_default();
-    format!("{path}:/opt/homebrew/bin:/usr/local/bin")
+    if cfg!(target_os = "macos") {
+        format!("{path}:/opt/homebrew/bin:/usr/local/bin")
+    } else {
+        path
+    }
 }
 
 /// `editor` is the configured value: a known name (`zed`, `code`, `nvim`…) or a template with
 /// `{file}`, `{line}` and `{column}`. When unset, the first one found from `DETECTED`.
 pub fn launch(editor: Option<&str>, file: &FileLink, search_path: &str) -> Launch {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let app_dirs: Vec<PathBuf> = std::iter::once(PathBuf::from("/Applications"))
-        .chain(home.map(|home| home.join("Applications")))
-        .collect();
+    let app_dirs: Vec<PathBuf> = if cfg!(target_os = "macos") {
+        std::iter::once(PathBuf::from("/Applications"))
+            .chain(crate::state::home_dir().map(|home| home.join("Applications")))
+            .collect()
+    } else {
+        Vec::new()
+    };
     launch_in(editor, file, search_path, &app_dirs)
 }
 
@@ -57,8 +66,9 @@ fn launch_in(
     search_path: &str,
     app_dirs: &[PathBuf],
 ) -> Launch {
-    let find =
-        |program: &str| which(program, search_path).or_else(|| bundled_cli(program, app_dirs));
+    let find = |program: &str| {
+        process::which(program, search_path).or_else(|| bundled_cli(program, app_dirs))
+    };
     let configured = editor.map(str::trim).filter(|editor| !editor.is_empty());
     let template = match configured {
         Some(editor) => editor.to_string(),
@@ -99,17 +109,13 @@ fn launch_in(
     }
 }
 
-/// Runs the editor without waiting for it (it's reaped on another thread to avoid zombies).
+/// Runs the editor without waiting for it.
 pub fn spawn(program: &Path, args: &[String], search_path: &str) -> std::io::Result<()> {
-    let mut child = std::process::Command::new(program)
-        .args(args)
-        .env("PATH", search_path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
-    std::thread::spawn(move || child.wait());
-    Ok(())
+    process::spawn_detached(
+        std::process::Command::new(program)
+            .args(args)
+            .env("PATH", search_path),
+    )
 }
 
 /// How each known editor expects to be told the line and column.
@@ -145,28 +151,12 @@ fn fill(arg: &str, file: &FileLink) -> String {
         .replace("{column}", &file.column.unwrap_or(1).to_string())
 }
 
-fn executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::metadata(path)
-        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
 fn bundled_cli(program: &str, app_dirs: &[PathBuf]) -> Option<PathBuf> {
     let (_, relative) = BUNDLED_CLIS.iter().find(|(name, _)| *name == program)?;
     app_dirs
         .iter()
         .map(|dir| dir.join(relative))
-        .find(|path| executable(path))
-}
-
-fn which(program: &str, search_path: &str) -> Option<PathBuf> {
-    if program.contains('/') {
-        let path = PathBuf::from(program);
-        return executable(&path).then_some(path);
-    }
-    std::env::split_paths(search_path)
-        .map(|dir| dir.join(program))
-        .find(|path| executable(path))
+        .find(|path| process::is_executable(path))
 }
 
 fn shell_quote(arg: &str) -> String {
@@ -181,7 +171,8 @@ fn shell_quote(arg: &str) -> String {
     }
 }
 
-#[cfg(test)]
+// The fake editors below are made executable with Unix permission bits.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

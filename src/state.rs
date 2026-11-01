@@ -2,19 +2,60 @@
 
 use std::path::{Path, PathBuf};
 
-pub fn state_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join("Library/Application Support/moth"))
+/// The user's home folder (`HOME`, or the profile folder on Windows).
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
 }
 
-/// The app used to be called terminalapp: if its folder is still around and there's no Moth
-/// folder yet, move the whole thing over (settings, themes, hosts, session, recent folders) so
-/// nothing is lost.
+/// An environment variable holding an absolute path; relative ones are ignored, as the XDG
+/// spec asks.
+fn path_var(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+/// Where Moth keeps its settings and state: `~/Library/Application Support/moth` on macOS,
+/// `%APPDATA%\moth` on Windows and `$XDG_CONFIG_HOME/moth` (or `~/.config/moth`) elsewhere.
+pub fn state_dir() -> Option<PathBuf> {
+    let base = if cfg!(target_os = "macos") {
+        home_dir()?.join("Library/Application Support")
+    } else if cfg!(windows) {
+        path_var("APPDATA").or_else(home_dir)?
+    } else {
+        path_var("XDG_CONFIG_HOME").or_else(|| Some(home_dir()?.join(".config")))?
+    };
+    Some(base.join("moth"))
+}
+
+/// Where the log goes: `~/Library/Logs/moth` on macOS, `%LOCALAPPDATA%\moth\logs` on Windows
+/// and `$XDG_STATE_HOME/moth` (or `~/.local/state/moth`) elsewhere.
+pub fn log_dir() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(home_dir()?.join("Library/Logs/moth"))
+    } else if cfg!(windows) {
+        Some(
+            path_var("LOCALAPPDATA")
+                .or_else(|| path_var("APPDATA"))?
+                .join("moth/logs"),
+        )
+    } else {
+        let base = path_var("XDG_STATE_HOME").or_else(|| Some(home_dir()?.join(".local/state")))?;
+        Some(base.join("moth"))
+    }
+}
+
+/// The app used to be called terminalapp (only on macOS): if its folder is still around and
+/// there's no Moth folder yet, move the whole thing over (settings, themes, hosts, session,
+/// recent folders) so nothing is lost.
 pub fn migrate_legacy_dir() {
-    let (Some(home), Some(dir)) = (std::env::var_os("HOME"), state_dir()) else {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let (Some(home), Some(dir)) = (home_dir(), state_dir()) else {
         return;
     };
-    let legacy = Path::new(&home).join("Library/Application Support/terminalapp");
+    let legacy = home.join("Library/Application Support/terminalapp");
     if let Err(err) = migrate(&legacy, &dir) {
         crate::log::error(format!(
             "couldn't move {} to {}: {err}",
@@ -125,24 +166,25 @@ pub fn save_font_size(size: f32) {
     }
 }
 
-/// Whether ⌥ acts as Meta in the terminal; off unless it was ever turned on.
+/// Whether ⌥/Alt acts as Meta in the terminal. Off by default on macOS, where ⌥ types
+/// characters (`@`, `#`, `|` on many layouts); on by default elsewhere, as in Linux terminals.
 pub fn option_as_meta() -> bool {
-    state_dir().is_some_and(|dir| dir.join("option_as_meta").exists())
+    let saved =
+        state_dir().and_then(|dir| std::fs::read_to_string(dir.join("option_as_meta")).ok());
+    match saved {
+        // An empty file is how it was saved before there was a way to turn it off.
+        Some(text) => text.trim() != "0",
+        None => !cfg!(target_os = "macos"),
+    }
 }
 
 pub fn save_option_as_meta(enabled: bool) {
     let Some(dir) = state_dir() else {
         return;
     };
-    let path = dir.join("option_as_meta");
-    let result = if enabled {
-        std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, ""))
-    } else {
-        std::fs::remove_file(&path).or_else(|err| match err.kind() {
-            std::io::ErrorKind::NotFound => Ok(()),
-            _ => Err(err),
-        })
-    };
+    let value = if enabled { "1" } else { "0" };
+    let result = std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(dir.join("option_as_meta"), value));
     if let Err(err) = result {
         crate::log::error(format!("couldn't save Option as Meta: {err}"));
     }

@@ -1,18 +1,44 @@
 # Moth
 
-A macOS terminal built with [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) and the components from Zed's `ui` crate. It uses the alacritty emulator (the same fork Zed uses).
+A terminal for macOS, Linux and Windows built with [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) and the components from Zed's `ui` crate. It uses the alacritty emulator (the same fork Zed uses).
 
 The name comes from the moth the Harvard Mark II team found stuck in a relay in 1947 and taped into the logbook as the "first actual case of bug being found".
+
+## Download
+
+Each [release](../../releases) has a download for every platform:
+
+- **macOS** (Apple Silicon and Intel, one universal app): `Moth.app` in a `.dmg` to drag into Applications, and in a `.zip`. Releases aren't notarized, so macOS refuses it the first time: allow it in System Settings → Privacy & Security → "Open Anyway" (on macOS 14 and earlier, right-click → Open).
+- **Windows** (x86_64): a `.zip` with a `Moth` folder holding `moth.exe`. Unzip it anywhere and run `moth.exe`; it needs no Visual C++ redistributable. The download isn't code-signed, so SmartScreen may warn the first time ("More info" → "Run anyway").
+- **Linux** (x86_64, glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 or later): a `.tar.gz` with a `moth` folder. Run `./moth` from it; `./install.sh` adds Moth to the applications menu and links it as `~/.local/bin/moth` (`./install.sh --uninstall` removes both). It needs a Vulkan driver.
+
+`SHA256SUMS` in each release lists the files' checksums.
+
+## Building
 
 ```bash
 cargo run
 ```
 
+On Linux, gpui needs the X11, Wayland and font development packages first (Debian and Ubuntu names): `pkg-config libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libvulkan-dev`.
+
 Requires Rust 1.99 (pinned in `rust-toolchain.toml`). Metal shaders are compiled at startup (`runtime_shaders`), so Xcode's Metal Toolchain isn't needed. For release builds it's worth installing it (`xcodebuild -downloadComponent MetalToolchain`) and dropping that feature.
 
-On launch, the app restores the windows, tabs and panes from last time (see "Windows and session"); on first run, or with no saved session, it opens in the last folder you used (stored in `~/Library/Application Support/moth/last_cwd`). Each new tab opens in the active tab's folder. The shell is launched directly as a login shell (`$SHELL -l`), without going through `/usr/bin/login`, so there's no "Last login: …" line.
+On launch, the app restores the windows, tabs and panes from last time (see "Windows and session"); on first run, or with no saved session, it opens in the last folder you used. Each new tab opens in the active tab's folder.
+
+Tabs run your shell: on macOS and Linux `$SHELL` as a login shell (`-l`), launched directly rather than through `/usr/bin/login`, so there's no "Last login: …" line; on Windows PowerShell (PowerShell 7 when it's installed). `"shell"` in the settings picks another one (`nu`, `fish`, `cmd.exe`, `wsl.exe`…).
+
+Moth keeps its settings and state in one folder per platform, called the settings folder below:
+
+| | Settings folder | Log |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/moth` | `~/Library/Logs/moth/moth.log` |
+| Linux | `$XDG_CONFIG_HOME/moth` (`~/.config/moth`) | `$XDG_STATE_HOME/moth/moth.log` (`~/.local/state/moth`) |
+| Windows | `%APPDATA%\moth` | `%LOCALAPPDATA%\moth\logs\moth.log` |
 
 ## Shortcuts
+
+The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own belongs to the shell (Ctrl+C, Ctrl+W, Ctrl+R…), ⌘ becomes **Ctrl+Shift** (⌘T → Ctrl+Shift+T, ⌘K → Ctrl+Shift+K), and a shortcut that already had ⇧ or ⌥ takes Ctrl+Shift+Alt (⌘⇧T → Ctrl+Shift+Alt+T). The exceptions: tabs by number are Alt+1…9, zoom is Ctrl+= / Ctrl+- / Ctrl+0, the command palette is also Ctrl+Shift+P, and Ctrl+PageUp/PageDown, Shift+Insert and Ctrl+Insert work as in other terminals. ⌘[ / ⌘], ⌘{ / ⌘} and ⌘M have no equivalent there. Menus, the palette and tooltips show each platform's shortcut.
 
 | Shortcut | Action |
 | --- | --- |
@@ -59,7 +85,7 @@ The app saves the windows (with their position), their tabs and the pane layout 
 
 At the prompt, ⌥ and ⌘ edit like everywhere else in macOS (they send `ESC b`/`ESC f` and `⌃A`/`⌃E`/`⌃U`, which zsh, bash and readline understand). In full-screen programs (vim, less, htop) those keys send the standard xterm sequences.
 
-By default ⌥+letter types the macOS character, because on layouts such as Spanish ⌥ is how you type `@`, `#` or `|`. "Use ⌥ as Meta" in the palette (⌘K) makes ⌥+key send `ESC` + key (⌥B, ⌥F, ⌥. in zsh); the choice persists across runs.
+By default ⌥+letter types the macOS character, because on layouts such as Spanish ⌥ is how you type `@`, `#` or `|`. "Use ⌥ as Meta" in the palette (⌘K) makes ⌥+key send `ESC` + key (⌥B, ⌥F, ⌥. in zsh); the choice persists across runs. On Linux and Windows Alt is Meta from the start, as in their terminals (AltGr still types characters).
 
 ## Closing tabs and quitting
 
@@ -69,7 +95,7 @@ When the shell exits with `exit` or ⌃D, the tab closes. If it's killed by a si
 
 ## Notifications, zoom and reopening tabs
 
-When a command runs for at least 10 seconds and finishes in an inactive tab or while the window is in the background, the app flags the tab and shows a notice with the command, its result and duration. The notice is dismissed with its button. If the app is in the background, a macOS notification also appears with the result (✓ or ✕), the command and the duration; `"notifications": false` in the settings turns it off. Requires the zsh integration.
+When a command runs for at least 10 seconds and finishes in an inactive tab or while the window is in the background, the app flags the tab and shows a notice with the command, its result and duration. The notice is dismissed with its button. If the app is in the background, a desktop notification also appears with the result (✓ or ✕), the command and the duration (through `osascript` on macOS, `notify-send` on Linux and a PowerShell toast on Windows); `"notifications": false` in the settings turns it off. Requires the zsh integration.
 
 Zoom changes the text in every tab, adjusts the cell size and persists across runs. The range is 8 to 32 points and ⌘0 resets it to 13.5 points.
 
@@ -104,13 +130,13 @@ URLs in the output (`http`, `https`, `ftp`, `file`, `mailto`), including ones wr
 File paths are links too, with their line and column if the output includes them: `src/main.rs:12:5` (rustc, grep, go, pytest), `src/app.ts(12,5)` (tsc) and `File "app.py", line 7` (Python). They're resolved against the tab's current folder (also `~/…`, absolute paths and the `a/…` and `b/…` paths from `git diff`), and are only underlined if the file exists. A click opens them in the editor:
 
 - the one set as `editor` in the settings, or the first one found among Zed, Cursor, VS Code, Windsurf and Sublime Text (on the shell's PATH or inside the app in `/Applications`);
-- if none is found, the macOS default app, without jumping to the line.
+- if none is found, the system's default app for the file, without jumping to the line.
 
 Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an SSH session paths aren't links, since they're files on the server. Local `file://` hyperlinks also go to the editor.
 
 ## Settings
 
-"Open Settings (font, editor, scrollback)" in the palette (⌘K) creates and opens `~/Library/Application Support/moth/config.json`. Everything is optional:
+"Open Settings (font, editor, scrollback)" in the palette (⌘K) creates and opens `config.json` in the settings folder. Everything is optional:
 
 ```json
 {
@@ -127,7 +153,8 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `editor`: `zed`, `code`, `cursor`, `windsurf`, `subl`, `idea`, `nvim`, `hx`… or a template with `{file}`, `{line}` and `{column}`, such as `"myeditor --goto {file}:{line}"`.
 - `scrollback`: lines kept by each new tab (up to 100,000).
 - `restore_session`: reopen the previous session's windows, tabs and panes (on by default).
-- `notifications`: macOS notification when a long command finishes while the app is in the background (on by default).
+- `shell`: the shell each new tab runs, as a command line (`zsh`, `nu`, `cmd.exe`, `wsl.exe`…); unset, `$SHELL` on macOS and Linux and PowerShell on Windows.
+- `notifications`: a desktop notification when a long command finishes while the app is in the background (on by default).
 - `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
 
 The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
@@ -146,7 +173,7 @@ When you run `ssh` (with the zsh integration), the app recognizes the destinatio
 
 If `ssh` exits with code 255 (the connection dropped), the tab is struck through and gets a button to reconnect (also ⌘⇧R or "Reconnect" in the palette). "Connect to…" in ⌘K lists dropped sessions, hosts from `~/.ssh/config` (following its `Include`s) and `ssh` commands from history; ⏎ opens a new tab and ⌘⏎ connects in the current one.
 
-Each host's identity is defined in `~/Library/Application Support/moth/hosts.json`. Each rule is matched (glob with `*` and `?`) against the alias and against the real hostname; the first match wins:
+Each host's identity is defined in `hosts.json` in the settings folder. Each rule is matched (glob with `*` and `?`) against the alias and against the real hostname; the first match wins:
 
 ```json
 {
@@ -163,7 +190,7 @@ Each host's identity is defined in `~/Library/Application Support/moth/hosts.jso
 
 Colors come from tokens (the ones on the design's "Tokens and components" sheet): UI, status, command-line syntax and the 16 ANSI colors. Two themes ship with the app, **Graphite** (dark) and **Graphite Light**. "Change Theme…" in the palette (⌘K) opens the picker: ↑↓ shows a live preview, ⏎ saves it and esc goes back to the previous one. Switching also recolors the output already on screen and the prompt, since they use ANSI colors resolved against the active theme.
 
-To create a theme, add a `.json` file to `~/Library/Application Support/moth/themes/`. It inherits from `base` (Graphite if omitted), so only the colors that change are needed; the picker re-reads the folder every time it opens:
+To create a theme, add a `.json` file to the `themes` folder inside the settings folder. It inherits from `base` (Graphite if omitted), so only the colors that change are needed; the picker re-reads the folder every time it opens:
 
 ```json
 {
@@ -178,15 +205,15 @@ The available keys are in [`assets/themes/graphite.json`](assets/themes/graphite
 
 ## Logging and security
 
-App errors (an invalid theme or `hosts.json`, a tab that failed to open) are written to `~/Library/Logs/moth/moth.log`, in addition to standard output.
+App errors (an invalid theme or `hosts.json`, a tab that failed to open) are written to the log (see the table at the top), in addition to standard output. So are the errors gpui and other libraries report (the renderer, the windowing system); `MOTH_LOG=info` (or `debug`, `trace`) shows more of what they say on standard error, which helps when the window stays blank or doesn't open.
 
-The app used to be called terminalapp. The first time Moth starts, if `~/Library/Application Support/terminalapp` exists and there's no `moth` folder yet, it's moved over wholesale, so settings, themes, hosts and the session are kept.
+The app used to be called terminalapp (macOS only). The first time Moth starts, if `~/Library/Application Support/terminalapp` exists and there's no `moth` folder yet, it's moved over wholesale, so settings, themes, hosts and the session are kept.
 
 Programs can copy to the clipboard with OSC 52 (handy for copying from vim or tmux on a remote server), but can't read it: that way an SSH server or a file full of escape sequences can't grab what you copied.
 
 ## zsh integration
 
-When a tab opens with zsh, the app installs `assets/shell/zsh/` into `~/Library/Application Support/moth/shell/zsh` and starts zsh with `ZDOTDIR` pointing there. That `.zshenv` restores your `ZDOTDIR`, sources your `.zshenv` and then the integration; `.zprofile` and `.zshrc` are still your own.
+When a tab opens with zsh, the app installs `assets/shell/zsh/` into `shell/zsh` inside the settings folder and starts zsh with `ZDOTDIR` pointing there. That `.zshenv` restores your `ZDOTDIR`, sources your `.zshenv` and then the integration; `.zprofile` and `.zshrc` are still your own.
 
 The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH` and the names of aliases, functions and builtins. The app picks these up from the PTY output before handing it to alacritty, and uses them to:
 
@@ -198,13 +225,15 @@ The integration emits OSC 133 (prompt and command start/end, with exit code; the
 
 If you use macOS's default zsh prompt, the integration replaces it with one in the app's style: a dim header with the folder (the last three if the path is long), the branch, the previous command's result and duration, and the time; below it, `❯` in green, or red if the command failed, with a blank line between blocks. If you have your own prompt (starship, p10k…) it's left alone; to disable it anyway, set `MOTH_PROMPT=0` in your `.zshrc`.
 
-If the app gets no locale (when launched from Finder), it passes the shell a UTF-8 `LANG` based on the macOS language, so accented and other non-ASCII characters work.
+On macOS, if the app gets no locale (when launched from Finder), it passes the shell a UTF-8 `LANG` based on the macOS language, so accented and other non-ASCII characters work.
+
+The integration works wherever zsh runs: macOS, Linux, and zsh inside WSL or MSYS2 on Windows when it's set as the `shell`. The scanner that reads its sequences runs on every platform, so any shell that emits the same OSC 133 marks gets command blocks too.
 
 Other shells work the same, just without these features.
 
 ## Building and releasing
 
-To build the app bundle locally:
+To build the macOS app bundle locally:
 
 ```bash
 cargo build --release
@@ -217,11 +246,16 @@ open dist/Moth.app
 
 Three GitHub Actions workflows cover the rest:
 
-- **CI** runs on every push to `main` and every pull request: `cargo fmt --check`, `clippy -D warnings`, the tests, and a debug build of the bundle.
+- **CI** runs on every push to `main` and every pull request, on macOS, Linux and Windows: `cargo fmt --check`, `clippy -D warnings` and the tests on each; a debug build of the bundle on macOS; and on Linux the debug build opened for 30 seconds on X11 and on Wayland (`.github/scripts/launch-linux.sh`, with Mesa's software Vulkan).
 - **Release PR** is run by hand from `main`. [release-plz](https://release-plz.dev) opens (or updates) a pull request that raises the version in Cargo.toml from the [conventional commits](https://www.conventionalcommits.org) since the last `v*` tag and adds them to `CHANGELOG.md`: `feat:` raises the minor version, `fix:` the patch. Configuration in `release-plz.toml`.
-- **Release** runs when that pull request is merged: it tags `v<version>`, builds Moth for Apple Silicon and Intel, merges both into one universal app with `lipo`, and publishes a `.zip`, a `.dmg` (with the usual link to Applications) and `SHA256SUMS` as a GitHub release. Pushing a `v*` tag by hand does the same; running it by hand from a branch only builds and keeps the files as workflow artifacts.
+- **Release** runs when that pull request is merged: it tags `v<version>` and builds every download described in [Download](#download):
+  - macOS: Apple Silicon and Intel builds merged into one universal app with `lipo`, as a `.dmg` (with the usual link to Applications) and a `.zip`;
+  - Linux: built on Ubuntu 22.04, so it runs with glibc 2.35 or newer, as a `.tar.gz` with `packaging/linux/` (desktop entry, `install.sh`, README) and the icon;
+  - Windows: `moth.exe` with the C runtime linked in (`.cargo/config.toml`, checked on every release) and the icon embedded (`build.rs`), as a `.zip`.
 
-The app and the disk image are signed with a Developer ID certificate, notarized and stapled when these repository secrets are set; without them the app gets an ad-hoc signature and users have to right-click → Open the first time:
+  The Linux and Windows downloads are unpacked and opened for 30 seconds before they're published. Then `SHA256SUMS` and the files go up as a GitHub release. Pushing a `v*` tag by hand does the same; running it by hand from a branch only builds and keeps the files as workflow artifacts.
+
+Releases aren't notarized: without Apple's secrets the macOS app gets an ad-hoc signature (Apple Silicon refuses to run unsigned binaries) and users allow it once in Privacy & Security, as described in [Download](#download). If a Developer ID is set up later, these repository secrets make the workflow sign, notarize and staple the app and the disk image, with no other change:
 
 | Secret | Contents |
 | --- | --- |
@@ -231,14 +265,16 @@ The app and the disk image are signed with a Developer ID certificate, notarized
 | `APPLE_API_KEY_ID` | That key's ID |
 | `APPLE_API_ISSUER_ID` | The issuer ID from App Store Connect |
 
-The icon is drawn by `assets/branding/icon.swift`; after changing it, regenerate `moth.icns` and `moth.png` with `swift assets/branding/icon.swift assets/branding/moth.icns`.
+The icon is drawn by `assets/branding/icon.swift` (macOS); after changing it, regenerate every format (`moth.icns`, `moth.ico`, `moth.png`, `moth-256.png`) with `swift assets/branding/icon.swift assets/branding/moth.icns`.
 
 ## Project structure
 
 - `src/workspace.rs`: window, tab bar, panes, status bar with the branch picker, actions.
 - `src/panes.rs`: a tab's pane tree (split, close, resize, neighbor in each direction).
 - `src/session.rs`: saves and restores windows, tabs and panes.
-- `src/notify.rs`: macOS notifications (via `osascript`).
+- `src/notify.rs`: desktop notifications (`osascript`, `notify-send`, a PowerShell toast).
+- `src/process.rs`: finding programs on the PATH and starting them in the background, per platform.
+- `src/shortcuts.rs`: shortcuts written the macOS way and translated for Linux and Windows.
 - `src/terminal.rs`: PTY + `alacritty_terminal`, events to gpui.
 - `src/terminal_view.rs`: paints the grid with gpui's text system, cursor, IME.
 - `src/shell.rs`: zsh script installation, OSC detection in the PTY, history.
@@ -250,7 +286,7 @@ The icon is drawn by `assets/branding/icon.swift`; after changing it, regenerate
 - `src/text_input.rs`: single-line text field with IME (the `ui` crate doesn't ship one).
 - `src/fuzzy.rs`: fuzzy matching with scoring and positions for highlighting.
 - `src/state.rs`: last folder, recent folders, theme, zoom and ⌥ as Meta.
-- `src/log.rs`: errors to stderr and to `~/Library/Logs/moth/`.
+- `src/log.rs`: errors to stderr and to the log file.
 - `src/glyphs.rs`: block elements (`▀▄█▐▛▜`…) and box-drawing lines (`─│╭╮`…) drawn as cell-filling rectangles, so logos like Claude Code's and TUI borders don't show gaps.
 - `src/blocks.rs`: command blocks: invisible marks in the grid, each command's output and result.
 - `src/completions.rs`: completion engine (parses the line, picks the source, ranks and applies).
@@ -263,7 +299,9 @@ The icon is drawn by `assets/branding/icon.swift`; after changing it, regenerate
 - `src/theme.rs`: applies the active theme to the app and to Zed's theme system (for the `ui` components), with live switching.
 - `src/components.rs`: design components: `TabItem`, `Kbd`, `KindBadge`, `StatusDot`, `BlockStatus`.
 - `src/palette.rs`: grid colors (ANSI, 256, truecolor) resolved through the tokens.
-- `assets/branding/`: the app icon and the script that draws it.
+- `assets/branding/`: the app icon in every format, and the script that draws it.
+- `packaging/`: what goes next to the executable in the Linux and Windows downloads.
+- `build.rs`, `moth.rc`: embed the icon in `moth.exe`.
 - `.github/`: the CI, Release PR and Release workflows, and the scripts that bundle and notarize the app.
 
 ## Licenses

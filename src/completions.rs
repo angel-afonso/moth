@@ -174,9 +174,9 @@ fn escape(name: &str) -> String {
 
 fn expand(dir: &str, cwd: Option<&Path>) -> PathBuf {
     if let Some(rest) = dir.strip_prefix('~')
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = crate::state::home_dir()
     {
-        return PathBuf::from(home).join(rest.trim_start_matches('/'));
+        return home.join(rest.trim_start_matches('/'));
     }
     let path = Path::new(dir);
     match cwd {

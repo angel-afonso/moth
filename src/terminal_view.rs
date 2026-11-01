@@ -391,12 +391,12 @@ impl TerminalView {
         }
         let keystroke = &event.keystroke;
         let m = &keystroke.modifiers;
-        // Shell exited: ⏎ opens another; ⌘ shortcuts (⌘W) keep working.
+        // Shell exited: ⏎ opens another; app shortcuts (⌘W, Ctrl+Shift+W) keep working.
         if self.terminal.read(cx).has_exited() {
             if keystroke.key == "enter" && !(m.control || m.alt || m.shift || m.platform) {
                 window.dispatch_action(Box::new(RestartShell), cx);
             }
-            if !m.platform {
+            if !m.secondary() {
                 cx.stop_propagation();
             }
             return;
@@ -405,8 +405,8 @@ impl TerminalView {
         if self.pending_paste.is_some() {
             match keystroke.key.as_str() {
                 "escape" => self.cancel_paste(cx),
-                "enter" if m.platform => self.confirm_paste(cx),
-                _ if m.platform => return,
+                "enter" if m.secondary() => self.confirm_paste(cx),
+                _ if m.secondary() => return,
                 _ => {}
             }
             cx.stop_propagation();
@@ -2255,7 +2255,7 @@ fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<Ho
         let found = links::find_paths(&text)
             .into_iter()
             .find(|m| m.range.contains(&hovered))?;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = crate::state::home_dir();
         let path = links::resolve_path(&found.path, cwd, home.as_deref())?;
         let file = links::FileLink {
             path,

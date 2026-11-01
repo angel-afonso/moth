@@ -1,9 +1,10 @@
 //! Session model: PTY + alacritty emulator, with events forwarded to gpui.
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt as _;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    os::unix::process::ExitStatusExt as _,
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
@@ -198,7 +199,7 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     /// Opens a session in `cwd`; with no folder (or if it no longer exists), in the home folder.
-    pub fn new(cwd: Option<PathBuf>, scrollback: Option<usize>) -> Result<Self> {
+    pub fn new(cwd: Option<PathBuf>, config: &crate::config::Config) -> Result<Self> {
         let size = TermSize {
             columns: 100,
             lines: 30,
@@ -212,18 +213,11 @@ impl TerminalBuilder {
             ("TERM_PROGRAM".to_string(), "moth".to_string()),
         ]);
         env.extend(shell::locale_env());
-        env.extend(shell::integration_env().unwrap_or_default());
-        // Launch the shell directly as a login shell (`-l`, loads .zprofile and .zshrc). Without
-        // `shell`, alacritty goes through /usr/bin/login, which prints "Last login: …" on startup.
-        let program = std::env::var("SHELL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "/bin/zsh".into());
-        let working_directory = cwd
-            .filter(|dir| dir.is_dir())
-            .or_else(|| std::env::var_os("HOME").map(Into::into));
+        let (program, args) = shell::shell_command(config.shell.as_deref());
+        env.extend(shell::integration_env(&program).unwrap_or_default());
+        let working_directory = cwd.filter(|dir| dir.is_dir()).or_else(state::home_dir);
         let options = tty::Options {
-            shell: Some(tty::Shell::new(program, vec!["-l".into()])),
+            shell: Some(tty::Shell::new(program, args)),
             working_directory,
             drain_on_exit: true,
             env,
@@ -233,10 +227,11 @@ impl TerminalBuilder {
         let (events_tx, events_rx) = unbounded();
         let (shell_tx, shell_rx) = unbounded();
         let listener = Listener(events_tx);
-        let pty = ShellPty::new(tty::new(&options, size.window_size(), 0)?, shell_tx)?;
+        let pty = ShellPty::new(tty::new(&options, size.window_size(), 0)?, shell_tx);
         let term = Arc::new(FairMutex::new(Term::new(
             Config {
-                scrolling_history: scrollback
+                scrolling_history: config
+                    .scrollback
                     .map_or(Config::default().scrolling_history, |lines| {
                         lines.min(crate::config::MAX_SCROLLBACK)
                     }),
@@ -725,6 +720,7 @@ impl Drop for Terminal {
 }
 
 fn exit_failure(status: ExitStatus, lived: Duration) -> Option<String> {
+    #[cfg(unix)]
     if let Some(signal) = status.signal() {
         return Some(format!("The shell was killed by signal {signal}"));
     }
@@ -748,12 +744,15 @@ fn remote_cwd_from_title(title: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::process::ExitStatusExt as _, process::ExitStatus, time::Duration};
+    use super::remote_cwd_from_title;
 
-    use super::{exit_failure, remote_cwd_from_title};
-
+    #[cfg(unix)]
     #[test]
     fn keeps_tabs_only_for_abnormal_exits() {
+        use std::{os::unix::process::ExitStatusExt as _, process::ExitStatus, time::Duration};
+
+        use super::exit_failure;
+
         let quick = Duration::from_secs(1);
         let later = Duration::from_secs(60);
         // `from_raw` takes the waitpid status: exit code in the high byte, signal in the low one.

@@ -170,8 +170,9 @@ impl CommandResolver {
                         .flatten()
                         .filter_map(Result::ok)
                 })
-                .filter(|entry| is_executable(&entry.path()))
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .map(|entry| entry.path())
+                .filter(|path| crate::process::is_executable(path))
+                .filter_map(|path| crate::process::command_name(&path))
                 .collect();
             names.sort();
             names.dedup();
@@ -203,9 +204,11 @@ impl CommandResolver {
             return known;
         }
         let found = if word.contains('/') {
-            is_executable(&expand_path(word, cwd))
+            crate::process::is_executable(&expand_path(word, cwd))
         } else {
-            self.path.iter().any(|dir| is_executable(&dir.join(word)))
+            self.path
+                .iter()
+                .any(|dir| crate::process::find_in_dir(dir, word).is_some())
         };
         if !word.contains('/') {
             self.cache.insert(word.to_string(), found);
@@ -214,17 +217,11 @@ impl CommandResolver {
     }
 }
 
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.metadata()
-        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
 pub fn expand_path(word: &str, cwd: Option<&Path>) -> PathBuf {
     if let Some(rest) = word.strip_prefix('~')
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = crate::state::home_dir()
     {
-        return PathBuf::from(home).join(rest.trim_start_matches('/'));
+        return home.join(rest.trim_start_matches('/'));
     }
     let path = Path::new(word);
     match cwd {
@@ -457,6 +454,8 @@ mod tests {
             .collect()
     }
 
+    // Looks commands up in the real /usr/bin and /bin.
+    #[cfg(unix)]
     #[test]
     fn colors_command_subcommand_flags_and_strings() {
         use TokenKind::*;
@@ -472,6 +471,8 @@ mod tests {
         );
     }
 
+    // Looks commands up in the real /usr/bin and /bin.
+    #[cfg(unix)]
     #[test]
     fn pipes_reset_command_position() {
         use TokenKind::*;
@@ -515,6 +516,8 @@ mod tests {
         assert_eq!(done[0].kind, TokenKind::UnknownCommand);
     }
 
+    // Looks commands up in the real /usr/bin and /bin.
+    #[cfg(unix)]
     #[test]
     fn sudo_keeps_command_position() {
         use TokenKind::*;

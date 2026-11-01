@@ -474,7 +474,10 @@ impl RenderOnce for TabItem {
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Warning)
                                 .size(ui::ButtonSize::Medium)
-                                .tooltip(Tooltip::text("Reconnect (⌘⇧R)"))
+                                .tooltip(Tooltip::text(format!(
+                                    "Reconnect ({})",
+                                    crate::shortcuts::label("cmd-shift-r")
+                                )))
                                 .on_click(move |event, window, cx| {
                                     cx.stop_propagation();
                                     handler(event, window, cx)

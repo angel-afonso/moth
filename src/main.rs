@@ -17,8 +17,10 @@ mod notify;
 mod palette;
 mod panes;
 mod picker;
+mod process;
 mod session;
 mod shell;
+mod shortcuts;
 mod ssh;
 mod state;
 mod terminal;
@@ -39,6 +41,7 @@ fn main() {
             if let Err(err) = Assets.load_fonts(cx) {
                 crate::log::error(format!("{err:#}"));
             }
+            log::init();
             state::migrate_legacy_dir();
             config::init(cx);
             theme::init(cx);
