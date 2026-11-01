@@ -109,6 +109,11 @@ pub fn init(cx: &mut App) {
             terminal_view::CopyCommandOutput,
             Some("Terminal"),
         ),
+        KeyBinding::new(
+            "ctrl-space",
+            terminal_view::ShowCompletions,
+            Some("Terminal"),
+        ),
         // El último atajo de cada acción es el que se muestra en menús y botones.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
@@ -1614,6 +1619,12 @@ impl Workspace {
                 PickerAction::Dispatch(Box::new(terminal_view::FindOutput)),
             )
             .shortcut(terminal_view::FindOutput),
+            PickerItem::new(
+                "Acciones",
+                "Mostrar sugerencias para la línea",
+                PickerAction::Dispatch(Box::new(terminal_view::ShowCompletions)),
+            )
+            .shortcut(terminal_view::ShowCompletions),
             PickerItem::new(
                 "Acciones",
                 "Copiar la salida del último comando",

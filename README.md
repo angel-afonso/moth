@@ -35,7 +35,8 @@ Al abrir, la app vuelve a las ventanas, pestañas y paneles de la vez anterior (
 | ⌘⇧R | Reconectar la sesión SSH que se cortó |
 | ⌘V | Pegar (respeta bracketed paste) |
 | ⌘C | Copiar la selección (sin selección, la pantalla visible) |
-| Tab | Abrir el popup de completions (↑↓ elegir, Tab completar, ⏎ ejecutar, esc cerrar) |
+| Tab | Completion de la shell, como siempre (`Doc` → `Documents/`) |
+| ⌃Space | Sugerencias de la app (↑↓ elegir, Tab completar, ⏎ ejecutar, esc cerrar) |
 | → / Fin | Aceptar la sugerencia del historial |
 | ⌥← / ⌥→ · ⌥⌦ | Palabra anterior / siguiente · borrar la palabra siguiente (en el prompt) |
 | ⌘← / ⌘→ · ⌘⌫ | Inicio / fin de la línea · borrar la línea (en el prompt) |
@@ -92,7 +93,7 @@ Arrastrar selecciona, doble clic selecciona una palabra, triple clic una línea 
 
 ## Completions
 
-Tab en el prompt abre un popup con lo que se puede escribir donde está el cursor: comandos (PATH, alias, funciones, builtins), subcomandos y flags de herramientas comunes con su descripción, ramas de git, scripts de `package.json`, hosts de `~/.ssh/config`, rutas e historial. El resto del candidato elegido se ve en gris en la línea y un panel muestra su documentación (uso y flags). Si hay un solo candidato se completa directo; si no hay ninguno, el Tab sigue a la completion de zsh. Las especificaciones están en [`assets/completions/specs.json`](assets/completions/specs.json) y se pueden ampliar.
+Tab en el prompt es la completion de la shell, así que navegar carpetas con `Doc` + Tab funciona como en cualquier terminal. Las sugerencias de la app van aparte, para no pisar ese hábito: la del historial se ve en gris y se acepta con → o Fin, y ⌃Space abre un popup con lo que se puede escribir donde está el cursor: comandos (PATH, alias, funciones, builtins), subcomandos y flags de herramientas comunes con su descripción, ramas de git, scripts de `package.json`, hosts de `~/.ssh/config`, rutas e historial. El resto del candidato elegido se ve en gris en la línea y un panel muestra su documentación (uso y flags). Si hay un solo candidato se completa directo, y después de completar una carpeta el popup se vuelve a abrir con lo que hay adentro. Sin nada que sugerir, ⌃Space le llega a la shell como siempre. Con `"tab_completion": "popup"` en la configuración, Tab abre el popup como antes. Las especificaciones están en [`assets/completions/specs.json`](assets/completions/specs.json) y se pueden ampliar.
 
 ## Links
 
@@ -115,7 +116,8 @@ Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pe
   "editor": "zed",
   "scrollback": 10000,
   "restore_session": true,
-  "notifications": true
+  "notifications": true,
+  "tab_completion": "shell"
 }
 ```
 
@@ -124,6 +126,7 @@ Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pe
 - `scrollback`: líneas que guarda cada pestaña nueva (hasta 100.000).
 - `restore_session`: abrir las ventanas, pestañas y paneles de la vez anterior (sí por defecto).
 - `notifications`: notificación de macOS cuando un comando largo termina con la app en segundo plano (sí por defecto).
+- `tab_completion`: `"shell"` (por defecto) deja Tab a la completion de zsh; `"popup"` hace que Tab abra las sugerencias de la app.
 
 El archivo se relee al volver a la ventana. Una clave mal escrita o un JSON inválido muestran un aviso y se usan los valores por defecto.
 

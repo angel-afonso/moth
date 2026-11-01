@@ -53,7 +53,8 @@ actions!(
         RestartShell,
         PreviousCommand,
         NextCommand,
-        CopyCommandOutput
+        CopyCommandOutput,
+        ShowCompletions
     ]
 );
 
@@ -454,7 +455,11 @@ impl TerminalView {
                 cx.stop_propagation();
                 return;
             }
-        } else if plain && keystroke.key == "tab" && self.open_completions(cx) {
+        } else if plain
+            && keystroke.key == "tab"
+            && crate::config::get(cx).tab_completion == Some(crate::config::TabCompletion::Popup)
+            && self.open_completions(cx)
+        {
             cx.stop_propagation();
             return;
         }
@@ -1542,6 +1547,12 @@ impl Render for TerminalView {
             )
             .on_action(cx.listener(|this, _: &NextCommand, _, cx| this.select_command(false, cx)))
             .on_action(cx.listener(Self::copy_command_output))
+            .on_action(cx.listener(|this, _: &ShowCompletions, _, cx| {
+                // Sin nada que sugerir (o fuera del prompt), ⌃Space sigue a la shell.
+                if !this.open_completions(cx) {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Some(1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Some(-1.), cx)))
             .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.zoom(None, cx)))

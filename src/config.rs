@@ -21,6 +21,16 @@ pub struct Config {
     /// Notificación de macOS cuando un comando largo termina con la app en segundo plano (sí,
     /// si no se indica).
     pub notifications: Option<bool>,
+    /// Qué hace Tab en el prompt: la completion de la shell (por defecto) o abrir las
+    /// sugerencias de la app, que si no están siempre en ⌃Space.
+    pub tab_completion: Option<TabCompletion>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabCompletion {
+    Shell,
+    Popup,
 }
 
 /// Lo que se escribe al abrir la configuración por primera vez.
@@ -29,7 +39,8 @@ const TEMPLATE: &str = r#"{
   "editor": null,
   "scrollback": 10000,
   "restore_session": true,
-  "notifications": true
+  "notifications": true,
+  "tab_completion": "shell"
 }
 "#;
 
@@ -129,5 +140,12 @@ mod tests {
         assert_eq!(config.editor, None);
         assert_eq!(parse("{}").unwrap(), Config::default());
         assert!(parse(r#"{"editr": "zed"}"#).is_err());
+        assert_eq!(
+            parse(r#"{"tab_completion": "popup"}"#)
+                .unwrap()
+                .tab_completion,
+            Some(TabCompletion::Popup)
+        );
+        assert!(parse(r#"{"tab_completion": "menu"}"#).is_err());
     }
 }
