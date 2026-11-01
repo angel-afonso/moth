@@ -14,6 +14,7 @@ mod links;
 mod log;
 mod mouse;
 mod palette;
+mod panes;
 mod picker;
 mod shell;
 mod ssh;
@@ -52,6 +53,8 @@ fn main() {
                     name: "Shell".into(),
                     items: vec![
                         MenuItem::action("Nueva pestaña", workspace::NewTab),
+                        MenuItem::action("Dividir a la derecha", workspace::SplitRight),
+                        MenuItem::action("Dividir hacia abajo", workspace::SplitDown),
                         MenuItem::separator(),
                         MenuItem::action("Cerrar pestaña", workspace::CloseTab),
                     ],

@@ -15,7 +15,11 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | Atajo | Acción |
 | --- | --- |
 | ⌘T | Nueva pestaña |
-| ⌘W · clic central | Cerrar pestaña |
+| ⌘W | Cerrar el panel (o la pestaña si tiene uno solo) |
+| Clic central en la pestaña | Cerrar la pestaña |
+| ⌘D / ⌘⇧D | Dividir el panel a la derecha / hacia abajo |
+| ⌘⌥← ↑ → ↓ · ⌘[ / ⌘] | Ir al panel de ese lado · anterior / siguiente |
+| ⌘⇧⏎ | Maximizar o restaurar el panel |
 | ⌘⇧T | Reabrir la última pestaña cerrada en su carpeta |
 | ⌘+ / ⌘− / ⌘0 | Aumentar / reducir / restablecer el tamaño del texto |
 | ⌘F | Buscar en la salida y el scrollback |
@@ -33,6 +37,12 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 | → / Fin | Aceptar la sugerencia del historial |
 | ⌥← / ⌥→ · ⌥⌦ | Palabra anterior / siguiente · borrar la palabra siguiente (en el prompt) |
 | ⌘← / ⌘→ · ⌘⌫ | Inicio / fin de la línea · borrar la línea (en el prompt) |
+
+## Paneles
+
+⌘D divide el panel activo a la derecha y ⌘⇧D hacia abajo; el nuevo abre en la misma carpeta y queda con el foco. Dividir varias veces en el mismo sentido reparte el espacio en partes iguales en vez de anidar. Un clic en un panel le da el foco, y los demás se ven atenuados. ⌘⌥ con las flechas va al panel de ese lado, y ⌘[ / ⌘] recorren los paneles en orden de lectura. ⌘⇧⏎ maximiza el panel activo dentro de la pestaña y lo restaura.
+
+⌘W cierra el panel activo (con la confirmación si tiene algo corriendo) y el foco pasa al anterior; con un solo panel cierra la pestaña. La × de la pestaña la cierra con todos sus paneles. El título de la pestaña y la barra de estado muestran el panel activo. Por ahora los paneles de una división tienen todos el mismo tamaño.
 
 ## Teclado
 
@@ -175,7 +185,8 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 
 ## Estructura
 
-- `src/workspace.rs`: ventana, barra de pestañas, barra de estado con el selector de ramas, acciones.
+- `src/workspace.rs`: ventana, barra de pestañas, paneles, barra de estado con el selector de ramas, acciones.
+- `src/panes.rs`: árbol de paneles de una pestaña (dividir, cerrar, vecino en cada dirección).
 - `src/terminal.rs`: PTY + `alacritty_terminal`, eventos hacia gpui.
 - `src/terminal_view.rs`: pinta la grilla con el text system de gpui, cursor, IME.
 - `src/shell.rs`: instalación del script de zsh, detección de OSC en el PTY, historial.

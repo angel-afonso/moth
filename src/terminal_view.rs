@@ -1360,7 +1360,7 @@ impl TerminalView {
                         ),
                 )
                 .child(
-                    Button::new("exited-close", "Cerrar pestaña")
+                    Button::new("exited-close", "Cerrar")
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Large)
                         .label_size(LabelSize::Small)

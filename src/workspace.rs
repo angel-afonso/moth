@@ -21,6 +21,7 @@ use crate::{
     config,
     editor::{self, Launch},
     hosts::{self, RulesSource},
+    panes::{Axis, Direction, PaneTree},
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
     shell, ssh, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
@@ -55,6 +56,15 @@ actions!(
         Reconnect,
         ClearScreen,
         OpenConfig,
+        SplitRight,
+        SplitDown,
+        FocusPaneLeft,
+        FocusPaneRight,
+        FocusPaneUp,
+        FocusPaneDown,
+        NextPane,
+        PreviousPane,
+        TogglePaneZoom,
         Quit,
     ]
 );
@@ -71,6 +81,15 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-t", ReopenTab, None),
+        KeyBinding::new("cmd-d", SplitRight, None),
+        KeyBinding::new("cmd-shift-d", SplitDown, None),
+        KeyBinding::new("cmd-alt-left", FocusPaneLeft, None),
+        KeyBinding::new("cmd-alt-right", FocusPaneRight, None),
+        KeyBinding::new("cmd-alt-up", FocusPaneUp, None),
+        KeyBinding::new("cmd-alt-down", FocusPaneDown, None),
+        KeyBinding::new("cmd-]", NextPane, None),
+        KeyBinding::new("cmd-[", PreviousPane, None),
+        KeyBinding::new("cmd-shift-enter", TogglePaneZoom, None),
         KeyBinding::new("cmd-f", terminal_view::FindOutput, Some("Terminal")),
         KeyBinding::new("cmd-=", terminal_view::ZoomIn, Some("Terminal")),
         KeyBinding::new("cmd-+", terminal_view::ZoomIn, Some("Terminal")),
@@ -117,12 +136,40 @@ pub fn init(cx: &mut App) {
 /// Alto de la barra de pestañas; los semáforos de macOS se centran en ella (ver main.rs).
 pub const TAB_BAR_HEIGHT: Pixels = px(40.);
 
-struct TabEntry {
-    initial_dir: Option<PathBuf>,
+/// Una terminal dentro de una pestaña.
+struct Pane {
     view: Entity<TerminalView>,
+    initial_dir: Option<PathBuf>,
+    _subscriptions: [Subscription; 2],
+}
+
+struct TabEntry {
+    /// Identifica la pestaña para la confirmación de cierre aunque cambien sus paneles.
+    id: usize,
+    panes: Vec<Pane>,
+    /// Cómo se reparten los paneles, por el id de su vista.
+    layout: PaneTree<EntityId>,
+    /// El panel con el foco: el que muestran el título y la barra de estado.
+    active_pane: EntityId,
+    /// El panel activo ocupa toda la pestaña (⌘⇧⏎).
+    zoomed: bool,
     /// La sesión sonó la campana mientras no estaba visible.
     needs_attention: bool,
-    _subscription: Subscription,
+}
+
+impl TabEntry {
+    fn pane(&self, id: EntityId) -> Option<&Pane> {
+        self.panes.iter().find(|pane| pane.view.entity_id() == id)
+    }
+
+    fn active(&self) -> &Pane {
+        self.pane(self.active_pane).unwrap_or(&self.panes[0])
+    }
+
+    /// La vista del panel activo.
+    fn view(&self) -> &Entity<TerminalView> {
+        &self.active().view
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -137,7 +184,8 @@ enum ModalKind {
 /// Qué se quiere cerrar; si hay procesos en curso se pide confirmación antes.
 #[derive(Clone, Copy, PartialEq)]
 enum CloseTarget {
-    Tab(EntityId),
+    Tab(usize),
+    Pane(EntityId),
     Window,
     Quit,
 }
@@ -161,6 +209,7 @@ pub struct Workspace {
     /// Cierre esperando confirmación porque cortaría procesos.
     pending_close: Option<CloseTarget>,
     confirm_focus: FocusHandle,
+    next_tab_id: usize,
 }
 
 impl Workspace {
@@ -179,6 +228,7 @@ impl Workspace {
             modal: None,
             pending_close: None,
             confirm_focus: cx.focus_handle(),
+            next_tab_id: 0,
         };
         // Al volver a la app se relee config.json, por si se editó.
         cx.observe_window_activation(window, |this, window, cx| {
@@ -209,7 +259,7 @@ impl Workspace {
         let cwd = self
             .tabs
             .get(self.active)
-            .and_then(|tab| tab.view.read(cx).terminal().read(cx).shell().cwd.clone())
+            .and_then(|tab| tab.view().read(cx).terminal().read(cx).shell().cwd.clone())
             .or_else(state::last_cwd);
         self.add_tab_in(cwd, window, cx);
     }
@@ -227,6 +277,25 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<TabEntry> {
+        let pane = self.new_pane(cwd, window, cx)?;
+        let id = pane.view.entity_id();
+        self.next_tab_id += 1;
+        Some(TabEntry {
+            id: self.next_tab_id,
+            panes: vec![pane],
+            layout: PaneTree::Leaf(id),
+            active_pane: id,
+            zoomed: false,
+            needs_attention: false,
+        })
+    }
+
+    fn new_pane(
+        &mut self,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Pane> {
         let initial_dir = cwd
             .clone()
             .filter(|dir| dir.is_dir())
@@ -241,34 +310,164 @@ impl Workspace {
             }
         };
         let terminal = cx.new(|cx| builder.build(cx));
-        let subscription = cx.subscribe_in(&terminal, window, Self::on_terminal_event);
+        let events = cx.subscribe_in(&terminal, window, Self::on_terminal_event);
         let view = cx.new(|cx| TerminalView::new(terminal, cx));
-        Some(TabEntry {
-            initial_dir,
+        // Un clic en un panel (o el foco en su buscador) lo vuelve el activo.
+        let id = view.entity_id();
+        let focus = cx.on_focus_in(&view.focus_handle(cx), window, move |this, _, cx| {
+            this.pane_focused(id, cx)
+        });
+        Some(Pane {
             view,
-            needs_attention: false,
-            _subscription: subscription,
+            initial_dir,
+            _subscriptions: [events, focus],
         })
     }
 
-    /// Reemplaza la shell que terminó con error por una nueva en la misma carpeta.
+    fn pane_focused(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.pane(id).is_some())
+            && tab.active_pane != id
+        {
+            tab.active_pane = id;
+            cx.notify();
+        }
+    }
+
+    /// La pestaña y el panel de `terminal`.
+    fn locate(&self, terminal: &Entity<Terminal>, cx: &App) -> Option<(usize, EntityId)> {
+        self.tabs.iter().enumerate().find_map(|(ix, tab)| {
+            tab.panes
+                .iter()
+                .find(|pane| pane.view.read(cx).terminal() == terminal)
+                .map(|pane| (ix, pane.view.entity_id()))
+        })
+    }
+
+    /// Divide el panel activo; el nuevo abre en la misma carpeta y queda con el foco.
+    fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let current = tab.active_pane;
+        let cwd = tab.view().read(cx).terminal().read(cx).shell().cwd.clone();
+        let Some(pane) = self.new_pane(cwd, window, cx) else {
+            return;
+        };
+        let id = pane.view.entity_id();
+        let tab = &mut self.tabs[self.active];
+        tab.layout.split(current, id, axis);
+        tab.panes.push(pane);
+        tab.zoomed = false;
+        self.focus_pane(id, window, cx);
+    }
+
+    fn focus_pane(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if let Some(pane) = tab.pane(id) {
+            let view = pane.view.clone();
+            tab.active_pane = id;
+            view.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn focus_neighbor(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        if let Some(id) = tab.layout.neighbor(tab.active_pane, direction) {
+            self.tabs[self.active].zoomed = false;
+            self.focus_pane(id, window, cx);
+        }
+    }
+
+    /// ⌘] / ⌘[: el panel siguiente o anterior en orden de lectura, dando la vuelta.
+    fn cycle_pane(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let leaves = tab.layout.leaves();
+        let Some(current) = leaves.iter().position(|id| *id == tab.active_pane) else {
+            return;
+        };
+        let next = leaves[(current as isize + delta).rem_euclid(leaves.len() as isize) as usize];
+        self.focus_pane(next, window, cx);
+    }
+
+    fn toggle_zoom(&mut self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(self.active)
+            && tab.panes.len() > 1
+        {
+            tab.zoomed = !tab.zoomed;
+            cx.notify();
+        }
+    }
+
+    /// Cierra un panel; si es el último de la pestaña, la pestaña.
+    fn close_pane(&mut self, ix: usize, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get_mut(ix) else {
+            return;
+        };
+        if tab.panes.len() == 1 {
+            self.close(ix, window, cx);
+            return;
+        }
+        let order = tab.layout.leaves();
+        let position = order.iter().position(|leaf| *leaf == id).unwrap_or(0);
+        tab.layout.remove(id);
+        tab.panes.retain(|pane| pane.view.entity_id() != id);
+        tab.zoomed = false;
+        if self.pending_close == Some(CloseTarget::Pane(id)) {
+            self.pending_close = None;
+        }
+        if tab.active_pane == id {
+            // El foco pasa al panel que estaba antes en orden de lectura (o al primero).
+            let leaves = tab.layout.leaves();
+            tab.active_pane = leaves[position.saturating_sub(1).min(leaves.len() - 1)];
+        }
+        if ix == self.active {
+            let active = tab.active_pane;
+            self.focus_pane(active, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Reemplaza la shell del panel activo, que terminó con error, por una nueva en la misma
+    /// carpeta.
     fn restart_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ix = self.active;
         let Some(tab) = self.tabs.get(ix) else {
             return;
         };
+        let old = tab.active_pane;
         let cwd = tab
-            .view
+            .view()
             .read(cx)
             .terminal()
             .read(cx)
             .shell()
             .cwd
             .clone()
-            .or_else(|| tab.initial_dir.clone());
-        if let Some(tab) = self.new_tab_entry(cwd, window, cx) {
-            self.tabs[ix] = tab;
-            self.activate(ix, window, cx);
+            .or_else(|| tab.active().initial_dir.clone());
+        if let Some(pane) = self.new_pane(cwd, window, cx) {
+            let id = pane.view.entity_id();
+            let tab = &mut self.tabs[ix];
+            tab.layout.replace(old, id);
+            if let Some(slot) = tab
+                .panes
+                .iter_mut()
+                .find(|pane| pane.view.entity_id() == old)
+            {
+                *slot = pane;
+            }
+            self.focus_pane(id, window, cx);
         }
     }
 
@@ -279,11 +478,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ix) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.view.read(cx).terminal() == terminal)
-        else {
+        let Some((ix, pane)) = self.locate(terminal, cx) else {
             return;
         };
         match event {
@@ -322,7 +517,7 @@ impl Workspace {
                     }
                     cx.notify();
                 } else {
-                    self.close(ix, window, cx);
+                    self.close_pane(ix, pane, window, cx);
                 }
             }
         }
@@ -334,7 +529,7 @@ impl Workspace {
         };
         tab.needs_attention = false;
         self.active = ix;
-        tab.view.focus_handle(cx).focus(window, cx);
+        tab.view().focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -343,14 +538,14 @@ impl Workspace {
             return;
         }
         if let Some(dir) = self.tabs[ix]
-            .view
+            .view()
             .read(cx)
             .terminal()
             .read(cx)
             .shell()
             .cwd
             .clone()
-            .or_else(|| self.tabs[ix].initial_dir.clone())
+            .or_else(|| self.tabs[ix].active().initial_dir.clone())
         {
             self.closed_dirs.push(dir);
             if self.closed_dirs.len() > 20 {
@@ -359,8 +554,11 @@ impl Workspace {
             state::save_closed_dirs(&self.closed_dirs);
         }
         let removed = self.tabs.remove(ix);
-        if self.pending_close == Some(CloseTarget::Tab(removed.view.entity_id())) {
-            self.pending_close = None;
+        let removed_pane = |id| removed.pane(id).is_some();
+        match self.pending_close {
+            Some(CloseTarget::Tab(id)) if id == removed.id => self.pending_close = None,
+            Some(CloseTarget::Pane(id)) if removed_pane(id) => self.pending_close = None,
+            _ => {}
         }
         if self.tabs.is_empty() {
             window.remove_window();
@@ -430,9 +628,9 @@ impl Workspace {
         }
     }
 
-    /// Lo que se cortaría al cerrar la pestaña: la sesión SSH o el comando en curso.
-    fn busy_with(&self, ix: usize, cx: &App) -> Option<String> {
-        let terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
+    /// Lo que se cortaría al cerrar el panel: la sesión SSH o el comando en curso.
+    fn busy_with(pane: &Pane, cx: &App) -> Option<String> {
+        let terminal = pane.view.read(cx).terminal().read(cx);
         if terminal.has_exited() {
             return None;
         }
@@ -447,12 +645,19 @@ impl Workspace {
     }
 
     fn busy(&self, target: CloseTarget, cx: &App) -> Vec<String> {
-        (0..self.tabs.len())
-            .filter(|&ix| match target {
-                CloseTarget::Tab(id) => self.tabs[ix].view.entity_id() == id,
+        self.tabs
+            .iter()
+            .filter(|tab| match target {
+                CloseTarget::Tab(id) => tab.id == id,
+                CloseTarget::Pane(id) => tab.pane(id).is_some(),
                 CloseTarget::Window | CloseTarget::Quit => true,
             })
-            .filter_map(|ix| self.busy_with(ix, cx))
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| match target {
+                CloseTarget::Pane(id) => pane.view.entity_id() == id,
+                _ => true,
+            })
+            .filter_map(|pane| Self::busy_with(pane, cx))
             .collect()
     }
 
@@ -482,16 +687,34 @@ impl Workspace {
 
     fn request_close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(ix) {
-            let target = CloseTarget::Tab(tab.view.entity_id());
+            let target = CloseTarget::Tab(tab.id);
             self.request_close(target, window, cx);
         }
+    }
+
+    /// ⌘W: cierra el panel activo, o la pestaña si tiene uno solo.
+    fn request_close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let target = if tab.panes.len() > 1 {
+            CloseTarget::Pane(tab.active_pane)
+        } else {
+            CloseTarget::Tab(tab.id)
+        };
+        self.request_close(target, window, cx);
     }
 
     fn perform_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
         match target {
             CloseTarget::Tab(id) => {
-                if let Some(ix) = self.tabs.iter().position(|tab| tab.view.entity_id() == id) {
+                if let Some(ix) = self.tabs.iter().position(|tab| tab.id == id) {
                     self.close(ix, window, cx);
+                }
+            }
+            CloseTarget::Pane(id) => {
+                if let Some(ix) = self.tabs.iter().position(|tab| tab.pane(id).is_some()) {
+                    self.close_pane(ix, id, window, cx);
                 }
             }
             CloseTarget::Window => window.remove_window(),
@@ -508,7 +731,7 @@ impl Workspace {
     fn cancel_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_close = None;
         if let Some(tab) = self.tabs.get(self.active) {
-            tab.view.focus_handle(cx).focus(window, cx);
+            tab.view().focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
@@ -518,6 +741,7 @@ impl Workspace {
         let busy = self.busy(target, cx);
         let (title, confirm) = match target {
             CloseTarget::Tab(_) => ("¿Cerrar la pestaña?", "Cerrar"),
+            CloseTarget::Pane(_) => ("¿Cerrar el panel?", "Cerrar"),
             CloseTarget::Window => ("¿Cerrar la ventana?", "Cerrar"),
             CloseTarget::Quit => ("¿Salir de terminalapp?", "Salir"),
         };
@@ -616,7 +840,7 @@ impl Workspace {
 
     /// El comando en ejecución, si no la carpeta actual, si no el título que puso la shell.
     fn tab_title(&self, ix: usize, cx: &App) -> SharedString {
-        let terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
+        let terminal = self.tabs[ix].view().read(cx).terminal().read(cx);
         let shell = terminal.shell();
         // En SSH, el host; si se cortó, el host también (tachado en la pestaña).
         if let Some(remote) = &shell.remote {
@@ -637,15 +861,17 @@ impl Workspace {
         }
     }
 
+    /// Algún panel de la pestaña tiene un comando en curso.
     fn is_running(&self, ix: usize, cx: &App) -> bool {
-        self.tabs[ix]
-            .view
-            .read(cx)
-            .terminal()
-            .read(cx)
-            .shell()
-            .running
-            .is_some()
+        self.tabs[ix].panes.iter().any(|pane| {
+            pane.view
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .shell()
+                .running
+                .is_some()
+        })
     }
 
     fn render_tab(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
@@ -656,7 +882,7 @@ impl Workspace {
         } else {
             TabState::Idle
         };
-        let shell = self.tabs[ix].view.read(cx).terminal().read(cx).shell();
+        let shell = self.tabs[ix].view().read(cx).terminal().read(cx).shell();
         let remote = shell
             .remote
             .as_ref()
@@ -801,7 +1027,7 @@ impl Workspace {
 
     /// Rama actual con cambios y ahead/behind; al hacer clic, lista las ramas para cambiar.
     fn render_git(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let terminal = self.tabs[self.active].view.read(cx).terminal().clone();
+        let terminal = self.tabs[self.active].view().read(cx).terminal().clone();
         let git = terminal.read(cx).shell().git.clone()?;
         let branch_color = Color::Custom(cx.tokens().syntax.subcommand);
 
@@ -867,7 +1093,7 @@ impl Workspace {
         }
         let git = self.render_git(cx);
         let ui = cx.tokens().ui.clone();
-        let terminal = self.tabs[self.active].view.read(cx).terminal().read(cx);
+        let terminal = self.tabs[self.active].view().read(cx).terminal().read(cx);
         let size = terminal.size();
         let shell = terminal.shell();
         let tab_count = self.tabs.len();
@@ -997,7 +1223,7 @@ fn abbreviate_home(path: &Path) -> String {
 
 impl Workspace {
     fn active_terminal(&self, cx: &App) -> Entity<Terminal> {
-        self.tabs[self.active].view.read(cx).terminal().clone()
+        self.tabs[self.active].view().read(cx).terminal().clone()
     }
 
     fn open_modal(
@@ -1030,7 +1256,7 @@ impl Workspace {
                 theme::apply(previous, cx);
             }
             self.tabs[self.active]
-                .view
+                .view()
                 .focus_handle(cx)
                 .focus(window, cx);
             cx.notify();
@@ -1148,6 +1374,24 @@ impl Workspace {
             );
         }
         items.extend([
+            PickerItem::new(
+                "Acciones",
+                "Dividir a la derecha",
+                PickerAction::Dispatch(Box::new(SplitRight)),
+            )
+            .shortcut(SplitRight),
+            PickerItem::new(
+                "Acciones",
+                "Dividir hacia abajo",
+                PickerAction::Dispatch(Box::new(SplitDown)),
+            )
+            .shortcut(SplitDown),
+            PickerItem::new(
+                "Acciones",
+                "Maximizar o restaurar el panel",
+                PickerAction::Dispatch(Box::new(TogglePaneZoom)),
+            )
+            .shortcut(TogglePaneZoom),
             PickerItem::new(
                 "Acciones",
                 "Reabrir pestaña cerrada",
@@ -1274,7 +1518,7 @@ impl Workspace {
             Box::new(ActivateTab8),
         ];
         for ix in 0..self.tabs.len() {
-            let tab_terminal = self.tabs[ix].view.read(cx).terminal().read(cx);
+            let tab_terminal = self.tabs[ix].view().read(cx).terminal().read(cx);
             let mut item = PickerItem::new(
                 "Pestañas abiertas",
                 format!("Ir a {}", self.tab_title(ix, cx)),
@@ -1451,7 +1695,7 @@ impl Workspace {
         self.tabs
             .get(self.active)
             .and_then(|tab| {
-                tab.view
+                tab.view()
                     .read(cx)
                     .terminal()
                     .read(cx)
@@ -1467,7 +1711,7 @@ impl Workspace {
         let Some(tab) = self.tabs.get(ix) else {
             return;
         };
-        let terminal = tab.view.read(cx).terminal().clone();
+        let terminal = tab.view().read(cx).terminal().clone();
         if terminal.update(cx, |t, cx| t.reconnect(cx)) {
             self.activate(ix, window, cx);
         }
@@ -1684,7 +1928,7 @@ impl Workspace {
 
         // Sesiones cortadas, de cualquier pestaña.
         for (ix, tab) in self.tabs.iter().enumerate() {
-            let shell = tab.view.read(cx).terminal().read(cx).shell();
+            let shell = tab.view().read(cx).terminal().read(cx).shell();
             let Some(d) = shell
                 .disconnected
                 .as_ref()
@@ -1724,7 +1968,7 @@ impl Workspace {
             .iter()
             .enumerate()
             .filter_map(|(ix, tab)| {
-                let shell = tab.view.read(cx).terminal().read(cx).shell();
+                let shell = tab.view().read(cx).terminal().read(cx).shell();
                 shell.remote.as_ref().map(|r| (ix, r.target.alias.clone()))
             })
             .collect();
@@ -1837,16 +2081,75 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    /// Los paneles de la pestaña activa: uno solo (o el maximizado) ocupa todo; si no, el árbol
+    /// con divisores de un píxel y los paneles sin foco atenuados.
+    fn render_panes(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tab = self.tabs.get(self.active)?;
+        if tab.zoomed || tab.panes.len() == 1 {
+            return Some(tab.view().clone().into_any_element());
+        }
+        Some(self.render_pane_node(tab, &tab.layout, cx))
+    }
+
+    fn render_pane_node(&self, tab: &TabEntry, node: &PaneTree<EntityId>, cx: &App) -> AnyElement {
+        let tokens = cx.tokens();
+        match node {
+            PaneTree::Leaf(id) => {
+                let Some(pane) = tab.pane(*id) else {
+                    return div().into_any_element();
+                };
+                div()
+                    .relative()
+                    .size_full()
+                    .child(pane.view.clone())
+                    .when(*id != tab.active_pane, |el| {
+                        el.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .bg(tint(tokens.terminal.background, 0.35)),
+                        )
+                    })
+                    .into_any_element()
+            }
+            PaneTree::Split { axis, children } => {
+                let mut container = div().flex().size_full();
+                container = match axis {
+                    Axis::Row => container.flex_row(),
+                    Axis::Column => container.flex_col(),
+                };
+                for (ix, child) in children.iter().enumerate() {
+                    if ix > 0 {
+                        let divider = div().flex_none().bg(tokens.ui.border_strong);
+                        container = container.child(match axis {
+                            Axis::Row => divider.w(px(1.)).h_full(),
+                            Axis::Column => divider.h(px(1.)).w_full(),
+                        });
+                    }
+                    container = container.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(self.render_pane_node(tab, child, cx)),
+                    );
+                }
+                container.into_any_element()
+            }
+        }
+    }
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.tabs[self.active].view.focus_handle(cx)
+        self.tabs[self.active].view().focus_handle(cx)
     }
 }
 
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = self.tabs.get(self.active).map(|tab| tab.view.clone());
-
         v_flex()
             .relative()
             .size_full()
@@ -1857,9 +2160,28 @@ impl Render for Workspace {
             .text_size(UI_FONT_SIZE)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &ReopenTab, w, cx| this.reopen_tab(w, cx)))
-            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
-                this.request_close_tab(this.active, window, cx)
+            .on_action(
+                cx.listener(|this, _: &CloseTab, window, cx| this.request_close_active(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &SplitRight, w, cx| this.split(Axis::Row, w, cx)))
+            .on_action(cx.listener(|this, _: &SplitDown, w, cx| this.split(Axis::Column, w, cx)))
+            .on_action(cx.listener(|this, _: &FocusPaneLeft, w, cx| {
+                this.focus_neighbor(Direction::Left, w, cx)
             }))
+            .on_action(cx.listener(|this, _: &FocusPaneRight, w, cx| {
+                this.focus_neighbor(Direction::Right, w, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &FocusPaneUp, w, cx| {
+                    this.focus_neighbor(Direction::Up, w, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &FocusPaneDown, w, cx| {
+                this.focus_neighbor(Direction::Down, w, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NextPane, w, cx| this.cycle_pane(1, w, cx)))
+            .on_action(cx.listener(|this, _: &PreviousPane, w, cx| this.cycle_pane(-1, w, cx)))
+            .on_action(cx.listener(|this, _: &TogglePaneZoom, _, cx| this.toggle_zoom(cx)))
             .on_action(cx.listener(|this, _: &Quit, window, cx| {
                 this.request_close(CloseTarget::Quit, window, cx)
             }))
@@ -1930,7 +2252,7 @@ impl Render for Workspace {
                     .when(self.active_is_production(cx), |el| {
                         el.p(px(8.)).bg(cx.tokens().terminal.background)
                     })
-                    .children(active),
+                    .children(self.render_panes(cx)),
             )
             .when(!self.tabs.is_empty(), |this| {
                 this.child(self.render_status_bar(cx))
