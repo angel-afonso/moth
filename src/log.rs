@@ -13,6 +13,10 @@ pub fn log_path() -> Option<PathBuf> {
 
 pub fn error(message: impl Display) {
     eprintln!("{message}");
+    // Tests that check error paths (a broken theme, say) would otherwise fill the user's log.
+    if cfg!(test) {
+        return;
+    }
     let Some(path) = log_path() else {
         return;
     };
