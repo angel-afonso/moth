@@ -1,13 +1,13 @@
-# Integración de Moth con zsh.
-#   OSC 133;A/B/C/D   inicio de prompt, fin de prompt, inicio de salida, fin de comando (+ exit code)
-#                     B lleva rows=N (filas del prompt) y prev_err=0|1 (falló el comando anterior)
-#   OSC 7             directorio actual
-#   OSC 7777;...      propios: E comando ejecutado, L línea en edición, F fin de edición,
-#                     H archivo de historial, P PATH, N nombres de alias/funciones/builtins
+# Moth's zsh integration.
+#   OSC 133;A/B/C/D   prompt start, prompt end, output start, command end (+ exit code)
+#                     B carries rows=N (prompt height) and prev_err=0|1 (previous command failed)
+#   OSC 7             current directory
+#   OSC 7777;...      custom: E command run, L line being edited, F editing finished,
+#                     H history file, P PATH, N alias/function/builtin names
 #
-# Si el prompt es el de macOS por defecto, se reemplaza por uno con el estilo de la app
-# (encabezado con carpeta, rama y resultado del comando anterior; `❯` debajo). Con un tema
-# propio (starship, p10k…) o con MOTH_PROMPT=0 en tu .zshrc, no se toca.
+# If the prompt is the macOS default, it's replaced with one in the app's style (a header
+# with folder, branch and previous command result; `❯` below it). With your own theme
+# (starship, p10k…) or MOTH_PROMPT=0 in your .zshrc, it's left alone.
 [[ -n "$_MOTH_LOADED" ]] && return
 typeset -g _MOTH_LOADED=1 _moth_running= _moth_first=1 _moth_own_prompt= _moth_started= _moth_prev_err=0
 unset MOTH_SHELL_INTEGRATION
@@ -17,7 +17,7 @@ autoload -Uz add-zsh-hook add-zle-hook-widget
 
 _moth_osc() { builtin printf '\e]%s\a' "$1" }
 
-# Reemplaza caracteres de control para que no corten la secuencia OSC.
+# Replace control characters so they don't terminate the OSC sequence.
 _moth_clean() { REPLY=${1//[$'\x00'-$'\x1f'$'\x7f']/ } }
 
 _moth_precmd() {
@@ -30,11 +30,11 @@ _moth_precmd() {
   fi
   if [[ -n "$_moth_first" ]]; then
     _moth_first=
-    # Para entonces ya se cargó el .zshrc: se ve si el usuario tiene su propio prompt.
+    # By now .zshrc has been loaded, so we can tell whether the user has their own prompt.
     if [[ "$MOTH_PROMPT" != 0 && ( "$PS1" == "%n@%m %1~ %# " || "$PS1" == "%m%# " ) ]]; then
       _moth_own_prompt=1
     fi
-    # Los hooks de ZLE se registran recién aquí: desde .zshenv ZLE todavía no está listo.
+    # ZLE hooks are only registered here: ZLE isn't ready yet while .zshenv runs.
     add-zle-hook-widget line-init _moth_report_line
     add-zle-hook-widget line-pre-redraw _moth_report_line
     add-zle-hook-widget line-finish _moth_line_finish
@@ -47,8 +47,8 @@ _moth_precmd() {
   _moth_osc "7;file://${HOST:-localhost}$p"
   [[ -n "$_moth_own_prompt" ]] && _moth_build_prompt "$ret" "$ran"
   _moth_osc "133;A"
-  # La marca de fin de prompt se pone ya y además al final de precmd, por si un tema
-  # (starship, p10k) rearma PS1 después de nosotros.
+  # Set the prompt-end mark now and again at the end of precmd, in case a theme
+  # (starship, p10k) rebuilds PS1 after us.
   _moth_mark_prompt
   precmd_functions=(${precmd_functions:#_moth_mark_prompt} _moth_mark_prompt)
 }
@@ -65,13 +65,13 @@ _moth_format_duration() {
   fi
 }
 
-# Encabezado tenue y `❯` debajo. Usa colores ANSI, que la app resuelve con el tema activo:
-# white = texto secundario, bright black = metadatos, magenta = rama, green/red = estado.
+# Dim header with `❯` below it. Uses ANSI colors, which the app maps to the active theme:
+# white = secondary text, bright black = metadata, magenta = branch, green/red = status.
 #   ~/work/moth  main  ✓ 41.2s · 14:02
 #   ❯
 _moth_build_prompt() {
   local ret=$1 ran=$2 branch
-  # Rutas largas: solo las últimas tres carpetas.
+  # Long paths: only the last three folders.
   local header="%F{7}%(5~|…/%3~|%~)%f"
   branch=$(command git symbolic-ref --short -q HEAD 2>/dev/null) \
     || branch=$(command git rev-parse --short HEAD 2>/dev/null)
@@ -90,15 +90,15 @@ _moth_build_prompt() {
   header+="  %F{8}$meta%f"
   local mark=2
   [[ -n "$ran" ]] && (( ret != 0 )) && mark=1
-  # Tras un comando, una línea en blanco lo separa del siguiente bloque.
+  # After a command, a blank line separates it from the next block.
   local gap=""
   [[ -n "$ran" ]] && gap=$'\n'
   PS1="$gap$header"$'\n'"%F{$mark}❯%f "
 }
 
-# Agrega al final de PS1 la marca de fin de prompt (reemplaza la del prompt anterior, que puede
-# seguir ahí si PS1 no se rearma). La app la usa para delimitar los bloques de comandos, así
-# que lleva las filas que ocupa el prompt y si falló el comando anterior.
+# Append the prompt-end mark to PS1 (replacing the previous prompt's, which may still be
+# there if PS1 isn't rebuilt). The app uses it to delimit command blocks, so it carries the
+# number of rows the prompt takes up and whether the previous command failed.
 _moth_mark_prompt() {
   local base=${PS1%"%{"$'\e]133;B'*}
   local expanded=${(%)base}

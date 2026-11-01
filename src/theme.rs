@@ -1,5 +1,5 @@
-//! Temas: los tokens activos (ver `tokens.rs`) aplicados a la app y al sistema de temas de
-//! Zed, para que los componentes del crate `ui` también los usen. Sin el crate `settings`.
+//! Themes: the active tokens (see `tokens.rs`) applied to the app and to Zed's theme system,
+//! so the `ui` crate's components use them too. Without the `settings` crate.
 
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ impl ThemeSettingsProvider for Settings {
     }
 }
 
-/// Temas disponibles (incluidos + del usuario).
+/// Available themes (built-in + user).
 pub struct Themes(pub Vec<Arc<Tokens>>);
 
 impl Global for Themes {}
@@ -80,14 +80,14 @@ pub fn init(cx: &mut App) {
     apply(active, cx);
 }
 
-/// Vuelve a leer los temas (por si el usuario agregó o editó alguno).
+/// Re-reads the themes (in case the user added or edited one).
 pub fn reload_themes(cx: &mut App) -> Vec<Arc<Tokens>> {
     let themes = tokens::load_themes(tokens::user_themes_dir().as_deref());
     cx.set_global(Themes(themes.clone()));
     themes
 }
 
-/// Activa un tema: tokens propios, colores del tema de Zed y redibujo de las ventanas.
+/// Activates a theme: our own tokens, Zed's theme colors, and a redraw of the windows.
 pub fn apply(tokens: Arc<Tokens>, cx: &mut App) {
     let mut theme = (**cx.theme()).clone();
     theme.name = tokens.name.clone().into();
@@ -146,7 +146,7 @@ pub fn apply(tokens: Arc<Tokens>, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Cambia al tema llamado `name` y lo recuerda para la próxima vez.
+/// Switches to the theme named `name` and remembers it for next time.
 pub fn select(name: &str, cx: &mut App) {
     let theme = cx
         .try_global::<Themes>()

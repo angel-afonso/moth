@@ -1,5 +1,5 @@
-//! Componentes de la hoja "Tokens y componentes": pestaña con sus estados, tecla, tipo de
-//! sugerencia e indicadores de estado. Construidos con el crate `ui` y los tokens del tema.
+//! Components from the "Tokens and components" sheet: tab with its states, key, suggestion
+//! kind and status indicators. Built with the `ui` crate and the theme tokens.
 
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use crate::{
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type MouseDownHandler = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 
-/// Duración legible: `120ms`, `3.4s`, `2m 5s`.
+/// Human-readable duration: `120ms`, `3.4s`, `2m 5s`.
 pub fn format_duration(duration: Duration) -> String {
     let ms = duration.as_millis();
     if ms < 1000 {
@@ -34,7 +34,7 @@ pub fn format_duration(duration: Duration) -> String {
 
 // ---------------------------------------------------------------------------------------
 
-/// Una tecla o atajo dibujado como tecla (`⌘K`, `esc`, `↑↓`).
+/// A key or shortcut drawn as a keycap (`⌘K`, `esc`, `↑↓`).
 #[derive(IntoElement)]
 pub struct Kbd {
     keys: SharedString,
@@ -65,7 +65,7 @@ impl RenderOnce for Kbd {
 
 // ---------------------------------------------------------------------------------------
 
-/// Tipo de una sugerencia, con el color de su categoría de sintaxis.
+/// Kind of a suggestion, colored by its syntax category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuggestionKind {
     Command,
@@ -125,9 +125,9 @@ impl RenderOnce for KindBadge {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DotState {
-    /// Proceso corriendo: verde con halo.
+    /// Process running: green with a halo.
     Running,
-    /// Pide atención (campana en segundo plano).
+    /// Needs attention (bell in the background).
     Attention,
     Success,
     Error,
@@ -177,7 +177,7 @@ impl RenderOnce for StatusDot {
 
 // ---------------------------------------------------------------------------------------
 
-/// Resultado de un bloque: `✓ 41.2s`, `✕ exit 1 · 1.3s` o `● 12s` mientras corre.
+/// Result of a block: `✓ 41.2s`, `✕ exit 1 · 1.3s`, or `● 12s` while running.
 #[derive(IntoElement)]
 pub enum BlockStatus {
     Running(Duration),
@@ -213,7 +213,7 @@ impl RenderOnce for BlockStatus {
 
 // ---------------------------------------------------------------------------------------
 
-/// Etiqueta corta de un host remoto (`PROD`, `STG`) en su color. Punteada si la sesión se cortó.
+/// Short label for a remote host (`PROD`, `STG`) in its color. Dashed if the session dropped.
 #[derive(IntoElement)]
 pub struct HostChip {
     label: SharedString,
@@ -269,13 +269,13 @@ pub enum TabState {
     Attention,
 }
 
-/// Pestaña de la barra: activa (fondo de la terminal y línea de acento), inactiva, hover,
-/// ejecutando (punto verde) o pidiendo atención (punto naranja).
+/// Tab bar tab: active (terminal background and accent line), inactive, hover,
+/// running (green dot) or needing attention (orange dot).
 #[derive(IntoElement)]
 pub struct TabItem {
     id: ElementId,
     title: SharedString,
-    /// Sesión remota: color del host y su etiqueta, si tiene.
+    /// Remote session: host color and its label, if any.
     remote: Option<(Hsla, Option<SharedString>)>,
     disconnected: bool,
     on_reconnect: Option<ClickHandler>,
@@ -299,7 +299,7 @@ impl TabItem {
             shortcut: None,
             selected: false,
             state: TabState::Idle,
-            close_tooltip: "Cerrar pestaña".into(),
+            close_tooltip: "Close Tab".into(),
             on_click: None,
             on_close: None,
             on_middle_click: None,
@@ -326,7 +326,7 @@ impl TabItem {
         self
     }
 
-    /// La sesión remota se cortó: título tachado y botón de reconectar en lugar de cerrar.
+    /// The remote session dropped: struck-through title and a reconnect button instead of close.
     pub fn disconnected(
         mut self,
         on_reconnect: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -405,7 +405,7 @@ impl RenderOnce for TabItem {
             .cursor_pointer()
             .map(|tab| {
                 if selected {
-                    // Se funde con la terminal: mismo fondo, sin borde inferior.
+                    // Blends into the terminal: same background, no bottom border.
                     tab.bg(ui.background).child(
                         div()
                             .absolute()
@@ -474,7 +474,7 @@ impl RenderOnce for TabItem {
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Warning)
                                 .size(ui::ButtonSize::Medium)
-                                .tooltip(Tooltip::text("Reconectar (⌘⇧R)"))
+                                .tooltip(Tooltip::text("Reconnect (⌘⇧R)"))
                                 .on_click(move |event, window, cx| {
                                     cx.stop_propagation();
                                     handler(event, window, cx)

@@ -1,15 +1,15 @@
-//! Links en la salida de la terminal: URLs escritas como texto, qué esquemas se pueden abrir y
-//! rutas a archivos con línea y columna (`src/main.rs:12:5`), como las que imprimen los
-//! compiladores, grep y los tests.
+//! Links in terminal output: URLs written as plain text, which schemes may be opened, and file
+//! paths with line and column (`src/main.rs:12:5`) like the ones compilers, grep and test
+//! runners print.
 
 use std::{
     ops::Range,
     path::{Path, PathBuf},
 };
 
-/// Esquemas que se abren con el navegador o la app predeterminada. Cualquier otro (por
-/// ejemplo uno que llega por OSC 8 desde un programa) se ignora, para que la salida de un
-/// comando no pueda lanzar aplicaciones con URLs arbitrarias.
+/// Schemes opened with the browser or the default app. Anything else (for example one sent by
+/// a program via OSC 8) is ignored, so a command's output can't launch apps with arbitrary
+/// URLs.
 const ALLOWED_SCHEMES: &[&str] = &["http", "https", "ftp", "file", "mailto"];
 
 pub fn is_openable(url: &str) -> bool {
@@ -24,8 +24,8 @@ fn is_url_char(c: char) -> bool {
         && !matches!(c, '<' | '>' | '"' | '`' | '{' | '}' | '|' | '\\' | '^')
 }
 
-/// URLs dentro de `text`, como rangos en bytes. Reconoce `esquema://…` y `mailto:…`, y quita
-/// la puntuación final que suele cerrar una oración (`.`, `,`, `)` sin pareja…).
+/// URLs in `text`, as byte ranges. Recognizes `scheme://…` and `mailto:…`, and trims trailing
+/// punctuation that usually ends a sentence (`.`, `,`, an unmatched `)`…).
 pub fn find_urls(text: &str) -> Vec<Range<usize>> {
     let mut urls = Vec::new();
     let mut search_from = 0;
@@ -49,7 +49,7 @@ pub fn find_urls(text: &str) -> Vec<Range<usize>> {
         };
         let (offset, marker_len) = found;
         let start = search_from + offset;
-        // El esquema no puede ser la cola de otra palabra (`xhttp://`).
+        // The scheme can't be the tail of another word (`xhttp://`).
         let preceded_by_word = text[..start]
             .chars()
             .next_back()
@@ -70,7 +70,7 @@ pub fn find_urls(text: &str) -> Vec<Range<usize>> {
     urls
 }
 
-/// Largo de `url` sin la puntuación final que no le pertenece.
+/// Length of `url` without trailing punctuation that isn't part of it.
 fn trim_trailing(url: &str) -> usize {
     let mut end = url.len();
     loop {
@@ -91,7 +91,7 @@ fn trim_trailing(url: &str) -> usize {
     }
 }
 
-/// Un archivo para abrir en el editor, con la posición si la salida la trae.
+/// A file to open in the editor, with its position if the output includes one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileLink {
     pub path: PathBuf,
@@ -99,10 +99,10 @@ pub struct FileLink {
     pub column: Option<u32>,
 }
 
-/// Una ruta escrita en la salida, todavía sin verificar que exista.
+/// A path found in the output, not yet checked for existence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathMatch {
-    /// Bytes de `text` que se subrayan: la ruta y su posición.
+    /// Bytes of `text` to underline: the path and its position.
     pub range: Range<usize>,
     pub path: String,
     pub line: Option<u32>,
@@ -136,15 +136,15 @@ fn is_path_char(c: char) -> bool {
         )
 }
 
-/// Dígitos al principio de `text`, como número, y cuántos bytes ocupan.
+/// Leading digits of `text` as a number, and how many bytes they take.
 fn leading_number(text: &str) -> Option<(u32, usize)> {
     let len = text.bytes().take_while(u8::is_ascii_digit).count();
     Some((text[..len].parse().ok()?, len))
 }
 
-/// Rutas escritas en `text`, con la línea y columna que las acompañan:
-/// `src/main.rs:12:5` (rustc, grep, go, pytest), `src/a.ts(12,5)` (tsc) y
-/// `File "app.py", line 7` (Python). Solo candidatos: hay que ver si existen con `resolve_path`.
+/// Paths in `text`, with the line and column that come with them:
+/// `src/main.rs:12:5` (rustc, grep, go, pytest), `src/a.ts(12,5)` (tsc) and
+/// `File "app.py", line 7` (Python). Candidates only: check they exist with `resolve_path`.
 pub fn find_paths(text: &str) -> Vec<PathMatch> {
     let mut found = Vec::new();
     let mut chars = text.char_indices().peekable();
@@ -169,7 +169,7 @@ pub fn find_paths(text: &str) -> Vec<PathMatch> {
 
 fn parse_path(text: &str, start: usize, end: usize) -> Option<PathMatch> {
     let token = &text[start..end];
-    // La ruta llega hasta el primer `:`; después pueden venir la línea y la columna.
+    // The path runs up to the first `:`; line and column may follow.
     let (mut path, suffix) = match token.find(':') {
         Some(colon) => (&token[..colon], Some(&token[colon + 1..])),
         None => (token, None),
@@ -188,7 +188,7 @@ fn parse_path(text: &str, start: usize, end: usize) -> Option<PathMatch> {
     }
     let after = &text[end..];
     if line.is_none() {
-        // tsc: `archivo.ts(12,5)`.
+        // tsc: `file.ts(12,5)`.
         if let Some(inside) = after.strip_prefix('(')
             && let Some((number, len)) = leading_number(inside)
         {
@@ -208,14 +208,14 @@ fn parse_path(text: &str, start: usize, end: usize) -> Option<PathMatch> {
         {
             line = Some(number);
         }
-        // Sin posición, la puntuación final es de la oración (`ver README.md.`).
+        // Without a position, trailing punctuation belongs to the sentence (`see README.md.`).
         let trimmed = path.trim_end_matches(['.', ':']);
         range_end -= path.len() - trimmed.len();
         path = trimmed;
     }
     let looks_like_path = path.contains('/')
         || path.rsplit_once('.').is_some_and(|(stem, ext)| {
-            // `main.rs`, `Cargo.toml`; no `1.5s` ni `v0.1.0`.
+            // `main.rs`, `Cargo.toml`; not `1.5s` or `v0.1.0`.
             stem.chars().any(char::is_alphabetic)
                 && ext.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         });
@@ -230,8 +230,8 @@ fn parse_path(text: &str, start: usize, end: usize) -> Option<PathMatch> {
     })
 }
 
-/// El archivo al que apunta `path`, si existe: relativo a `cwd`, con `~` o absoluto. Prueba
-/// también sin el `a/` o `b/` que agrega `git diff`.
+/// The file `path` points to, if it exists: relative to `cwd`, `~`-based or absolute. Also
+/// tries without the `a/` or `b/` prefix that `git diff` adds.
 pub fn resolve_path(path: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     let full = |path: &str| -> Option<PathBuf> {
         if let Some(rest) = path.strip_prefix("~/") {
@@ -289,20 +289,20 @@ mod tests {
 
     #[test]
     fn finds_plain_paths_without_sentence_punctuation() {
-        assert_eq!(paths("ver README.md."), vec![("README.md", None, None)]);
+        assert_eq!(paths("see README.md."), vec![("README.md", None, None)]);
         assert_eq!(
             paths("modified:   src/terminal.rs"),
             vec![("src/terminal.rs", None, None)]
         );
         assert_eq!(
-            paths("~/notas/todo.txt"),
-            vec![("~/notas/todo.txt", None, None)]
+            paths("~/notes/todo.txt"),
+            vec![("~/notes/todo.txt", None, None)]
         );
     }
 
     #[test]
     fn ignores_words_versions_and_urls() {
-        assert!(paths("compilando moth v0.1.0 ...").is_empty());
+        assert!(paths("compiling moth v0.1.0 ...").is_empty());
         assert!(paths("1.5s  ok").is_empty());
         assert!(paths("https://example.com/a.html").is_empty());
         assert!(paths(".. / ...").is_empty());
@@ -327,7 +327,7 @@ mod tests {
             resolve_path(file.to_str().unwrap(), Path::new("/"), None),
             Some(file)
         );
-        // Las carpetas no se abren en el editor.
+        // Folders don't open in the editor.
         assert_eq!(resolve_path("src", &dir, None), None);
         std::fs::remove_dir_all(dir).ok();
     }
@@ -343,14 +343,14 @@ mod tests {
             vec!["https://github.com/you/moth/pull/new/feat"]
         );
         assert_eq!(
-            urls("ver http://localhost:3000/api?q=1&x=2 y ftp://files.example.com/a.tgz"),
+            urls("see http://localhost:3000/api?q=1&x=2 and ftp://files.example.com/a.tgz"),
             vec![
                 "http://localhost:3000/api?q=1&x=2",
                 "ftp://files.example.com/a.tgz"
             ]
         );
         assert_eq!(
-            urls("escribí a mailto:dev@example.com."),
+            urls("write to mailto:dev@example.com."),
             vec!["mailto:dev@example.com"]
         );
         assert_eq!(
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn trims_sentence_punctuation_and_unbalanced_parens() {
         assert_eq!(
-            urls("(ver https://example.com/docs)."),
+            urls("(see https://example.com/docs)."),
             vec!["https://example.com/docs"]
         );
         assert_eq!(
@@ -381,9 +381,9 @@ mod tests {
 
     #[test]
     fn ignores_non_urls() {
-        assert!(urls("https:// sin host").is_empty());
+        assert!(urls("https:// no host").is_empty());
         assert!(urls("xhttp://nope.com").is_empty());
-        assert!(urls("solo texto, nada de links").is_empty());
+        assert!(urls("just text, no links here").is_empty());
     }
 
     #[test]

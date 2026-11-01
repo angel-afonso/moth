@@ -1,9 +1,9 @@
-//! Caracteres que deben llenar la celda entera: bloques (U+2580–259F) y líneas de caja
-//! (U+2500–257F). Con una fuente, el glifo solo cubre la altura de la letra y quedan huecos
-//! entre filas (y algunos ni siquiera existen en Geist Mono), así que se dibujan como
-//! rectángulos sobre la geometría de la celda, como hacen Zed, kitty o Ghostty.
+//! Characters that must fill the whole cell: blocks (U+2580–259F) and box-drawing lines
+//! (U+2500–257F). From a font, the glyph only covers the letter height and leaves gaps
+//! between rows (and some don't even exist in Geist Mono), so they're drawn as rectangles
+//! on the cell geometry, like Zed, kitty and Ghostty do.
 
-/// Rectángulo relativo al origen de la celda, en píxeles, con su opacidad.
+/// Rectangle relative to the cell origin, in pixels, with its opacity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
     pub x0: f32,
@@ -23,8 +23,8 @@ fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
     }
 }
 
-/// Rectángulos para dibujar `c` en una celda de `w`×`h` píxeles, o `None` si se dibuja con
-/// la fuente. `stroke` es el grosor de una línea fina.
+/// Rectangles to draw `c` in a `w`×`h` pixel cell, or `None` if it's drawn with the font.
+/// `stroke` is the thickness of a thin line.
 pub fn custom_glyph(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     match c as u32 {
         0x2580..=0x259F => block(c, w, h),
@@ -76,7 +76,7 @@ fn block(c: char, w: f32, h: f32) -> Option<Vec<Rect>> {
     })
 }
 
-/// Peso de cada brazo de una línea de caja: 0 nada, 1 fino, 2 grueso.
+/// Weight of each arm of a box-drawing line: 0 none, 1 light, 2 heavy.
 #[derive(Clone, Copy)]
 struct Arms {
     up: u8,
@@ -132,8 +132,8 @@ fn box_drawing(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     let arms = arms(c)?;
     let (cx, cy) = (w / 2., h / 2.);
     let thickness = |weight: u8| if weight == 2 { stroke * 2. } else { stroke };
-    // El centro se extiende medio grosor (del brazo perpendicular más grueso) para que las
-    // esquinas y cruces queden cerradas.
+    // The center extends by half the thickness (of the heaviest perpendicular arm) so that
+    // corners and crossings are closed.
     let vertical = thickness(arms.up.max(arms.down));
     let horizontal = thickness(arms.left.max(arms.right));
     let mut rects = Vec::new();
@@ -156,7 +156,7 @@ fn box_drawing(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     Some(rects)
 }
 
-/// Líneas dobles rectas y esquinas (`═ ║ ╔ ╗ ╚ ╝`); el resto de las dobles, con la fuente.
+/// Straight double lines and corners (`═ ║ ╔ ╗ ╚ ╝`); other double lines use the font.
 fn double_line(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     let (cx, cy) = (w / 2., h / 2.);
     let g = stroke.max(1.);
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn quadrants_used_by_the_claude_logo() {
-        // ▛ = arriba a la izquierda, arriba a la derecha y abajo a la izquierda.
+        // ▛ = upper left, upper right and lower left.
         let q = custom_glyph('▛', W, H, 1.).unwrap();
         assert!(covers(&q, 1., 1.) && covers(&q, W - 1., 1.) && covers(&q, 1., H - 1.));
         assert!(!covers(&q, W - 1., H - 1.));

@@ -1,8 +1,8 @@
-//! Identidad de los hosts remotos: etiqueta, color y si es de producción.
+//! Remote host identity: label, color and whether it's production.
 //!
-//! Se configura en `~/Library/Application Support/moth/hosts.json`. Cada regla se
-//! compara (glob con `*` y `?`) contra el alias que escribiste y contra el hostname real; gana
-//! la primera que coincide. Sin ese archivo se usan reglas por defecto para `prod` y `staging`.
+//! Configured in `~/Library/Application Support/moth/hosts.json`. Each rule is matched (glob
+//! with `*` and `?`) against the alias you typed and against the real hostname; the first match
+//! wins. Without that file, built-in rules for `prod` and `staging` are used.
 //!
 //! ```json
 //! { "hosts": [
@@ -11,8 +11,8 @@
 //! ] }
 //! ```
 //!
-//! `color` puede ser un color ANSI del tema (`red`, `green`, `yellow`, `blue`, `magenta`,
-//! `cyan`) o un hex `#RRGGBB`.
+//! `color` can be an ANSI color from the theme (`red`, `green`, `yellow`, `blue`, `magenta`,
+//! `cyan`) or a `#RRGGBB` hex value.
 
 use std::path::{Path, PathBuf};
 
@@ -44,7 +44,7 @@ pub enum RulesSource {
     File(PathBuf),
 }
 
-/// Reglas activas (global).
+/// Active rules (global).
 #[derive(Clone, Debug)]
 pub struct HostRules {
     pub rules: Vec<HostRule>,
@@ -53,7 +53,7 @@ pub struct HostRules {
 
 impl Global for HostRules {}
 
-/// Color de un host: del tema (ANSI) o fijo.
+/// A host's color: from the theme (ANSI) or fixed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HostColor {
     Ansi(usize),
@@ -69,13 +69,13 @@ impl HostColor {
     }
 }
 
-/// Cómo se muestra un host: chip, color y si se trata como producción.
+/// How a host is shown: chip, color and whether it's treated as production.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostIdentity {
     pub label: Option<String>,
     pub color: HostColor,
     pub production: bool,
-    /// Patrón de la regla que coincidió, para explicarlo en la franja.
+    /// Pattern of the rule that matched, shown in the banner to explain why.
     pub matched: Option<String>,
 }
 
@@ -117,7 +117,7 @@ pub fn load_rules(path: Option<&Path>) -> HostRules {
                 };
             }
             Err(err) => {
-                crate::log::error(format!("hosts.json inválido ({}): {err}", path.display()))
+                crate::log::error(format!("invalid hosts.json ({}): {err}", path.display()))
             }
         }
     }
@@ -127,13 +127,13 @@ pub fn load_rules(path: Option<&Path>) -> HostRules {
     }
 }
 
-/// Vuelve a leer `hosts.json` (se llama al abrir sesiones y "Conectar a…").
+/// Re-reads `hosts.json` (called when opening sessions and from "Connect to…").
 pub fn reload(cx: &mut App) {
     let rules = load_rules(hosts_file().as_deref());
     cx.set_global(rules);
 }
 
-/// Glob simple sin distinguir mayúsculas: `*` cualquier cosa, `?` un carácter.
+/// Simple case-insensitive glob: `*` matches anything, `?` a single character.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let t: Vec<char> = text.to_lowercase().chars().collect();
@@ -175,7 +175,7 @@ fn parse_color(name: &str) -> Option<HostColor> {
     Some(HostColor::Fixed(gpui::rgb(value).into()))
 }
 
-/// Color estable por nombre para hosts sin regla (nunca rojo, que queda para producción).
+/// Stable per-name color for hosts without a rule (never red, which is reserved for production).
 fn hashed_color(name: &str) -> HostColor {
     const PALETTE: [usize; 4] = [4, 5, 6, 3];
     let hash = name
@@ -268,7 +268,7 @@ mod tests {
         let db = rules.identify("db-main", None);
         assert!(db.production);
         assert!(matches!(db.color, HostColor::Fixed(_)));
-        // La regla por defecto de `prod` ya no aplica.
+        // The built-in `prod` rule no longer applies.
         assert!(!rules.identify("prod-web", None).production);
         std::fs::remove_dir_all(dir).ok();
     }

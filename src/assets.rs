@@ -4,8 +4,8 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AssetSource, SharedString};
 use rust_embed::RustEmbed;
 
-/// Íconos (copiados de Zed, los que espera `ui::IconName`), fuentes Geist, scripts de
-/// integración con la shell y temas, embebidos en el binario.
+/// Icons (copied from Zed, the ones `ui::IconName` expects), Geist fonts, shell integration
+/// scripts and themes, embedded in the binary.
 #[derive(RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
@@ -36,6 +36,6 @@ impl Assets {
             .collect::<Vec<_>>();
         cx.text_system()
             .add_fonts(fonts)
-            .context("no se pudieron registrar las fuentes Geist")
+            .context("couldn't register the Geist fonts")
     }
 }

@@ -1,5 +1,5 @@
-//! Campo de texto de una línea para los buscadores. El crate `ui` de Zed no trae uno
-//! (Zed usa su editor), así que este cubre lo justo: cursor, IME, borrar, mover y pegar.
+//! Single-line text field for the pickers. Zed's `ui` crate doesn't ship one (Zed uses its
+//! editor), so this covers just the basics: cursor, IME, delete, move and paste.
 
 use std::ops::Range;
 
@@ -48,13 +48,13 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Se emite cada vez que cambia el texto.
+/// Emitted whenever the text changes.
 pub struct Changed;
 
 pub struct TextInput {
     focus_handle: FocusHandle,
     text: String,
-    /// Posición del cursor en bytes.
+    /// Cursor position in bytes.
     cursor: usize,
     marked: Option<Range<usize>>,
     placeholder: SharedString,
@@ -240,7 +240,7 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(&r))
             .or(self.marked.take())
             .unwrap_or(self.cursor..self.cursor);
-        // Una sola línea: los saltos se descartan.
+        // Single line: newlines are dropped.
         let new_text = new_text.replace(['\n', '\r'], "");
         self.replace(range, &new_text, cx);
     }

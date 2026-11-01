@@ -1,9 +1,9 @@
-//! Completions de la línea en edición: qué se puede escribir en la posición del cursor.
+//! Completions for the line being edited: what can be typed at the cursor position.
 //!
-//! Las fuentes son las especificaciones de `assets/completions/specs.json` (subcomandos,
-//! flags y tipo de argumento de cada herramienta), los comandos del PATH, las ramas de git,
-//! los scripts de `package.json`, los hosts de SSH, las rutas y el historial. Todo lo externo
-//! llega por `Context`, así el motor se prueba sin disco.
+//! The sources are the specs in `assets/completions/specs.json` (each tool's subcommands,
+//! flags and argument type), commands on the PATH, git branches, `package.json` scripts,
+//! SSH hosts, paths and history. Everything external comes in through `Context`, so the
+//! engine can be tested without touching the disk.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -21,7 +21,7 @@ pub struct Spec {
     pub description: Option<String>,
     #[serde(default)]
     pub usage: Option<String>,
-    /// Qué esperan los argumentos: `path`, `dir`, `branch`, `script`, `host`, `command`.
+    /// What the arguments expect: `path`, `dir`, `branch`, `script`, `host`, `command`.
     #[serde(default)]
     pub args: Option<String>,
     #[serde(default)]
@@ -46,7 +46,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(load_specs());
 }
 
-/// Documentación para el panel lateral.
+/// Documentation for the side pane.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Doc {
     pub title: String,
@@ -57,45 +57,45 @@ pub struct Doc {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Candidate {
-    /// Lo que se escribe en la línea.
+    /// What gets written to the line.
     pub text: String,
-    /// Lo que se muestra (puede diferir de `text`, p. ej. en rutas con espacios).
+    /// What's displayed (may differ from `text`, e.g. for paths with spaces).
     pub label: String,
     pub kind: SuggestionKind,
     pub description: Option<String>,
     pub doc: Option<Doc>,
-    /// Caracteres de `label` que coinciden con lo escrito (en bytes), para resaltarlos.
+    /// Characters of `label` that match the typed text (byte offsets), for highlighting.
     pub positions: Vec<usize>,
     pub score: i32,
-    /// Desde qué byte de la línea se reemplaza (el inicio de la palabra, o 0 en el historial).
+    /// Byte offset in the line where replacement starts (the word start, or 0 for history).
     pub replace_from: usize,
-    /// Agregar un espacio después (no en carpetas, que siguen con `/`).
+    /// Append a space afterwards (not for folders, which continue with `/`).
     pub append_space: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Completion {
-    /// La palabra que se está completando.
+    /// The word being completed.
     pub token: String,
     pub items: Vec<Candidate>,
 }
 
 pub struct Context<'a> {
     pub buffer: &'a str,
-    /// Posición del cursor en bytes.
+    /// Cursor position in bytes.
     pub cursor: usize,
     pub cwd: Option<&'a Path>,
     pub specs: &'a Specs,
     pub branches: &'a [String],
     pub current_branch: Option<&'a str>,
-    /// Historial, el más reciente al final.
+    /// History, most recent last.
     pub history: &'a [String],
     pub hosts: &'a [(String, String)],
-    /// Comandos del PATH, alias y funciones que empiezan con el prefijo.
+    /// PATH commands, aliases and functions that start with the prefix.
     pub commands: &'a dyn Fn(&str) -> Vec<String>,
-    /// Entradas de una carpeta: (nombre, es carpeta).
+    /// Entries of a folder: (name, is folder).
     pub list_dir: &'a dyn Fn(&Path) -> Vec<(String, bool)>,
-    /// Scripts de `package.json` en la carpeta actual: (nombre, comando).
+    /// `package.json` scripts in the current folder: (name, command).
     pub scripts: &'a dyn Fn() -> Vec<(String, String)>,
 }
 
@@ -104,7 +104,7 @@ const PRECOMMANDS: &[&str] = &[
 ];
 const MAX_ITEMS: usize = 60;
 
-/// Palabras de un segmento con su posición de inicio, respetando comillas.
+/// Words of a segment with their start offsets, respecting quotes.
 fn words(text: &str, offset: usize) -> Vec<(usize, String)> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -145,7 +145,7 @@ fn words(text: &str, offset: usize) -> Vec<(usize, String)> {
     words
 }
 
-/// Inicio del último comando de la línea (después de `|`, `;`, `&&`, `||`, `(`).
+/// Start of the last command on the line (after `|`, `;`, `&&`, `||`, `(`).
 fn segment_start(text: &str) -> usize {
     let mut start = 0;
     let mut quote: Option<char> = None;
@@ -206,7 +206,7 @@ struct Builder<'a> {
 }
 
 impl Builder<'_> {
-    /// Agrega un candidato si coincide con lo escrito. Con la palabra vacía entra todo.
+    /// Adds a candidate if it matches the typed text. With an empty word, everything matches.
     fn push(
         &mut self,
         text: String,
@@ -221,7 +221,7 @@ impl Builder<'_> {
         let Some(m) = fuzzy_match(query, target) else {
             return;
         };
-        // El matcher trabaja sin los guiones iniciales; las posiciones se corren.
+        // The matcher works without the leading dashes, so positions are shifted back.
         let shift = label.len() - target.len();
         let prefix_bonus = if label.starts_with(self.token) {
             500
@@ -252,7 +252,7 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
     } else {
         words.pop()?
     };
-    // Prefijos como `sudo` o `FOO=1` no cuentan: lo que sigue vuelve a ser un comando.
+    // Prefixes like `sudo` or `FOO=1` don't count: what follows is a command again.
     while let Some((_, first)) = words.first() {
         if PRECOMMANDS.contains(&first.as_str()) || (first.contains('=') && !first.starts_with('-'))
         {
@@ -331,7 +331,11 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                 Some("branch") => {
                     for branch in ctx.branches {
                         let current = ctx.current_branch == Some(branch.as_str());
-                        let description = if current { "rama actual" } else { "rama local" };
+                        let description = if current {
+                            "current branch"
+                        } else {
+                            "local branch"
+                        };
                         b.push(
                             escape(branch),
                             branch.clone(),
@@ -385,7 +389,7 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
         }
     }
 
-    // Líneas del historial que empiezan con lo escrito, al final de la lista.
+    // History lines that start with the typed text, at the end of the list.
     let typed = before.trim_start();
     if typed.len() >= 2 {
         let mut seen = Vec::new();
@@ -396,7 +400,7 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                     text: entry.clone(),
                     label: entry.clone(),
                     kind: SuggestionKind::History,
-                    description: Some("del historial".into()),
+                    description: Some("from history".into()),
                     doc: None,
                     positions: (0..typed.len()).collect(),
                     score: i32::MIN / 2,
@@ -434,7 +438,7 @@ fn complete_paths(
     };
     let mut entries = list_dir(&base);
     entries.sort();
-    // El filtro difuso trabaja sobre el nombre; la palabra completa se arma después.
+    // The fuzzy filter works on the name; the full word is built afterwards.
     let mut names = Builder {
         token: prefix,
         replace_from: b.replace_from,
@@ -450,7 +454,7 @@ fn complete_paths(
             if is_dir { "/" } else { "" }
         );
         let label = format!("{name}{}", if is_dir { "/" } else { "" });
-        let description = Some(if is_dir { "carpeta" } else { "archivo" }.to_string());
+        let description = Some(if is_dir { "folder" } else { "file" }.to_string());
         names.push(
             text,
             label,
@@ -463,7 +467,7 @@ fn complete_paths(
     b.items.extend(names.items);
 }
 
-/// La línea después de aceptar `candidate`, y dónde queda el cursor (en caracteres).
+/// The line after accepting `candidate`, and where the cursor ends up (in characters).
 pub fn apply(buffer: &str, cursor: usize, candidate: &Candidate) -> (String, usize) {
     let rest = &buffer[cursor.min(buffer.len())..];
     let mut inserted = candidate.text.clone();
@@ -475,7 +479,7 @@ pub fn apply(buffer: &str, cursor: usize, candidate: &Candidate) -> (String, usi
     (format!("{head}{inserted}{rest}"), new_cursor)
 }
 
-/// Scripts de `package.json` en `dir`.
+/// `package.json` scripts in `dir`.
 pub fn package_scripts(dir: &Path) -> Vec<(String, String)> {
     let Ok(text) = std::fs::read_to_string(dir.join("package.json")) else {
         return Vec::new();
@@ -500,7 +504,7 @@ pub fn package_scripts(dir: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// Entradas de una carpeta (como mucho 500), para completar rutas.
+/// Entries of a folder (at most 500), for path completion.
 pub fn list_dir(dir: &Path) -> Vec<(String, bool)> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -545,7 +549,7 @@ mod tests {
             if dir.ends_with("src") {
                 vec![
                     ("main.rs".to_string(), false),
-                    ("mi archivo.rs".to_string(), false),
+                    ("migration notes.rs".to_string(), false),
                 ]
             } else {
                 vec![
@@ -565,7 +569,7 @@ mod tests {
         let ctx = Context {
             buffer,
             cursor,
-            cwd: Some(Path::new("/proyecto")),
+            cwd: Some(Path::new("/project")),
             specs: &specs,
             branches: &branches,
             current_branch: Some("main"),
@@ -628,17 +632,17 @@ mod tests {
         assert_eq!(texts(&run("git switch fe")), vec!["feat/tabs"]);
         assert_eq!(texts(&run("npm run b")), vec!["build"]);
         assert_eq!(texts(&run("ssh pro")), vec!["prod-db"]);
-        // `cd` solo ofrece carpetas, y sin ocultos.
+        // `cd` only offers folders, and no hidden ones.
         assert_eq!(texts(&run("cd ")), vec!["src/"]);
         assert_eq!(texts(&run("cd .g")), vec![".git/"]);
     }
 
     #[test]
     fn paths_inside_folders_escape_spaces() {
-        // Primero el que empieza igual; `main.rs` también coincide (difuso), pero más abajo.
+        // Prefix matches first; `main.rs` also matches (fuzzy), but ranks lower.
         assert_eq!(
             texts(&run("cat src/mi"))[..2],
-            ["src/mi\\ archivo.rs", "src/main.rs"]
+            ["src/migration\\ notes.rs", "src/main.rs"]
         );
         let items = run("cat ");
         assert!(texts(&items).contains(&"src/") && texts(&items).contains(&"Cargo.toml"));
@@ -665,7 +669,7 @@ mod tests {
             append_space: true,
         };
         assert_eq!(apply("git ch", 6, &candidate), ("git checkout ".into(), 13));
-        // Con texto después del cursor, se conserva y el cursor queda tras lo insertado.
+        // Text after the cursor is kept, and the cursor lands right after the insertion.
         assert_eq!(
             apply("git ch main", 6, &candidate),
             ("git checkout main".into(), 12)
@@ -681,7 +685,7 @@ mod tests {
 
     #[test]
     fn completes_in_the_middle_of_the_line() {
-        // Cursor después de `git ch`, con más texto a la derecha.
+        // Cursor after `git ch`, with more text to the right.
         let items = run_at("git ch main", 6);
         assert_eq!(items[0].0, "checkout");
     }

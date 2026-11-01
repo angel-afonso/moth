@@ -1,5 +1,5 @@
-//! Notificaciones de macOS. La app se ejecuta como binario suelto, sin bundle firmado, y así
-//! `UNUserNotificationCenter` no funciona: se usa `osascript`, que sí.
+//! macOS notifications. The app runs as a bare binary without a signed bundle, so
+//! `UNUserNotificationCenter` doesn't work; `osascript` does.
 
 pub fn send(title: &str, body: &str) {
     let script = format!(
@@ -14,15 +14,15 @@ pub fn send(title: &str, body: &str) {
         .stderr(std::process::Stdio::null())
         .spawn();
     match child {
-        // Se espera en otro hilo para no dejar el proceso zombi.
+        // Reap it on another thread so it doesn't become a zombie.
         Ok(mut child) => {
             std::thread::spawn(move || child.wait());
         }
-        Err(err) => crate::log::error(format!("no se pudo mostrar la notificación: {err}")),
+        Err(err) => crate::log::error(format!("couldn't show the notification: {err}")),
     }
 }
 
-/// Un string de AppleScript: entre comillas, con `\` y `"` escapados.
+/// An AppleScript string: quoted, with `\` and `"` escaped.
 fn quote(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -32,8 +32,8 @@ mod tests {
     #[test]
     fn quotes_applescript_strings() {
         assert_eq!(
-            super::quote(r#"echo "hola" \ chau"#),
-            r#""echo \"hola\" \\ chau""#
+            super::quote(r#"echo "hello" \ bye"#),
+            r#""echo \"hello\" \\ bye""#
         );
     }
 }

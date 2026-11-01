@@ -1,4 +1,4 @@
-//! Vista de una sesión: pinta la grilla de alacritty directamente con el text system de gpui.
+//! View for a single session: paints the alacritty grid directly with gpui's text system.
 
 use std::{
     cell::Cell,
@@ -71,7 +71,7 @@ struct OutputSearch {
     _changed: Subscription,
 }
 
-/// Coincidencia de ⌘F, con el tamaño del scrollback de cuando se encontró.
+/// A ⌘F match, along with the scrollback size at the time it was found.
 #[derive(Clone)]
 struct SearchMatch {
     range: std::ops::RangeInclusive<AlacPoint>,
@@ -86,8 +86,8 @@ impl SearchMatch {
         }
     }
 
-    /// Dónde está ahora: cada línea que entra al scrollback corre la grilla una fila hacia
-    /// arriba. Si salió del scrollback o se limpió la pantalla, ya no está.
+    /// Where it is now: every line that enters the scrollback shifts the grid up one row.
+    /// If it fell out of the scrollback or the screen was cleared, it's gone.
     fn resolve(&self, term: &Term<Listener>) -> Option<std::ops::RangeInclusive<AlacPoint>> {
         let shift = term.grid().history_size().checked_sub(self.history_size)? as i32;
         let moved = |point: &AlacPoint| AlacPoint::new(point.line - shift, point.column);
@@ -111,28 +111,28 @@ pub struct TerminalView {
     terminal: Entity<Terminal>,
     search: Option<OutputSearch>,
     focus_handle: FocusHandle,
-    /// Texto en composición del IME (p. ej. una tilde muerta antes de la vocal).
+    /// IME composition text (e.g. a dead-key accent before the vowel).
     marked_text: Option<String>,
     scroll_remainder: f32,
-    /// Texto de varias líneas esperando confirmación antes de pegarse en producción.
+    /// Multi-line text awaiting confirmation before being pasted into production.
     pending_paste: Option<String>,
-    /// Geometría de la grilla del último frame, para traducir clics a celdas.
+    /// Grid geometry from the last frame, used to map clicks to cells.
     geometry: Rc<Cell<Option<GridGeometry>>>,
-    /// Link bajo el mouse: se subraya y el cursor pasa a ser una mano.
+    /// Link under the mouse: underlined, and the cursor becomes a pointing hand.
     hovered_link: Option<HoveredLink>,
-    /// Link donde se apretó el botón; se abre si se suelta sobre el mismo.
+    /// Link where the button was pressed; opens if released over the same link.
     link_press: Option<LinkTarget>,
-    /// Botón izquierdo apretado fuera de un link: punto de partida de la selección.
+    /// Left button pressed outside a link: the selection's starting point.
     press: Option<Press>,
-    /// El clic izquierdo actual se reportó al programa (vim, htop…).
+    /// The current left click was reported to the program (vim, htop…).
     reported_press: bool,
-    /// Última celda reportada en movimiento, para no repetir eventos dentro de la misma celda.
+    /// Last cell reported on motion, so we don't repeat events within the same cell.
     last_motion_cell: Option<(usize, usize)>,
-    /// Popup de completions abierto.
+    /// Open completions popup.
     completion: Option<CompletionMenu>,
-    /// Después de completar una carpeta, reabrir el popup cuando la línea quede así.
+    /// After completing a folder, reopen the popup once the line reads like this.
     reopen_completion_on: Option<String>,
-    /// Bloque elegido con ⌘↑/⌘↓ (su fila de entrada): se resalta y ⌘⇧C copia su salida.
+    /// Command block selected with ⌘↑/⌘↓ (its input row): highlighted; ⌘⇧C copies its output.
     selected_block: Option<blocks::Anchor>,
     _observe: Subscription,
 }
@@ -142,9 +142,9 @@ const COMPLETION_ROWS: usize = 8;
 struct CompletionMenu {
     completion: completions::Completion,
     selected: usize,
-    /// Primera fila visible.
+    /// First visible row.
     top: usize,
-    /// La línea con la que se calcularon los candidatos.
+    /// The line the candidates were computed from.
     line: EditLine,
 }
 
@@ -164,11 +164,11 @@ impl CompletionMenu {
 struct Press {
     point: AlacPoint,
     side: Side,
-    /// Ya hay selección (por arrastre, doble/triple clic o Shift+clic).
+    /// A selection already exists (from a drag, double/triple click, or Shift+click).
     dragged: bool,
 }
 
-/// Adónde lleva un link: una URL (navegador) o un archivo (editor).
+/// Where a link leads: a URL (browser) or a file (editor).
 #[derive(Clone, Debug, PartialEq)]
 enum LinkTarget {
     Url(String),
@@ -178,7 +178,7 @@ enum LinkTarget {
 #[derive(Clone, Debug, PartialEq)]
 struct HoveredLink {
     target: LinkTarget,
-    /// Celdas (línea, columna) en coordenadas de la grilla.
+    /// Cells (line, column) in grid coordinates.
     cells: Vec<(i32, usize)>,
 }
 
@@ -234,7 +234,7 @@ impl TerminalView {
     fn find_output(&mut self, _: &FindOutput, window: &mut Window, cx: &mut Context<Self>) {
         if self.search.is_none() {
             self.completion = None;
-            let input = cx.new(|cx| crate::text_input::TextInput::new("Buscar en la salida…", cx));
+            let input = cx.new(|cx| crate::text_input::TextInput::new("Find in output…", cx));
             let changed = cx.subscribe(&input, |this, _, _: &crate::text_input::Changed, cx| {
                 this.find_match(false, true, cx);
             });
@@ -267,7 +267,7 @@ impl TerminalView {
         }
         let Ok(mut regex) = RegexSearch::new(&literal_pattern(&query)) else {
             search.current = None;
-            search.message = "Búsqueda demasiado larga".into();
+            search.message = "Search too long".into();
             cx.notify();
             return;
         };
@@ -300,9 +300,9 @@ impl TerminalView {
         search.current = found.map(|range| SearchMatch::new(range, &term));
         search.message = if let Some(found) = &search.current {
             term.scroll_to_point(*found.range.start());
-            "⏎ siguiente · ⇧⏎ anterior · esc cerrar".into()
+            "⏎ next · ⇧⏎ previous · esc close".into()
         } else {
-            "Sin coincidencias".into()
+            "No matches".into()
         };
         cx.notify();
     }
@@ -313,8 +313,8 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// ⌘↑/⌘↓: elige el comando anterior o siguiente y lo lleva al borde de arriba. Pasado el
-    /// último vuelve al final de la salida.
+    /// ⌘↑/⌘↓: selects the previous or next command and scrolls it to the top edge. Past the
+    /// last one, returns to the end of the output.
     fn select_command(&mut self, previous: bool, cx: &mut Context<Self>) {
         let term = self.terminal.read(cx).term.clone();
         let mut term = term.lock();
@@ -338,7 +338,7 @@ impl TerminalView {
                 self.selected_block = Some(blocks::Anchor::new(block.input, &term));
                 let start =
                     blocks::trimmed_rows(&term, block).map_or(block.start, |(start, _)| start);
-                // Con el prompt en la primera fila visible (o lo más arriba que se pueda).
+                // With the prompt on the first visible row (or as high up as possible).
                 let offset = (-start.0).clamp(0, term.grid().history_size() as i32);
                 let delta = offset - term.grid().display_offset() as i32;
                 term.scroll_display(Scroll::Delta(delta));
@@ -351,7 +351,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// ⌘⇧C: copia la salida del comando elegido, o la del último.
+    /// ⌘⇧C: copies the output of the selected command, or of the last one.
     fn copy_command_output(
         &mut self,
         _: &CopyCommandOutput,
@@ -391,7 +391,7 @@ impl TerminalView {
         }
         let keystroke = &event.keystroke;
         let m = &keystroke.modifiers;
-        // Shell terminada: ⏎ abre otra; los atajos con ⌘ (⌘W) siguen funcionando.
+        // Shell exited: ⏎ opens another; ⌘ shortcuts (⌘W) keep working.
         if self.terminal.read(cx).has_exited() {
             if keystroke.key == "enter" && !(m.control || m.alt || m.shift || m.platform) {
                 window.dispatch_action(Box::new(RestartShell), cx);
@@ -401,7 +401,7 @@ impl TerminalView {
             }
             return;
         }
-        // Con la confirmación de pegado abierta, el teclado no llega al servidor.
+        // While the paste confirmation is open, keystrokes don't reach the server.
         if self.pending_paste.is_some() {
             match keystroke.key.as_str() {
                 "escape" => self.cancel_paste(cx),
@@ -414,8 +414,8 @@ impl TerminalView {
         }
         let plain = !(m.control || m.alt || m.shift || m.platform);
 
-        // Con el popup abierto: flechas para elegir, Tab completa, ⏎ completa y ejecuta.
-        // El resto de las teclas sigue a la shell y el popup se refiltra con la línea nueva.
+        // With the popup open: arrows to pick, Tab completes, ⏎ completes and runs.
+        // Other keys go to the shell and the popup refilters against the new line.
         if self.completion.is_some() {
             let handled = match (keystroke.key.as_str(), plain) {
                 ("up", true) => {
@@ -484,8 +484,8 @@ impl TerminalView {
         }
     }
 
-    /// Celda de la grilla bajo `position` y de qué lado de ella cayó. Con `clamp`, un punto
-    /// fuera de la pantalla se lleva al borde (para arrastrar una selección más allá).
+    /// Grid cell under `position` and which side of it was hit. With `clamp`, a point
+    /// off-screen is clamped to the edge (for dragging a selection past it).
     fn grid_point_side(
         &self,
         position: Point<Pixels>,
@@ -521,8 +521,8 @@ impl TerminalView {
             .map(|(point, _)| point)
     }
 
-    /// Link bajo el mouse. En la línea que se está escribiendo no hay links: ahí el clic
-    /// mueve el cursor.
+    /// Link under the mouse. The line being typed has no links: clicking there
+    /// moves the cursor.
     fn link_under(&self, position: Point<Pixels>, cx: &App) -> Option<HoveredLink> {
         let terminal = self.terminal.read(cx);
         let term = terminal.term.clone();
@@ -537,7 +537,7 @@ impl TerminalView {
         {
             return None;
         }
-        // En SSH las rutas son del servidor: no hay archivo local que abrir.
+        // Over SSH the paths belong to the server: there's no local file to open.
         let cwd = terminal
             .shell()
             .cwd
@@ -546,14 +546,14 @@ impl TerminalView {
         link_at(&term, point, cwd)
     }
 
-    /// El programa pide el mouse (vim, htop…) y no se forzó la selección local con Shift.
+    /// The program wants the mouse (vim, htop…) and local selection wasn't forced with Shift.
     fn reports_mouse(&self, shift: bool, cx: &App) -> bool {
         let term = self.terminal.read(cx).term.clone();
         let term = term.lock();
         !shift && mouse::wants_mouse(*term.mode()) && term.grid().display_offset() == 0
     }
 
-    /// Manda el evento al programa si su modo de mouse lo pide.
+    /// Sends the event to the program if its mouse mode asks for it.
     fn send_mouse(
         &mut self,
         button: Option<mouse::Button>,
@@ -604,7 +604,7 @@ impl TerminalView {
             );
             return;
         }
-        // El clic que solo activa la ventana no abre links.
+        // A click that only activates the window doesn't open links.
         if !event.first_mouse
             && !shift
             && event.click_count == 1
@@ -626,9 +626,9 @@ impl TerminalView {
         };
         let mut dragged = true;
         match selection_type {
-            // Doble clic: palabra; triple: línea. Arrastrar después extiende de a palabras/líneas.
+            // Double click: word; triple: line. Dragging afterwards extends by words/lines.
             Some(ty) => term.selection = Some(Selection::new(ty, point, side)),
-            // Shift+clic extiende la selección existente.
+            // Shift+click extends the existing selection.
             None if shift && term.selection.is_some() => {
                 if let Some(selection) = term.selection.as_mut() {
                     selection.update(point, side);
@@ -740,7 +740,7 @@ impl TerminalView {
         }
     }
 
-    /// Clic derecho o central: solo interesan a los programas que piden el mouse.
+    /// Right or middle click: only relevant to programs that want the mouse.
     fn other_button(
         &mut self,
         button: mouse::Button,
@@ -754,8 +754,8 @@ impl TerminalView {
         }
     }
 
-    /// Clic en la línea que se está escribiendo: mueve el cursor de zsh hasta ahí, como en un
-    /// editor, mandando las flechas necesarias.
+    /// Click on the line being typed: moves zsh's cursor there, like in an
+    /// editor, by sending the needed arrow keys.
     fn move_edit_cursor(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(geometry) = self.geometry.get() else {
             return;
@@ -831,7 +831,7 @@ impl TerminalView {
             return;
         }
 
-        // Si el programa pide el mouse, la rueda va como eventos de rueda.
+        // If the program wants the mouse, the wheel is sent as wheel events.
         if self.reports_mouse(event.modifiers.shift, cx) {
             let button = if lines > 0. {
                 mouse::Button::WheelUp
@@ -852,7 +852,7 @@ impl TerminalView {
 
         let mode = self.terminal.read(cx).mode();
         if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
-            // En pantallas completas (less, vim) la rueda se traduce a flechas.
+            // In full-screen programs (less, vim) the wheel is translated to arrow keys.
             let app = mode.contains(TermMode::APP_CURSOR);
             let key = match (lines > 0., app) {
                 (true, true) => "\x1bOA",
@@ -878,7 +878,7 @@ impl TerminalView {
             .remote
             .as_ref()
             .is_some_and(|remote| remote.identity.production);
-        // Varias líneas en producción se ejecutarían una tras otra: se pide confirmación.
+        // Multiple lines in production would run one after another: ask for confirmation.
         if production && text.trim_end().contains('\n') {
             self.pending_paste = Some(text);
             cx.notify();
@@ -899,8 +899,8 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Tab: abre el popup. Con un solo candidato lo completa directo; sin candidatos devuelve
-    /// `false` y el Tab sigue a la shell (su completion de siempre).
+    /// Tab: opens the popup. With a single candidate it completes directly; with none it returns
+    /// `false` and the Tab goes to the shell (its usual completion).
     fn open_completions(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(line) = self.terminal.read(cx).shell().line.clone() else {
             return false;
@@ -923,7 +923,7 @@ impl TerminalView {
         true
     }
 
-    /// Escribe el candidato (el elegido si no se pasa otro) en la línea; con `run`, ejecuta.
+    /// Writes the candidate (the selected one if none is given) into the line; with `run`, runs it.
     fn accept_completion(
         &mut self,
         candidate: Option<completions::Candidate>,
@@ -954,14 +954,14 @@ impl TerminalView {
                 t.input(left.repeat(back).into_bytes(), cx);
             }
         });
-        // Una carpeta sigue: al quedar escrita, se vuelve a abrir el popup con su contenido.
+        // A folder continues: once it's written, the popup reopens with its contents.
         if !run && candidate.text.ends_with('/') {
             self.reopen_completion_on = Some(buffer);
         }
         cx.notify();
     }
 
-    /// Mantiene el popup al día con la línea que reporta la shell.
+    /// Keeps the popup in sync with the line the shell reports.
     fn sync_completion(&mut self, cx: &mut Context<Self>) {
         let terminal = self.terminal.read(cx);
         let line = terminal
@@ -1007,7 +1007,7 @@ impl TerminalView {
         }
     }
 
-    /// Lo que falta del candidato elegido para mostrarlo en gris en la línea.
+    /// The rest of the selected candidate, shown in gray on the line.
     fn completion_ghost(&self) -> Option<String> {
         let menu = self.completion.as_ref()?;
         let candidate = menu.completion.items.get(menu.selected)?;
@@ -1036,7 +1036,7 @@ impl TerminalView {
         let ui = cx.tokens().ui.clone();
         let warning = cx.tokens().status.warning;
 
-        // Ancla: la celda donde empieza la palabra que se completa.
+        // Anchor: the cell where the word being completed starts.
         let anchor_cell = {
             let term = self.terminal.read(cx).term.clone();
             let term = term.lock();
@@ -1157,15 +1157,18 @@ impl TerminalView {
                     .py(px(7.))
                     .border_t_1()
                     .border_color(ui.divider)
-                    .child(hint("↑↓", "navegar"))
-                    .child(hint("Tab", "completar"))
-                    .child(hint("⏎", "ejecutar"))
-                    .child(hint("esc", "cerrar"))
+                    .child(hint("↑↓", "navigate"))
+                    .child(hint("Tab", "complete"))
+                    .child(hint("⏎", "run"))
+                    .child(hint("esc", "close"))
                     .child(div().flex_1())
                     .child(
-                        Label::new(format!("{} resultados", items.len()))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Placeholder),
+                        Label::new(match items.len() {
+                            1 => "1 result".to_string(),
+                            count => format!("{count} results"),
+                        })
+                        .size(LabelSize::XSmall)
+                        .color(Color::Placeholder),
                     ),
             );
 
@@ -1284,7 +1287,7 @@ impl TerminalView {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Label::new(format!("¿Pegar {lines} líneas en")))
+                                .child(Label::new(format!("Paste {lines} lines into")))
                                 .child(
                                     h_flex()
                                         .child(
@@ -1309,7 +1312,7 @@ impl TerminalView {
                         ),
                 )
                 .child(
-                    Button::new("paste-cancel", "Cancelar")
+                    Button::new("paste-cancel", "Cancel")
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Large)
                         .label_size(LabelSize::Small)
@@ -1317,7 +1320,7 @@ impl TerminalView {
                         .on_click(cx.listener(|this, _, _, cx| this.cancel_paste(cx))),
                 )
                 .child(
-                    Button::new("paste-confirm", "Pegar igual")
+                    Button::new("paste-confirm", "Paste Anyway")
                         .style(ButtonStyle::Tinted(TintColor::Error))
                         .size(ButtonSize::Large)
                         .label_size(LabelSize::Small)
@@ -1327,7 +1330,7 @@ impl TerminalView {
         )
     }
 
-    /// Aviso de que la shell terminó con error; la salida queda arriba para ver por qué.
+    /// Notice that the shell exited with an error; the output stays above to show why.
     fn render_exit_banner(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let message = self.terminal.read(cx).exit_failure()?;
         let ui = cx.tokens().ui.clone();
@@ -1359,13 +1362,13 @@ impl TerminalView {
                         .gap(px(2.))
                         .child(Label::new(message))
                         .child(
-                            Label::new("La salida de arriba puede explicar por qué.")
+                            Label::new("The output above may explain why.")
                                 .size(LabelSize::Small)
                                 .color(Color::Placeholder),
                         ),
                 )
                 .child(
-                    Button::new("exited-close", "Cerrar")
+                    Button::new("exited-close", "Close")
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Large)
                         .label_size(LabelSize::Small)
@@ -1375,7 +1378,7 @@ impl TerminalView {
                         }),
                 )
                 .child(
-                    Button::new("exited-restart", "Abrir shell nueva ⏎")
+                    Button::new("exited-restart", "Open New Shell ⏎")
                         .style(ButtonStyle::Filled)
                         .size(ButtonSize::Large)
                         .label_size(LabelSize::Small)
@@ -1400,7 +1403,7 @@ impl TerminalView {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             return;
         }
-        // Sin selección todavía: copia la pantalla visible.
+        // No selection yet: copy the visible screen.
         let text = {
             let term = self.terminal.read(cx).term.clone();
             let term = term.lock();
@@ -1525,7 +1528,7 @@ impl Render for TerminalView {
             .pt(metrics::SPACE_5)
             .pb(px(10.))
             .bg(cx.tokens().terminal.background)
-            // En producción, un borde del color del host enmarca la terminal.
+            // In production, a border in the host's color frames the terminal.
             .when_some(production_color, |el, color| {
                 el.border_1()
                     .border_color(tint(color, 0.22))
@@ -1548,7 +1551,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &NextCommand, _, cx| this.select_command(false, cx)))
             .on_action(cx.listener(Self::copy_command_output))
             .on_action(cx.listener(|this, _: &ShowCompletions, _, cx| {
-                // Sin nada que sugerir (o fuera del prompt), ⌃Space sigue a la shell.
+                // With nothing to suggest (or outside the prompt), ⌃Space goes to the shell.
                 if !this.open_completions(cx) {
                     cx.propagate();
                 }
@@ -1662,7 +1665,7 @@ struct CellStyle {
     fg: Hsla,
     bold: bool,
     italic: bool,
-    /// Color y si es ondulado.
+    /// Color, and whether it's wavy.
     underline: Option<(Hsla, bool)>,
     strikethrough: bool,
 }
@@ -1705,8 +1708,8 @@ impl GridLayout {
     }
 }
 
-/// Barra en el margen izquierdo de los comandos que fallaron, y fondo y barra de acento en el
-/// bloque elegido con ⌘↑/⌘↓. Solo mira las filas visibles y las de debajo.
+/// Left-margin bar for failed commands, plus background and accent bar for the
+/// command block selected with ⌘↑/⌘↓. Only looks at visible rows and those below.
 fn block_decorations(
     term: &Term<Listener>,
     selected: Option<blocks::Anchor>,
@@ -1760,8 +1763,8 @@ fn block_decorations(
     quads
 }
 
-/// La fuente de config.json o Geist Mono. Los íconos de Nerd Fonts que no estén en la fuente
-/// salen de "Symbols Nerd Font" si está instalada.
+/// The font from config.json, or Geist Mono. Nerd Fonts icons missing from the font
+/// come from "Symbols Nerd Font" if it's installed.
 fn terminal_font(cx: &App) -> Font {
     let family = crate::config::get(cx).font_family.clone();
     let mut fallbacks = vec![
@@ -1791,16 +1794,16 @@ fn styled_font(base: &Font, style: &CellStyle) -> Font {
     font
 }
 
-/// Lo que la vista superpone a la grilla en este frame.
+/// What the view overlays on the grid this frame.
 struct Overlays {
     focused: bool,
-    /// Texto en composición del IME.
+    /// IME composition text.
     marked_text: Option<String>,
-    /// Celdas del link bajo el mouse (se subrayan).
+    /// Cells of the link under the mouse (underlined).
     link_cells: std::collections::HashSet<(i32, usize)>,
-    /// Resto del candidato elegido en el popup de completions.
+    /// Rest of the selected candidate in the completions popup.
     completion_ghost: Option<String>,
-    /// Bloque elegido con ⌘↑/⌘↓.
+    /// Command block selected with ⌘↑/⌘↓.
     selected_block: Option<blocks::Anchor>,
 }
 
@@ -1838,7 +1841,7 @@ fn layout_grid(
             cell_width,
             line_height,
         });
-        // El candidato del popup de completions tiene prioridad sobre la sugerencia del historial.
+        // The completions popup candidate takes priority over the history suggestion.
         (
             t.highlighted_line(),
             completion_ghost.or_else(|| t.suggestion(cx)),
@@ -1883,8 +1886,8 @@ fn layout_grid(
     let selection = content.selection;
     let search_match = search_match.and_then(|found| found.resolve(&term));
 
-    // Celdas de la línea en edición → tipo de token. Solo si la grilla coincide con lo que
-    // reportó zsh; si no (por ejemplo, durante un frame intermedio) no se colorea nada.
+    // Cells of the line being edited → token kind. Only if the grid matches what zsh
+    // reported; otherwise (e.g. during an intermediate frame) nothing is colored.
     let located = input
         .as_ref()
         .and_then(|(line, tokens)| locate_input(&term, line).map(|cells| (line, tokens, cells)));
@@ -1902,8 +1905,8 @@ fn layout_grid(
         line_height,
         display_offset,
     );
-    // Bloques y líneas de caja dibujados como rectángulos, ajustados a píxeles del dispositivo
-    // para que celdas vecinas compartan bordes exactos (sin costuras).
+    // Block and box-drawing characters drawn as rectangles, snapped to device pixels
+    // so neighboring cells share exact edges (no seams).
     let mut glyph_quads = Vec::new();
     let scale = window.scale_factor();
     let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
@@ -1952,7 +1955,7 @@ fn layout_grid(
                 bg,
             ));
         }
-        // La coincidencia de ⌘F en amarillo, para no confundirla con la selección.
+        // The ⌘F match in yellow, so it isn't confused with the selection.
         let highlight = if search_match
             .as_ref()
             .is_some_and(|range| range.contains(&indexed.point))
@@ -2037,14 +2040,14 @@ fn layout_grid(
                 .extend(zerowidth.iter().filter(|&&c| !blocks::is_mark_char(c)));
         }
         segment.next_column = column + width;
-        // Un carácter ancho cierra el segmento para que el siguiente arranque alineado a la grilla.
+        // A wide character ends the segment so the next one starts aligned to the grid.
         if wide {
             flush(current.take(), &mut shaped);
         }
     }
     flush(current.take(), &mut shaped);
 
-    // Sugerencia del historial, en gris a partir del cursor.
+    // History suggestion, in gray starting at the cursor.
     let mut ghost_first = None;
     if let (Some(rest), Some((line, _, _))) = (suggestion, located.as_ref()) {
         let cursor_point = term.grid().cursor.point;
@@ -2160,10 +2163,10 @@ fn layout_grid(
     }
 }
 
-/// Link en `point`: un hipervínculo OSC 8 de la celda, o una URL escrita en la línea lógica
-/// (las filas partidas por el ancho de la terminal se unen). Solo esquemas seguros.
-/// El link bajo `point`: un hipervínculo OSC 8, una URL escrita o, con `cwd`, una ruta a un
-/// archivo que existe.
+/// Link at `point`: the cell's OSC 8 hyperlink, or a URL written on the logical line
+/// (rows wrapped by the terminal width are joined). Safe schemes only.
+/// The link under `point`: an OSC 8 hyperlink, a written URL, or, with `cwd`, a path to an
+/// existing file.
 fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<HoveredLink> {
     let grid = term.grid();
     let last_column = alacritty_terminal::index::Column(term.columns() - 1);
@@ -2188,7 +2191,7 @@ fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<Ho
             .last()
             .unwrap_or(point.column.0);
         let cells = (start..=end).map(|c| (point.line.0, c)).collect();
-        // `file://` local (`ls --hyperlink`, compiladores): al editor si es un archivo.
+        // Local `file://` (`ls --hyperlink`, compilers): to the editor if it's a file.
         let local_file = url
             .strip_prefix("file://")
             .and_then(|rest| rest.find('/').map(|slash| PathBuf::from(&rest[slash..])))
@@ -2236,7 +2239,7 @@ fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<Ho
         line += 1;
     }
 
-    // Una celda de relleno de un carácter ancho cuenta como el carácter.
+    // A wide character's spacer cell counts as the character.
     let hovered = offsets
         .iter()
         .rev()
@@ -2270,7 +2273,7 @@ fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<Ho
     Some(HoveredLink { target, cells })
 }
 
-/// Celda de un carácter de la línea en edición: línea de la grilla, columna inicial y ancho.
+/// Cell of a character on the line being edited: grid line, starting column, and width.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CharCell {
     line: i32,
@@ -2278,10 +2281,10 @@ struct CharCell {
     width: usize,
 }
 
-/// Dónde debería quedar el cursor (índice en caracteres) al hacer clic en `line`, `column`
-/// (columna fraccional). Como en un editor: la mitad derecha de un carácter deja el cursor
-/// después de él, y un clic más allá del final de una fila va al final de esa fila.
-/// `None` si el clic no cae sobre la línea en edición (por ejemplo, sobre el prompt).
+/// Where the cursor should land (as a character index) when clicking at `line`, `column`
+/// (fractional column). Like in an editor: the right half of a character puts the cursor
+/// after it, and a click past the end of a row goes to the end of that row.
+/// `None` if the click doesn't land on the line being edited (e.g. on the prompt).
 fn click_target(cells: &[CharCell], line: i32, column: f32) -> Option<usize> {
     let row: Vec<(usize, &CharCell)> = cells
         .iter()
@@ -2290,8 +2293,8 @@ fn click_target(cells: &[CharCell], line: i32, column: f32) -> Option<usize> {
         .collect();
     let (first_ix, first) = *row.first()?;
     if column < first.column as f32 {
-        // A la izquierda del texto: en una fila continuada, al inicio de esa fila; en la
-        // primera fila es el prompt, y no se toca.
+        // Left of the text: on a continuation row, the start of that row; on the
+        // first row it's the prompt, which is left alone.
         return (first_ix > 0).then_some(first_ix);
     }
     for (ix, cell) in &row {
@@ -2306,8 +2309,8 @@ fn click_target(cells: &[CharCell], line: i32, column: f32) -> Option<usize> {
     Some(last_ix + 1)
 }
 
-/// Posición en la grilla de cada carácter de la línea en edición, retrocediendo desde el
-/// cursor. `None` si las celdas no coinciden con el texto que reportó la shell.
+/// Grid position of each character on the line being edited, walking back from the
+/// cursor. `None` if the cells don't match the text the shell reported.
 fn locate_input(term: &Term<Listener>, line: &EditLine) -> Option<Vec<AlacPoint>> {
     let grid = term.grid();
     let chars: Vec<char> = line.buffer.chars().collect();
@@ -2495,7 +2498,7 @@ impl InputHandler for TerminalInputHandler {
     }
 
     fn apple_press_and_hold_enabled(&mut self) -> bool {
-        // Mantener una tecla debe repetirla, no abrir el selector de acentos de macOS.
+        // Holding a key should repeat it, not open the macOS accent picker.
         false
     }
 }
@@ -2531,7 +2534,7 @@ mod tests {
         use alacritty_terminal::index::{Column, Line, Point};
         let cwd = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let term = search_term(
-            "  --> src/blocks.rs:12:5\r\nver https://a.dev/src/x.rs",
+            "  --> src/blocks.rs:12:5\r\nsee https://a.dev/src/x.rs",
             40,
             4,
         );
@@ -2545,7 +2548,7 @@ mod tests {
             })
         );
         assert_eq!(link.cells.len(), "src/blocks.rs:12:5".len());
-        // Sin carpeta (SSH) no hay link de archivo; las URLs siguen.
+        // Without a folder (SSH) there are no file links; URLs still work.
         assert!(super::link_at(&term, Point::new(Line(0), Column(10)), None).is_none());
         let url = super::link_at(&term, Point::new(Line(1), Column(20)), Some(cwd)).unwrap();
         assert!(matches!(url.target, super::LinkTarget::Url(_)));
@@ -2653,28 +2656,28 @@ mod tests {
 
     #[test]
     fn clicks_land_on_nearest_boundary() {
-        // `git push` empezando en la columna 2 (después de "❯ ").
+        // `git push` starting at column 2 (after "❯ ").
         let line = cells(5, 2, &[1; 8]);
         assert_eq!(click_target(&line, 5, 2.2), Some(0));
         assert_eq!(click_target(&line, 5, 2.7), Some(1));
         assert_eq!(click_target(&line, 5, 6.1), Some(4));
-        // Más allá del final, al final.
+        // Past the end goes to the end.
         assert_eq!(click_target(&line, 5, 40.), Some(8));
-        // Sobre el prompt o en otra fila: nada.
+        // On the prompt or another row: nothing.
         assert_eq!(click_target(&line, 5, 0.5), None);
         assert_eq!(click_target(&line, 4, 3.), None);
     }
 
     #[test]
     fn handles_wide_chars_and_wrapped_rows() {
-        // "a界b": el carácter ancho ocupa dos celdas.
+        // "a界b": the wide character takes two cells.
         let line = cells(0, 2, &[1, 2, 1]);
         assert_eq!(click_target(&line, 0, 3.4), Some(1));
         assert_eq!(click_target(&line, 0, 4.2), Some(2));
         assert_eq!(click_target(&line, 0, 5.1), Some(2));
         assert_eq!(click_target(&line, 0, 5.7), Some(3));
 
-        // Línea partida en dos filas: 4 caracteres en la fila 3 y 2 en la 4.
+        // Line wrapped across two rows: 4 characters on row 3 and 2 on row 4.
         let mut wrapped = cells(3, 76, &[1; 4]);
         wrapped.extend(cells(4, 0, &[1; 2]));
         assert_eq!(click_target(&wrapped, 4, 0.2), Some(4));

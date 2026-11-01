@@ -1,15 +1,15 @@
-//! Coincidencia difusa por subsecuencia, con puntaje y posiciones para resaltar.
+//! Subsequence fuzzy matching, with a score and positions for highlighting.
 
-/// Resultado de comparar una consulta con un texto: mayor puntaje = mejor coincidencia.
+/// Result of matching a query against a text: higher score = better match.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Match {
     pub score: i32,
-    /// Índices en bytes de los caracteres que coinciden (para `HighlightedLabel`).
+    /// Byte indices of the matching characters (for `HighlightedLabel`).
     pub positions: Vec<usize>,
 }
 
-/// `None` si los caracteres de `query` no aparecen en orden dentro de `text`.
-/// Ignora mayúsculas y espacios de la consulta.
+/// `None` if the characters of `query` don't appear in order within `text`.
+/// Ignores case and whitespace in the query.
 pub fn fuzzy_match(query: &str, text: &str) -> Option<Match> {
     let query: Vec<char> = query
         .chars()
@@ -29,7 +29,7 @@ pub fn fuzzy_match(query: &str, text: &str) -> Option<Match> {
         .map(|&(_, c)| c.to_lowercase().next().unwrap_or(c))
         .collect();
 
-    // Si la consulta aparece literal, se prefiere esa ubicación (la primera).
+    // If the query appears literally, prefer that location (the first one).
     let haystack: String = lower.iter().collect();
     let needle: String = query.iter().collect();
     if let Some(byte_start) = haystack.find(&needle) {
@@ -42,7 +42,7 @@ pub fn fuzzy_match(query: &str, text: &str) -> Option<Match> {
         return Some(Match { score, positions });
     }
 
-    // Si no, subsecuencia codiciosa con bonos por inicio de palabra y por caracteres seguidos.
+    // Otherwise, greedy subsequence with bonuses for word starts and consecutive characters.
     let mut positions = Vec::with_capacity(query.len());
     let mut score = 0;
     let mut qi = 0;
@@ -95,21 +95,21 @@ mod tests {
         let scattered = fuzzy_match("push", "pnpm run build:ush").unwrap();
         assert!(literal.score > scattered.score);
 
-        let start = fuzzy_match("nueva", "Nueva pestaña").unwrap();
-        let middle = fuzzy_match("nueva", "Abrir nueva ventana").unwrap();
+        let start = fuzzy_match("new", "New tab").unwrap();
+        let middle = fuzzy_match("new", "Open new window").unwrap();
         assert!(start.score > middle.score);
     }
 
     #[test]
     fn positions_are_byte_offsets() {
-        let m = fuzzy_match("pest", "Cerrar pestaña").unwrap();
-        assert_eq!(m.positions, vec![7, 8, 9, 10]);
-        let m = fuzzy_match("ña", "pestaña").unwrap();
-        assert_eq!(&"pestaña"[m.positions[0]..m.positions[0] + 2], "ñ");
+        let m = fuzzy_match("tab", "Close tab").unwrap();
+        assert_eq!(m.positions, vec![6, 7, 8]);
+        let m = fuzzy_match("ño", "jalapeño").unwrap();
+        assert_eq!(&"jalapeño"[m.positions[0]..m.positions[0] + 2], "ñ");
     }
 
     #[test]
     fn empty_query_matches_everything() {
-        assert_eq!(fuzzy_match("  ", "lo que sea").unwrap().score, 0);
+        assert_eq!(fuzzy_match("  ", "anything").unwrap().score, 0);
     }
 }

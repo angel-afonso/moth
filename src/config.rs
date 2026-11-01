@@ -1,5 +1,5 @@
-//! Configuración del usuario en `~/Library/Application Support/moth/config.json`.
-//! Todo es opcional; se relee al volver a la ventana si el archivo cambió.
+//! User settings in `~/Library/Application Support/moth/config.json`.
+//! Everything is optional; the file is reloaded when the window regains focus if it changed.
 
 use std::{path::PathBuf, time::SystemTime};
 
@@ -9,20 +9,20 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Fuente de la terminal; por ejemplo una Nerd Font, para los íconos de starship o p10k.
+    /// Terminal font; for example a Nerd Font, for starship or p10k icons.
     pub font_family: Option<String>,
-    /// Editor donde se abren las rutas de la salida: `zed`, `code`, `cursor`, `nvim`… o una
-    /// plantilla con `{file}`, `{line}` y `{column}`.
+    /// Editor that opens paths from the output: `zed`, `code`, `cursor`, `nvim`… or a template
+    /// with `{file}`, `{line}` and `{column}`.
     pub editor: Option<String>,
-    /// Líneas de scrollback de cada pestaña nueva.
+    /// Scrollback lines for each new tab.
     pub scrollback: Option<usize>,
-    /// Abrir las ventanas, pestañas y paneles de la vez anterior (sí, si no se indica).
+    /// Reopen the previous session's windows, tabs and panes (yes by default).
     pub restore_session: Option<bool>,
-    /// Notificación de macOS cuando un comando largo termina con la app en segundo plano (sí,
-    /// si no se indica).
+    /// macOS notification when a long command finishes while the app is in the background (yes
+    /// by default).
     pub notifications: Option<bool>,
-    /// Qué hace Tab en el prompt: la completion de la shell (por defecto) o abrir las
-    /// sugerencias de la app, que si no están siempre en ⌃Space.
+    /// What Tab does at the prompt: the shell's completion (default) or open the app's
+    /// suggestions, which are otherwise always on ⌃Space.
     pub tab_completion: Option<TabCompletion>,
 }
 
@@ -33,7 +33,7 @@ pub enum TabCompletion {
     Popup,
 }
 
-/// Lo que se escribe al abrir la configuración por primera vez.
+/// What gets written the first time the settings are opened.
 const TEMPLATE: &str = r#"{
   "font_family": null,
   "editor": null,
@@ -67,12 +67,12 @@ pub fn get(cx: &App) -> &Config {
     &cx.global::<Loaded>().config
 }
 
-/// El error del último intento de leer el archivo, si era inválido.
+/// The error from the last attempt to read the file, if it was invalid.
 pub fn error(cx: &App) -> Option<&str> {
     cx.global::<Loaded>().error.as_deref()
 }
 
-/// Relee el archivo si cambió desde la última vez; devuelve si cambió.
+/// Reloads the file if it changed since last time; returns whether it changed.
 pub fn reload_if_changed(cx: &mut App) -> bool {
     let modified = path().and_then(|path| std::fs::metadata(path).ok()?.modified().ok());
     if cx.global::<Loaded>().modified == modified {
@@ -82,9 +82,9 @@ pub fn reload_if_changed(cx: &mut App) -> bool {
     true
 }
 
-/// El archivo de configuración, creándolo con todas las opciones si no existe.
+/// The settings file, created with every option if it doesn't exist.
 pub fn ensure_file() -> std::io::Result<PathBuf> {
-    let path = path().ok_or_else(|| std::io::Error::other("sin HOME"))?;
+    let path = path().ok_or_else(|| std::io::Error::other("HOME not set"))?;
     if !path.exists() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -114,7 +114,7 @@ fn read() -> Loaded {
             error: None,
         },
         Err(err) => {
-            let error = format!("config.json inválido: {err}");
+            let error = format!("invalid config.json: {err}");
             crate::log::error(&error);
             Loaded {
                 config: Config::default(),

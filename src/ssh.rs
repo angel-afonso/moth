@@ -1,26 +1,26 @@
-//! Sesiones SSH: reconocer el comando `ssh`, resolver el destino real con `ssh -G` y listar
-//! los hosts de `~/.ssh/config` para "Conectar a…".
+//! SSH sessions: recognize the `ssh` command, resolve the real destination with `ssh -G` and
+//! list the hosts in `~/.ssh/config` for "Connect to…".
 
 use std::{
     path::{Path, PathBuf},
     process::Command,
 };
 
-/// Destino de un `ssh` tal como lo escribiste.
+/// Destination of an `ssh` as you typed it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SshTarget {
-    /// Lo que se escribió como destino, sin el usuario (`prod-db`, `10.0.4.12`).
+    /// What was typed as the destination, without the user (`prod-db`, `10.0.4.12`).
     pub alias: String,
     pub user: Option<String>,
     pub port: Option<u16>,
     pub jump: Option<String>,
-    /// Argumentos de `ssh` (sin el comando remoto), para `ssh -G`.
+    /// `ssh` arguments (without the remote command), for `ssh -G`.
     pub args: Vec<String>,
-    /// `ssh host comando`: no es una sesión interactiva.
+    /// `ssh host command`: not an interactive session.
     pub remote_command: bool,
 }
 
-/// Lo que `ssh -G` dice que se usará realmente.
+/// What `ssh -G` says will actually be used.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedHost {
     pub hostname: String,
@@ -28,10 +28,10 @@ pub struct ResolvedHost {
     pub port: u16,
 }
 
-/// Opciones de `ssh` que consumen el argumento siguiente.
+/// `ssh` options that consume the next argument.
 const OPTS_WITH_ARG: &str = "BbcDEeFIiJLlmOoPpQRSWw";
 
-/// Separa como lo haría la shell, respetando comillas simples y dobles.
+/// Splits like the shell would, honoring single and double quotes.
 fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -70,11 +70,11 @@ fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
-/// Reconoce `ssh [opciones] destino [comando]` (también con ruta, `command ssh` o `env … ssh`).
+/// Recognizes `ssh [options] destination [command]` (also with a path, `command ssh` or `env … ssh`).
 pub fn parse_ssh_command(command: &str) -> Option<SshTarget> {
     let words = shell_words(command);
     let mut iter = words.iter().peekable();
-    // Saltea prefijos habituales y asignaciones de variables.
+    // Skip common prefixes and variable assignments.
     while let Some(word) = iter.peek() {
         if matches!(
             word.as_str(),
@@ -99,7 +99,7 @@ pub fn parse_ssh_command(command: &str) -> Option<SshTarget> {
     while let Some(word) = iter.next() {
         if destination.is_none() && word.starts_with('-') && word.len() > 1 {
             args.push(word.clone());
-            // `-p2222` o `-p 2222`; las opciones sin argumento pueden ir juntas (`-tt`, `-At`).
+            // `-p2222` or `-p 2222`; options without an argument can be combined (`-tt`, `-At`).
             let flags: Vec<char> = word[1..].chars().collect();
             for (i, flag) in flags.iter().enumerate() {
                 if OPTS_WITH_ARG.contains(*flag) {
@@ -129,7 +129,7 @@ pub fn parse_ssh_command(command: &str) -> Option<SshTarget> {
             destination = Some(word.clone());
             continue;
         }
-        // Después del destino: comando remoto.
+        // After the destination: remote command.
         return Some(build_target(destination?, user, port, jump, args, true));
     }
     Some(build_target(destination?, user, port, jump, args, false))
@@ -191,8 +191,8 @@ pub fn parse_ssh_g(output: &str) -> Option<ResolvedHost> {
     })
 }
 
-/// `ssh -G` con los mismos argumentos: aplica `~/.ssh/config` sin conectarse.
-/// Bloquea: llamar desde el executor de fondo.
+/// `ssh -G` with the same arguments: applies `~/.ssh/config` without connecting.
+/// Blocking: call from the background executor.
 pub fn resolve(target: &SshTarget) -> Option<ResolvedHost> {
     let output = Command::new("ssh")
         .arg("-G")
@@ -205,7 +205,7 @@ pub fn resolve(target: &SshTarget) -> Option<ResolvedHost> {
     parse_ssh_g(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Un `Host` de `~/.ssh/config` sin comodines.
+/// A `Host` from `~/.ssh/config` without wildcards.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfigHost {
     pub alias: String,
@@ -215,7 +215,7 @@ pub struct ConfigHost {
 }
 
 impl ConfigHost {
-    /// `usuario@host:puerto` con lo que se sepa.
+    /// `user@host:port` with whatever is known.
     pub fn describe(&self) -> String {
         let mut text = String::new();
         if let Some(user) = &self.user {
@@ -275,7 +275,7 @@ pub fn parse_ssh_config(text: &str, includes: &mut Vec<String>) -> Vec<ConfigHos
     hosts
 }
 
-/// Expande un `Include` (relativo a `~/.ssh`, con `*` en el nombre de archivo).
+/// Expands an `Include` (relative to `~/.ssh`, with `*` in the file name).
 fn expand_include(pattern: &str, ssh_dir: &Path) -> Vec<PathBuf> {
     let path = if let Some(rest) = pattern.strip_prefix("~/") {
         ssh_dir
@@ -311,7 +311,7 @@ fn expand_include(pattern: &str, ssh_dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Hosts de `~/.ssh/config` y sus `Include`, en orden, sin repetir alias.
+/// Hosts from `~/.ssh/config` and its `Include`s, in order, without duplicate aliases.
 pub fn config_hosts() -> Vec<ConfigHost> {
     let Some(home) = std::env::var_os("HOME") else {
         return Vec::new();

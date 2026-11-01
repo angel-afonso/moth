@@ -1,6 +1,6 @@
-//! Ventana: barra de pestañas, terminal activa y barra de estado, con componentes del crate
-//! `ui` de Zed (Label, HighlightedLabel, Icon, IconButton, Button, KeyBinding, Tooltip), más
-//! los overlays de búsqueda: paleta de comandos, historial y ramas.
+//! Window: tab bar, active terminal and status bar, built with components from Zed's `ui`
+//! crate (Label, HighlightedLabel, Icon, IconButton, Button, KeyBinding, Tooltip), plus the
+//! search overlays: command palette, history and branches.
 
 use std::{
     path::{Path, PathBuf},
@@ -74,7 +74,7 @@ actions!(
     ]
 );
 
-/// Abrir un archivo de la salida en el editor (clic en una ruta).
+/// Open a file from the output in the editor (clicking a path).
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(namespace = workspace, no_json)]
 pub struct OpenFile {
@@ -114,7 +114,7 @@ pub fn init(cx: &mut App) {
             terminal_view::ShowCompletions,
             Some("Terminal"),
         ),
-        // El último atajo de cada acción es el que se muestra en menús y botones.
+        // The last binding for each action is the one shown in menus and buttons.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("cmd-}", NextTab, None),
@@ -145,18 +145,18 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
 }
 
-/// Alto de la barra de pestañas; los semáforos de macOS se centran en ella.
+/// Tab bar height; the macOS traffic lights are centered within it.
 pub const TAB_BAR_HEIGHT: Pixels = px(40.);
 
-/// Con qué abre una ventana.
+/// What a window opens with.
 pub enum Start {
-    /// Una pestaña en esa carpeta; sin carpeta, en la última que se usó.
+    /// One tab in that folder; with no folder, in the last one used.
     Cwd(Option<PathBuf>),
-    /// Las pestañas y paneles de la sesión anterior.
+    /// The tabs and panes from the previous session.
     Restore(session::WindowSession),
 }
 
-/// Las ventanas de la sesión anterior (si `restore_session` no está apagado), o una nueva.
+/// The windows from the previous session (unless `restore_session` is off), or a new one.
 pub fn open_initial_windows(cx: &mut App) {
     let restore = config::get(cx).restore_session != Some(false);
     let windows = restore
@@ -168,7 +168,7 @@ pub fn open_initial_windows(cx: &mut App) {
         open_window(Start::Cwd(None), None, cx);
     }
     for window in windows {
-        // Si la pantalla donde estaba ya no está conectada, se abre centrada.
+        // If the display it was on is no longer connected, open it centered.
         let bounds = window
             .bounds
             .map(|[x, y, w, h]| Bounds::new(point(px(x), px(y)), size(px(w), px(h))))
@@ -181,7 +181,7 @@ pub fn open_initial_windows(cx: &mut App) {
     }
 }
 
-/// Abre una ventana con su workspace; sin `bounds`, centrada.
+/// Opens a window with its workspace; centered when `bounds` is `None`.
 pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
     let bounds = bounds.unwrap_or_else(|| Bounds::centered(None, size(px(1100.), px(720.)), cx));
     let options = WindowOptions {
@@ -189,7 +189,7 @@ pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
         titlebar: Some(TitlebarOptions {
             title: Some("Moth".into()),
             appears_transparent: true,
-            // Centrados en la barra de pestañas.
+            // Centered in the tab bar.
             traffic_light_position: Some(point(px(14.), px(14.))),
         }),
         window_min_size: Some(size(px(480.), px(280.))),
@@ -198,17 +198,17 @@ pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
     if let Err(err) = cx.open_window(options, |window, cx| {
         cx.new(|cx| Workspace::new(start, window, cx))
     }) {
-        crate::log::error(format!("no se pudo abrir la ventana: {err:#}"));
+        crate::log::error(format!("failed to open window: {err:#}"));
     }
 }
 
-/// Los workspaces de todas las ventanas, para confirmar al salir (y guardar la sesión).
+/// The workspaces of every window, used to confirm on quit (and to save the session).
 #[derive(Default)]
 struct Workspaces(Vec<WeakEntity<Workspace>>);
 
 impl Global for Workspaces {}
 
-/// Una terminal dentro de una pestaña.
+/// A terminal inside a tab.
 struct Pane {
     view: Entity<TerminalView>,
     initial_dir: Option<PathBuf>,
@@ -216,16 +216,16 @@ struct Pane {
 }
 
 struct TabEntry {
-    /// Identifica la pestaña para la confirmación de cierre aunque cambien sus paneles.
+    /// Identifies the tab for close confirmation even if its panes change.
     id: usize,
     panes: Vec<Pane>,
-    /// Cómo se reparten los paneles, por el id de su vista.
+    /// How the panes are laid out, keyed by their view's id.
     layout: PaneTree<EntityId>,
-    /// El panel con el foco: el que muestran el título y la barra de estado.
+    /// The focused pane: the one the title and status bar reflect.
     active_pane: EntityId,
-    /// El panel activo ocupa toda la pestaña (⌘⇧⏎).
+    /// The active pane fills the whole tab (⌘⇧⏎).
     zoomed: bool,
-    /// La sesión sonó la campana mientras no estaba visible.
+    /// The session rang the bell while it wasn't visible.
     needs_attention: bool,
 }
 
@@ -238,7 +238,7 @@ impl TabEntry {
         self.pane(self.active_pane).unwrap_or(&self.panes[0])
     }
 
-    /// La vista del panel activo.
+    /// The active pane's view.
     fn view(&self) -> &Entity<TerminalView> {
         &self.active().view
     }
@@ -253,7 +253,7 @@ enum ModalKind {
     Hosts,
 }
 
-/// Qué se quiere cerrar; si hay procesos en curso se pide confirmación antes.
+/// What is being closed; if processes are running, confirmation is asked first.
 #[derive(Clone, Copy, PartialEq)]
 enum CloseTarget {
     Tab(usize),
@@ -265,7 +265,7 @@ enum CloseTarget {
 struct Modal {
     kind: ModalKind,
     picker: Entity<Picker>,
-    /// Tema a restaurar si se cierra el selector sin elegir (por la vista previa).
+    /// Theme to restore if the picker closes without a choice (undoes the preview).
     restore_theme: Option<Arc<Tokens>>,
     _subscription: Subscription,
 }
@@ -278,7 +278,7 @@ pub struct Workspace {
     should_move: bool,
     shell_name: String,
     modal: Option<Modal>,
-    /// Cierre esperando confirmación porque cortaría procesos.
+    /// A close awaiting confirmation because it would kill processes.
     pending_close: Option<CloseTarget>,
     confirm_focus: FocusHandle,
     next_tab_id: usize,
@@ -308,7 +308,7 @@ impl Workspace {
         let registry = &mut cx.default_global::<Workspaces>().0;
         registry.retain(|workspace| workspace.upgrade().is_some());
         registry.push(me);
-        // Al volver a la app se relee config.json, por si se editó.
+        // Re-read config.json when the app regains focus, in case it was edited.
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() && config::reload_if_changed(cx) {
                 if let Some(error) = config::error(cx) {
@@ -318,7 +318,7 @@ impl Workspace {
             }
         })
         .detach();
-        // El botón rojo de la ventana también pasa por la confirmación.
+        // The window's red close button also goes through confirmation.
         let workspace = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             workspace
@@ -346,14 +346,14 @@ impl Workspace {
                 }
             }
         }
-        // Mover o redimensionar la ventana se guarda en la sesión (ver `render`).
+        // Moving or resizing the window is saved to the session (see `render`).
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
         this
     }
 
-    /// Una pestaña de la sesión anterior: un panel nuevo por cada carpeta, con la misma
-    /// distribución.
+    /// A tab from the previous session: a new pane for each folder, with the same
+    /// layout.
     fn restore_tab(
         &mut self,
         saved: session::TabSession,
@@ -369,7 +369,7 @@ impl Workspace {
         let mut ids = panes.iter().map(|pane| pane.view.entity_id());
         let layout = saved
             .layout
-            .map(&mut |_| ids.next().expect("un panel por hoja"));
+            .map(&mut |_| ids.next().expect("one pane per leaf"));
         let leaves = layout.leaves();
         self.next_tab_id += 1;
         Some(TabEntry {
@@ -382,7 +382,7 @@ impl Workspace {
         })
     }
 
-    /// Lo que esta ventana aporta a la sesión: pestañas, paneles con su carpeta y posición.
+    /// What this window contributes to the session: tabs, panes with their folders, and position.
     fn snapshot(&self, window: &Window, cx: &App) -> session::WindowSession {
         let tabs = self
             .tabs
@@ -424,7 +424,7 @@ impl Workspace {
         }
     }
 
-    /// ⌘N: otra ventana, corrida un poco respecto de esta y en la carpeta del panel activo.
+    /// ⌘N: another window, offset slightly from this one and in the active pane's folder.
     fn new_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self
             .tabs
@@ -435,8 +435,8 @@ impl Workspace {
         cx.defer(move |cx| open_window(Start::Cwd(cwd), Some(bounds), cx));
     }
 
-    /// Una pestaña nueva abre en la carpeta de la pestaña activa; la primera, en la última
-    /// carpeta usada en la ejecución anterior.
+    /// A new tab opens in the active tab's folder; the first one, in the last folder used
+    /// in the previous run.
     fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self
             .tabs
@@ -485,8 +485,8 @@ impl Workspace {
         let builder = match TerminalBuilder::new(cwd, config::get(cx).scrollback) {
             Ok(builder) => builder,
             Err(err) => {
-                crate::log::error(format!("no se pudo abrir la terminal: {err:#}"));
-                self.command_notice = Some(format!("No se pudo abrir la terminal: {err}"));
+                crate::log::error(format!("failed to open terminal: {err:#}"));
+                self.command_notice = Some(format!("Couldn't open the terminal: {err}"));
                 cx.notify();
                 return None;
             }
@@ -494,7 +494,7 @@ impl Workspace {
         let terminal = cx.new(|cx| builder.build(cx));
         let events = cx.subscribe_in(&terminal, window, Self::on_terminal_event);
         let view = cx.new(|cx| TerminalView::new(terminal, cx));
-        // Un clic en un panel (o el foco en su buscador) lo vuelve el activo.
+        // Clicking a pane (or focusing its search field) makes it the active one.
         let id = view.entity_id();
         let focus = cx.on_focus_in(&view.focus_handle(cx), window, move |this, _, cx| {
             this.pane_focused(id, cx)
@@ -515,7 +515,7 @@ impl Workspace {
         }
     }
 
-    /// La pestaña y el panel de `terminal`.
+    /// The tab and pane that hold `terminal`.
     fn locate(&self, terminal: &Entity<Terminal>, cx: &App) -> Option<(usize, EntityId)> {
         self.tabs.iter().enumerate().find_map(|(ix, tab)| {
             tab.panes
@@ -525,7 +525,7 @@ impl Workspace {
         })
     }
 
-    /// Divide el panel activo; el nuevo abre en la misma carpeta y queda con el foco.
+    /// Splits the active pane; the new one opens in the same folder and takes focus.
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
@@ -570,7 +570,7 @@ impl Workspace {
         }
     }
 
-    /// ⌘] / ⌘[: el panel siguiente o anterior en orden de lectura, dando la vuelta.
+    /// ⌘] / ⌘[: the next or previous pane in reading order, wrapping around.
     fn cycle_pane(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
@@ -592,7 +592,7 @@ impl Workspace {
         }
     }
 
-    /// Cierra un panel; si es el último de la pestaña, la pestaña.
+    /// Closes a pane; if it's the tab's last one, closes the tab.
     fn close_pane(&mut self, ix: usize, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get_mut(ix) else {
             return;
@@ -610,7 +610,7 @@ impl Workspace {
             self.pending_close = None;
         }
         if tab.active_pane == id {
-            // El foco pasa al panel que estaba antes en orden de lectura (o al primero).
+            // Focus moves to the previous pane in reading order (or the first one).
             let leaves = tab.layout.leaves();
             tab.active_pane = leaves[position.saturating_sub(1).min(leaves.len() - 1)];
         }
@@ -621,8 +621,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Reemplaza la shell del panel activo, que terminó con error, por una nueva en la misma
-    /// carpeta.
+    /// Replaces the active pane's shell, which exited with an error, with a new one in the
+    /// same folder.
     fn restart_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ix = self.active;
         let Some(tab) = self.tabs.get(ix) else {
@@ -679,9 +679,9 @@ impl Workspace {
                 if duration.as_secs() >= 10 && (ix != self.active || !window.is_window_active()) {
                     self.tabs[ix].needs_attention = true;
                     let result = match exit_code {
-                        Some(0) => "terminó correctamente".to_string(),
-                        Some(code) => format!("terminó con código {code}"),
-                        None => "terminó (resultado desconocido)".to_string(),
+                        Some(0) => "finished successfully".to_string(),
+                        Some(code) => format!("exited with code {code}"),
+                        None => "finished (exit status unknown)".to_string(),
                     };
                     let elapsed = crate::components::format_duration(*duration);
                     self.command_notice = Some(format!(
@@ -690,7 +690,7 @@ impl Workspace {
                         result,
                         elapsed
                     ));
-                    // Con la app en segundo plano, además una notificación de macOS.
+                    // With the app in the background, also send a macOS notification.
                     if !window.is_window_active() && config::get(cx).notifications != Some(false) {
                         let mark = if *exit_code == Some(0) { "✓" } else { "✕" };
                         crate::notify::send(
@@ -764,8 +764,8 @@ impl Workspace {
         self.activate(next, window, cx);
     }
 
-    /// Abre el archivo en el editor de config.json (o el que se detecte): uno de terminal va en
-    /// una pestaña nueva en la carpeta actual.
+    /// Opens the file in the editor from config.json (or a detected one); a terminal editor
+    /// runs in a new tab in the current folder.
     fn open_file(
         &mut self,
         file: &crate::links::FileLink,
@@ -778,7 +778,7 @@ impl Workspace {
         let error = match editor::launch(config::get(cx).editor.as_deref(), file, &search_path) {
             Launch::App { program, args } => editor::spawn(&program, &args, &search_path)
                 .err()
-                .map(|err| format!("No se pudo abrir {}: {err}", program.display())),
+                .map(|err| format!("Couldn't open {}: {err}", program.display())),
             Launch::Terminal(command) => {
                 self.add_tab_in(cwd, window, cx);
                 let terminal = self.active_terminal(cx);
@@ -791,9 +791,9 @@ impl Workspace {
                 &search_path,
             )
             .err()
-            .map(|err| format!("No se pudo abrir el archivo: {err}")),
+            .map(|err| format!("Couldn't open the file: {err}")),
             Launch::Missing(program) => Some(format!(
-                "No se encontró «{program}», el editor de config.json, en el PATH de la shell"
+                "Couldn't find \"{program}\" (the editor set in config.json) in the shell's PATH"
             )),
         };
         if let Some(error) = error {
@@ -814,13 +814,13 @@ impl Workspace {
                 self.open_file(&file, window, cx);
             }
             Err(err) => {
-                self.command_notice = Some(format!("No se pudo crear config.json: {err}"));
+                self.command_notice = Some(format!("Couldn't create config.json: {err}"));
                 cx.notify();
             }
         }
     }
 
-    /// Lo que se cortaría al cerrar el panel: la sesión SSH o el comando en curso.
+    /// What closing the pane would kill: the SSH session or the running command.
     fn busy_with(pane: &Pane, cx: &App) -> Option<String> {
         let terminal = pane.view.read(cx).terminal().read(cx);
         if terminal.has_exited() {
@@ -856,7 +856,7 @@ impl Workspace {
             .collect()
     }
 
-    /// Al salir también cuentan los procesos de las otras ventanas.
+    /// When quitting, processes in other windows count too.
     fn busy_elsewhere(&self, target: CloseTarget, cx: &App) -> Vec<String> {
         if target != CloseTarget::Quit {
             return Vec::new();
@@ -873,8 +873,8 @@ impl Workspace {
             .collect()
     }
 
-    /// Si se puede cerrar ya. Si se cortarían procesos, abre la confirmación y devuelve
-    /// `false`; pedir lo mismo con la confirmación abierta (⌘W ⌘W, ⌘Q ⌘Q) confirma.
+    /// Whether it can close right away. If processes would be killed, opens the confirmation
+    /// and returns `false`; repeating the request while it's open (⌘W ⌘W, ⌘Q ⌘Q) confirms.
     fn should_close(
         &mut self,
         target: CloseTarget,
@@ -904,7 +904,7 @@ impl Workspace {
         }
     }
 
-    /// ⌘W: cierra el panel activo, o la pestaña si tiene uno solo.
+    /// ⌘W: closes the active pane, or the tab if it has only one.
     fn request_close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
@@ -955,16 +955,16 @@ impl Workspace {
         let target = self.pending_close?;
         let busy = self.busy(target, cx);
         let (title, confirm) = match target {
-            CloseTarget::Tab(_) => ("¿Cerrar la pestaña?", "Cerrar"),
-            CloseTarget::Pane(_) => ("¿Cerrar el panel?", "Cerrar"),
-            CloseTarget::Window => ("¿Cerrar la ventana?", "Cerrar"),
-            CloseTarget::Quit => ("¿Salir de Moth?", "Salir"),
+            CloseTarget::Tab(_) => ("Close this tab?", "Close"),
+            CloseTarget::Pane(_) => ("Close this pane?", "Close"),
+            CloseTarget::Window => ("Close this window?", "Close"),
+            CloseTarget::Quit => ("Quit Moth?", "Quit"),
         };
         let detail = match busy.as_slice() {
-            [] => "Ya no hay procesos en curso.".to_string(),
-            [only] => format!("Se terminará {only}."),
+            [] => "No processes are running anymore.".to_string(),
+            [only] => format!("This will terminate {only}."),
             many => format!(
-                "Se terminarán {} procesos: {}.",
+                "This will terminate {} processes: {}.",
                 many.len(),
                 many.join(", ")
             ),
@@ -1013,7 +1013,7 @@ impl Workspace {
                                 .gap(px(8.))
                                 .justify_end()
                                 .child(
-                                    Button::new("close-cancel", "Cancelar")
+                                    Button::new("close-cancel", "Cancel")
                                         .style(ButtonStyle::Outlined)
                                         .size(ButtonSize::Large)
                                         .label_size(LabelSize::Small)
@@ -1053,11 +1053,11 @@ impl Workspace {
         }
     }
 
-    /// El comando en ejecución, si no la carpeta actual, si no el título que puso la shell.
+    /// The running command, else the current folder, else the title set by the shell.
     fn tab_title(&self, ix: usize, cx: &App) -> SharedString {
         let terminal = self.tabs[ix].view().read(cx).terminal().read(cx);
         let shell = terminal.shell();
-        // En SSH, el host; si se cortó, el host también (tachado en la pestaña).
+        // Over SSH, the host; if disconnected, still the host (struck through in the tab).
         if let Some(remote) = &shell.remote {
             return remote.target.alias.clone().into();
         }
@@ -1076,7 +1076,7 @@ impl Workspace {
         }
     }
 
-    /// Algún panel de la pestaña tiene un comando en curso.
+    /// Whether any pane in the tab has a running command.
     fn is_running(&self, ix: usize, cx: &App) -> bool {
         self.tabs[ix].panes.iter().any(|pane| {
             pane.view
@@ -1134,7 +1134,7 @@ impl Workspace {
             }))
     }
 
-    /// Zona arrastrable (barra de título transparente en macOS).
+    /// Draggable region (transparent title bar on macOS).
     fn drag_region(&self, id: &'static str, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
@@ -1173,7 +1173,7 @@ impl Workspace {
             .w_full()
             .flex_none()
             .bg(ui.chrome)
-            // Espacio para los semáforos de macOS.
+            // Room for the macOS traffic lights.
             .child(
                 self.drag_region("traffic-lights", cx)
                     .w(px(80.))
@@ -1200,7 +1200,7 @@ impl Workspace {
                                 IconButton::new("new-tab", IconName::Plus)
                                     .icon_size(IconSize::Small)
                                     .size(ButtonSize::Medium)
-                                    .tooltip(Tooltip::for_action_title("Nueva pestaña", &NewTab))
+                                    .tooltip(Tooltip::for_action_title("New Tab", &NewTab))
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(NewTab.boxed_clone(), cx)
                                     }),
@@ -1222,7 +1222,7 @@ impl Workspace {
                     .border_b_1()
                     .border_color(border)
                     .child(
-                        Button::new("command-palette", "Comandos")
+                        Button::new("command-palette", "Commands")
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
                             .label_size(LabelSize::Small)
@@ -1240,7 +1240,7 @@ impl Workspace {
             )
     }
 
-    /// Rama actual con cambios y ahead/behind; al hacer clic, lista las ramas para cambiar.
+    /// Current branch with changes and ahead/behind; clicking lists branches to switch to.
     fn render_git(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let terminal = self.tabs[self.active].view().read(cx).terminal().clone();
         let git = terminal.read(cx).shell().git.clone()?;
@@ -1277,7 +1277,7 @@ impl Workspace {
                     .size(IconSize::XSmall)
                     .color(branch_color),
             )
-            .tooltip(Tooltip::for_action_title("Cambiar de rama", &SwitchBranch))
+            .tooltip(Tooltip::for_action_title("Switch Branch", &SwitchBranch))
             .on_click(|_, window, cx| window.dispatch_action(SwitchBranch.boxed_clone(), cx));
 
         Some(
@@ -1381,9 +1381,9 @@ impl Workspace {
                     .children(block)
                     .child(
                         Label::new(if tab_count == 1 {
-                            "1 pestaña".to_string()
+                            "1 tab".to_string()
                         } else {
-                            format!("{tab_count} pestañas")
+                            format!("{tab_count} tabs")
                         })
                         .size(LabelSize::XSmall)
                         .color(Color::Placeholder),
@@ -1416,7 +1416,7 @@ fn dir_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// `~` en lugar del home y, si la ruta es larga, solo las últimas tres carpetas (como el prompt).
+/// `~` in place of home and, for long paths, only the last three folders (like the prompt).
 fn abbreviate_home(path: &Path) -> String {
     let (prefix, rest) = match std::env::var_os("HOME")
         .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_path_buf))
@@ -1487,7 +1487,7 @@ impl Workspace {
     ) {
         let (action, secondary) = match event {
             PickerEvent::Selected(PickerAction::SetTheme(name)) => {
-                // Vista previa: se aplica sin guardar.
+                // Preview: apply without saving.
                 let preview = cx
                     .global::<Themes>()
                     .0
@@ -1512,7 +1512,7 @@ impl Workspace {
         self.dismiss_modal(window, cx);
         let terminal = self.active_terminal(cx);
         match action {
-            // Se despacha después de devolver el foco a la terminal, para que llegue a ella.
+            // Dispatch after focus returns to the terminal, so the action reaches it.
             PickerAction::Dispatch(action) => {
                 window.defer(cx, move |window, cx| window.dispatch_action(action, cx))
             }
@@ -1547,15 +1547,15 @@ impl Workspace {
 
         let mut items = vec![
             PickerItem::new(
-                "Acciones",
-                "Nueva pestaña",
+                "Actions",
+                "New Tab",
                 PickerAction::Dispatch(Box::new(NewTab)),
             )
             .icon(IconName::Plus)
             .shortcut(NewTab),
             PickerItem::new(
-                "Acciones",
-                "Buscar en el historial",
+                "Actions",
+                "Search History",
                 PickerAction::Dispatch(Box::new(SearchHistory)),
             )
             .icon(IconName::HistoryRerun)
@@ -1570,8 +1570,8 @@ impl Workspace {
         {
             items.push(
                 PickerItem::new(
-                    "Acciones",
-                    "Reconectar",
+                    "Actions",
+                    "Reconnect",
                     PickerAction::Dispatch(Box::new(Reconnect)),
                 )
                 .icon(IconName::RotateCw)
@@ -1581,8 +1581,8 @@ impl Workspace {
         if has_git {
             items.push(
                 PickerItem::new(
-                    "Acciones",
-                    "Cambiar de rama…",
+                    "Actions",
+                    "Switch Branch…",
                     PickerAction::Dispatch(Box::new(SwitchBranch)),
                 )
                 .icon(IconName::GitBranch),
@@ -1590,138 +1590,138 @@ impl Workspace {
         }
         items.extend([
             PickerItem::new(
-                "Acciones",
-                "Dividir a la derecha",
+                "Actions",
+                "Split Right",
                 PickerAction::Dispatch(Box::new(SplitRight)),
             )
             .shortcut(SplitRight),
             PickerItem::new(
-                "Acciones",
-                "Dividir hacia abajo",
+                "Actions",
+                "Split Down",
                 PickerAction::Dispatch(Box::new(SplitDown)),
             )
             .shortcut(SplitDown),
             PickerItem::new(
-                "Acciones",
-                "Maximizar o restaurar el panel",
+                "Actions",
+                "Maximize or Restore Pane",
                 PickerAction::Dispatch(Box::new(TogglePaneZoom)),
             )
             .shortcut(TogglePaneZoom),
             PickerItem::new(
-                "Acciones",
-                "Reabrir pestaña cerrada",
+                "Actions",
+                "Reopen Closed Tab",
                 PickerAction::Dispatch(Box::new(ReopenTab)),
             )
             .shortcut(ReopenTab),
             PickerItem::new(
-                "Acciones",
-                "Buscar en la salida",
+                "Actions",
+                "Find in Output",
                 PickerAction::Dispatch(Box::new(terminal_view::FindOutput)),
             )
             .shortcut(terminal_view::FindOutput),
             PickerItem::new(
-                "Acciones",
-                "Mostrar sugerencias para la línea",
+                "Actions",
+                "Show Suggestions",
                 PickerAction::Dispatch(Box::new(terminal_view::ShowCompletions)),
             )
             .shortcut(terminal_view::ShowCompletions),
             PickerItem::new(
-                "Acciones",
-                "Copiar la salida del último comando",
+                "Actions",
+                "Copy Last Command Output",
                 PickerAction::Dispatch(Box::new(terminal_view::CopyCommandOutput)),
             )
             .shortcut(terminal_view::CopyCommandOutput),
             PickerItem::new(
-                "Acciones",
-                "Ir al comando anterior",
+                "Actions",
+                "Go to Previous Command",
                 PickerAction::Dispatch(Box::new(terminal_view::PreviousCommand)),
             )
             .shortcut(terminal_view::PreviousCommand),
             PickerItem::new(
-                "Acciones",
-                "Aumentar texto",
+                "Actions",
+                "Zoom In",
                 PickerAction::Dispatch(Box::new(terminal_view::ZoomIn)),
             ),
             PickerItem::new(
-                "Acciones",
-                "Reducir texto",
+                "Actions",
+                "Zoom Out",
                 PickerAction::Dispatch(Box::new(terminal_view::ZoomOut)),
             ),
             PickerItem::new(
-                "Acciones",
-                "Restablecer zoom",
+                "Actions",
+                "Reset Zoom",
                 PickerAction::Dispatch(Box::new(terminal_view::ResetZoom)),
             ),
             PickerItem::new(
-                "Acciones",
+                "Actions",
                 if cx.global::<terminal_view::OptionAsMeta>().0 {
-                    "Dejar de usar ⌥ como Meta"
+                    "Stop Using ⌥ as Meta"
                 } else {
-                    "Usar ⌥ como Meta (⌥B, ⌥F, ⌥.)"
+                    "Use ⌥ as Meta (⌥B, ⌥F, ⌥.)"
                 },
                 PickerAction::Dispatch(Box::new(terminal_view::ToggleOptionAsMeta)),
             ),
             PickerItem::new(
-                "Acciones",
-                "Conectar a…",
+                "Actions",
+                "Connect to…",
                 PickerAction::Dispatch(Box::new(ConnectToHost)),
             )
             .icon(IconName::Server),
             PickerItem::new(
-                "Acciones",
-                "Cambiar tema…",
+                "Actions",
+                "Change Theme…",
                 PickerAction::Dispatch(Box::new(SelectTheme)),
             )
             .icon(IconName::Sparkle),
             PickerItem::new(
-                "Acciones",
-                "Abrir configuración (fuente, editor, scrollback)",
+                "Actions",
+                "Open Settings (font, editor, scrollback)",
                 PickerAction::Dispatch(Box::new(OpenConfig)),
             )
             .icon(IconName::Settings),
             PickerItem::new(
-                "Acciones",
-                "Limpiar pantalla",
+                "Actions",
+                "Clear Screen",
                 PickerAction::Dispatch(Box::new(ClearScreen)),
             )
             .icon(IconName::Eraser)
             .shortcut(ClearScreen),
             PickerItem::new(
-                "Acciones",
-                "Copiar pantalla",
+                "Actions",
+                "Copy Screen",
                 PickerAction::Dispatch(Box::new(terminal_view::Copy)),
             )
             .icon(IconName::Copy),
             PickerItem::new(
-                "Acciones",
-                "Pegar",
+                "Actions",
+                "Paste",
                 PickerAction::Dispatch(Box::new(terminal_view::Paste)),
             )
             .icon(IconName::Download),
             PickerItem::new(
-                "Acciones",
-                "Pestaña siguiente",
+                "Actions",
+                "Next Tab",
                 PickerAction::Dispatch(Box::new(NextTab)),
             )
             .icon(IconName::ArrowRight)
             .shortcut(NextTab),
             PickerItem::new(
-                "Acciones",
-                "Pestaña anterior",
+                "Actions",
+                "Previous Tab",
                 PickerAction::Dispatch(Box::new(PreviousTab)),
             )
             .icon(IconName::ArrowLeft)
             .shortcut(PreviousTab),
             PickerItem::new(
-                "Acciones",
-                "Cerrar pestaña",
+                "Actions",
+                "Close Tab",
                 PickerAction::Dispatch(Box::new(CloseTab)),
             )
             .icon(IconName::Close)
             .shortcut(CloseTab),
             PickerItem::new(
-                "Acciones",
-                "Salir de Moth",
+                "Actions",
+                "Quit Moth",
                 PickerAction::Dispatch(Box::new(Quit)),
             )
             .icon(IconName::Exit)
@@ -1741,8 +1741,8 @@ impl Workspace {
         for ix in 0..self.tabs.len() {
             let tab_terminal = self.tabs[ix].view().read(cx).terminal().read(cx);
             let mut item = PickerItem::new(
-                "Pestañas abiertas",
-                format!("Ir a {}", self.tab_title(ix, cx)),
+                "Open Tabs",
+                format!("Go to {}", self.tab_title(ix, cx)),
                 PickerAction::ActivateTab(ix),
             )
             .icon(IconName::Terminal);
@@ -1762,24 +1762,24 @@ impl Workspace {
         {
             items.push(
                 PickerItem::new(
-                    "Carpetas recientes",
+                    "Recent Folders",
                     abbreviate_home(&dir),
                     PickerAction::OpenDirInNewTab(dir),
                 )
                 .kind(SuggestionKind::Path)
-                .detail("abrir en pestaña nueva")
+                .detail("open in new tab")
                 .mono(),
             );
         }
 
         let config = PickerConfig {
-            placeholder: "Buscar comandos, pestañas o carpetas…".into(),
+            placeholder: "Search commands, tabs, or folders…".into(),
             query: String::new(),
-            empty_text: "Nada coincide con la búsqueda".into(),
+            empty_text: "No matches".into(),
             hints: vec![
-                ("↑↓".into(), "navegar".into()),
-                ("⏎".into(), "ejecutar".into()),
-                ("esc".into(), "cerrar".into()),
+                ("↑↓".into(), "navigate".into()),
+                ("⏎".into(), "run".into()),
+                ("esc".into(), "close".into()),
             ],
             disabled_reason: None,
             selected_item: None,
@@ -1790,7 +1790,7 @@ impl Workspace {
     fn search_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.active_terminal(cx);
         let terminal = terminal.read(cx);
-        // Arranca con lo que ya estaba escrito en el prompt, como ⌃R.
+        // Start with whatever was already typed at the prompt, like ⌃R.
         let query = terminal
             .shell()
             .line
@@ -1816,21 +1816,21 @@ impl Workspace {
             })
             .unwrap_or_default();
         let config = PickerConfig {
-            placeholder: "Buscar en el historial…".into(),
+            placeholder: "Search history…".into(),
             query,
             empty_text: if items.is_empty() {
-                "El historial todavía no se cargó o está vacío".into()
+                "History hasn't loaded yet or is empty".into()
             } else {
-                "Ningún comando coincide".into()
+                "No matching commands".into()
             },
             hints: vec![
-                ("↑↓".into(), "navegar".into()),
-                ("⏎".into(), "llevar al prompt".into()),
-                ("⌘⏎".into(), "ejecutar".into()),
-                ("esc".into(), "cerrar".into()),
+                ("↑↓".into(), "navigate".into()),
+                ("⏎".into(), "insert at prompt".into()),
+                ("⌘⏎".into(), "run".into()),
+                ("esc".into(), "close".into()),
             ],
             disabled_reason: (!terminal.at_prompt())
-                .then(|| "Hay un comando en ejecución: termina para usar el historial".into()),
+                .then(|| "A command is running; wait for it to finish to use history".into()),
             selected_item: None,
         };
         self.open_modal(ModalKind::History, items, config, window, cx);
@@ -1853,35 +1853,39 @@ impl Workspace {
                     PickerAction::SwitchBranch(branch.clone()),
                 )
                 .kind(SuggestionKind::Branch);
-                if current { item.detail("actual") } else { item }
+                if current {
+                    item.detail("current")
+                } else {
+                    item
+                }
             })
             .collect();
         let config = PickerConfig {
-            placeholder: "Cambiar a la rama…".into(),
+            placeholder: "Switch to branch…".into(),
             query: String::new(),
-            empty_text: "Ninguna rama coincide".into(),
+            empty_text: "No matching branches".into(),
             hints: vec![
-                ("↑↓".into(), "navegar".into()),
+                ("↑↓".into(), "navigate".into()),
                 ("⏎".into(), "git switch".into()),
-                ("esc".into(), "cerrar".into()),
+                ("esc".into(), "close".into()),
             ],
             disabled_reason: (!terminal.at_prompt())
-                .then(|| "Hay un comando en ejecución: termina para cambiar de rama".into()),
+                .then(|| "A command is running; wait for it to finish to switch branches".into()),
             selected_item: None,
         };
         self.open_modal(ModalKind::Branches, items, config, window, cx);
     }
 
     fn select_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Se releen por si el usuario agregó o editó un tema desde la última vez.
+        // Reload them in case the user added or edited a theme since last time.
         let themes = theme::reload_themes(cx);
         let current = cx.tokens().name.clone();
         let items = themes
             .iter()
             .map(|t| {
                 let appearance = match t.appearance {
-                    Appearance::Dark => "oscuro",
-                    Appearance::Light => "claro",
+                    Appearance::Dark => "dark",
+                    Appearance::Light => "light",
                 };
                 let mut item =
                     PickerItem::new("", t.name.clone(), PickerAction::SetTheme(t.name.clone()))
@@ -1892,19 +1896,19 @@ impl Workspace {
                         })
                         .detail(appearance);
                 if t.name == current {
-                    item = item.detail(format!("{appearance} · actual"));
+                    item = item.detail(format!("{appearance} · current"));
                 }
                 item
             })
             .collect();
         let config = PickerConfig {
-            placeholder: "Elegir tema…".into(),
+            placeholder: "Choose a theme…".into(),
             query: String::new(),
-            empty_text: "Ningún tema coincide".into(),
+            empty_text: "No matching themes".into(),
             hints: vec![
-                ("↑↓".into(), "vista previa".into()),
-                ("⏎".into(), "usar".into()),
-                ("esc".into(), "volver al anterior".into()),
+                ("↑↓".into(), "preview".into()),
+                ("⏎".into(), "apply".into()),
+                ("esc".into(), "revert".into()),
             ],
             disabled_reason: None,
             selected_item: themes.iter().position(|t| t.name == current),
@@ -1938,7 +1942,7 @@ impl Workspace {
         }
     }
 
-    /// Franja bajo las pestañas cuando la sesión activa es de producción.
+    /// Banner below the tabs when the active session is a production one.
     fn render_production_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let terminal = self.active_terminal(cx);
         let terminal = terminal.read(cx);
@@ -1954,18 +1958,18 @@ impl Workspace {
             .clone()
             .map(|l| {
                 if l.eq_ignore_ascii_case("prod") {
-                    "PRODUCCIÓN".to_string()
+                    "PRODUCTION".to_string()
                 } else {
                     l.to_uppercase()
                 }
             })
-            .unwrap_or_else(|| "PRODUCCIÓN".into());
+            .unwrap_or_else(|| "PRODUCTION".into());
         let reason = match (&remote.identity.matched, &hosts::rules(cx).source) {
             (Some(pattern), RulesSource::File(_)) => {
-                format!("· coincide con {pattern} en hosts.json")
+                format!("· matches {pattern} in hosts.json")
             }
             (Some(pattern), RulesSource::Defaults) => {
-                format!("· coincide con {pattern} (regla por defecto)")
+                format!("· matches {pattern} (default rule)")
             }
             (None, _) => String::new(),
         };
@@ -2017,7 +2021,7 @@ impl Workspace {
                                 .color(Color::Muted),
                         )
                         .child(
-                            Label::new("Pegado protegido")
+                            Label::new("Paste protection")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),
@@ -2039,11 +2043,11 @@ impl Workspace {
             .map(|r| format!("{}:{}", r.hostname, r.port));
         let minutes = remote.started.elapsed().as_secs() / 60;
         let connected = if minutes == 0 {
-            "conectado · recién".to_string()
+            "connected · just now".to_string()
         } else if minutes < 60 {
-            format!("conectado · {minutes} min")
+            format!("connected · {minutes} min")
         } else {
-            format!("conectado · {}h {}min", minutes / 60, minutes % 60)
+            format!("connected · {}h {}min", minutes / 60, minutes % 60)
         };
         let tab_count = self.tabs.len();
 
@@ -2120,9 +2124,9 @@ impl Workspace {
                         )
                         .child(
                             Label::new(if tab_count == 1 {
-                                "1 pestaña".to_string()
+                                "1 tab".to_string()
                             } else {
-                                format!("{tab_count} pestañas")
+                                format!("{tab_count} tabs")
                             })
                             .size(LabelSize::XSmall)
                             .color(Color::Placeholder),
@@ -2147,7 +2151,7 @@ impl Workspace {
         };
         let mut items = Vec::new();
 
-        // Sesiones cortadas, de cualquier pestaña.
+        // Dropped sessions, from any tab.
         for (ix, tab) in self.tabs.iter().enumerate() {
             let shell = tab.view().read(cx).terminal().read(cx).shell();
             let Some(d) = shell
@@ -2159,18 +2163,18 @@ impl Workspace {
             };
             let minutes = d.at.elapsed().as_secs() / 60;
             let ago = if minutes == 0 {
-                "recién".to_string()
+                "just now".to_string()
             } else {
-                format!("hace {minutes} min")
+                format!("{minutes} min ago")
             };
             let mut item = PickerItem::new(
-                "Reconectar",
+                "Reconnect",
                 d.target.alias.clone(),
                 PickerAction::ReconnectTab(ix),
             )
             .icon(IconName::RotateCw)
             .detail(format!(
-                "se cortó {ago} · exit {}",
+                "disconnected {ago} · exit {}",
                 d.exit_code.unwrap_or(255)
             ))
             .mono();
@@ -2183,7 +2187,7 @@ impl Workspace {
             items.push(item);
         }
 
-        // Pestañas con sesión abierta, para avisarlo en cada host.
+        // Tabs with an open session, so each host can say so.
         let open_tabs: Vec<(usize, String)> = self
             .tabs
             .iter()
@@ -2200,7 +2204,7 @@ impl Workspace {
             let open = open_tabs
                 .iter()
                 .find(|(_, alias)| alias == &host.alias)
-                .map(|(ix, _)| format!("abierta en ⌘{} · ", ix + 1))
+                .map(|(ix, _)| format!("open in ⌘{} · ", ix + 1))
                 .unwrap_or_default();
             let mut item = PickerItem::new(
                 "~/.ssh/config",
@@ -2216,7 +2220,7 @@ impl Workspace {
             items.push(item);
         }
 
-        // `ssh …` del historial a destinos que no están en el config.
+        // `ssh …` commands from history to targets that aren't in the config.
         let mut seen: Vec<String> = config_hosts.iter().map(|h| h.alias.clone()).collect();
         if let Some(history) = shell::history(cx) {
             for command in history.entries.iter().rev() {
@@ -2234,7 +2238,7 @@ impl Workspace {
                 seen.push(key);
                 let (color, label) = identity_parts(&target.alias, None);
                 let mut item = PickerItem::new(
-                    "Del historial",
+                    "From History",
                     command.clone(),
                     PickerAction::RunCommand(command.clone()),
                 )
@@ -2252,25 +2256,25 @@ impl Workspace {
 
         let at_prompt = self.active_terminal(cx).read(cx).at_prompt();
         let config = PickerConfig {
-            placeholder: "Conectar a… alias, usuario@host o IP".into(),
+            placeholder: "Connect to… alias, user@host, or IP".into(),
             query: String::new(),
             empty_text: if items.is_empty() {
-                "No hay hosts en ~/.ssh/config ni en el historial".into()
+                "No hosts in ~/.ssh/config or history".into()
             } else {
-                "Ningún host coincide".into()
+                "No matching hosts".into()
             },
             hints: vec![
-                ("↑↓".into(), "navegar".into()),
-                ("⏎".into(), "abrir en pestaña nueva".into()),
+                ("↑↓".into(), "navigate".into()),
+                ("⏎".into(), "open in new tab".into()),
                 (
                     "⌘⏎".into(),
                     if at_prompt {
-                        "en esta pestaña".into()
+                        "in this tab".into()
                     } else {
-                        "en esta pestaña (no disponible)".into()
+                        "in this tab (unavailable)".into()
                     },
                 ),
-                ("esc".into(), "cerrar".into()),
+                ("esc".into(), "close".into()),
             ],
             disabled_reason: None,
             selected_item: None,
@@ -2303,8 +2307,8 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// Los paneles de la pestaña activa: uno solo (o el maximizado) ocupa todo; si no, el árbol
-    /// con divisores de un píxel y los paneles sin foco atenuados.
+    /// The active tab's panes: a single one (or the maximized one) fills everything; otherwise
+    /// the tree with one-pixel dividers and unfocused panes dimmed.
     fn render_panes(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tab = self.tabs.get(self.active)?;
         if tab.zoomed || tab.panes.len() == 1 {
@@ -2400,7 +2404,7 @@ impl Workspace {
         }
     }
 
-    /// Línea de un píxel entre paneles, con una zona más ancha para agarrarla y arrastrarla.
+    /// One-pixel line between panes, with a wider hit area for grabbing and dragging it.
     fn render_divider(
         &self,
         tab: usize,
@@ -2442,13 +2446,13 @@ impl Workspace {
             Axis::Row => line.w(px(1.)).h_full(),
             Axis::Column => line.h(px(1.)).w_full(),
         };
-        // `deferred` la pinta encima de los paneles, para que el panel de la derecha (o de
-        // abajo) no le tape la mitad de la zona.
+        // `deferred` paints it above the panes, so the pane to the right (or below) doesn't
+        // cover half of the hit area.
         line.child(deferred(handle)).into_any_element()
     }
 }
 
-/// Lo que viaja mientras se arrastra un divisor; también es la vista (vacía) del arrastre.
+/// Payload carried while dragging a divider; also serves as the (empty) drag view.
 #[derive(Clone)]
 struct DividerDrag {
     tab: usize,
@@ -2462,7 +2466,7 @@ impl Render for DividerDrag {
     }
 }
 
-/// Ningún panel se achica por debajo de esto al arrastrar.
+/// No pane shrinks below this when dragging.
 const MIN_PANE_SIZE: Pixels = px(80.);
 
 impl Focusable for Workspace {
@@ -2473,7 +2477,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Cualquier cambio que se ve (pestañas, paneles, carpetas, la ventana) pasa por acá.
+        // Every visible change (tabs, panes, folders, the window) goes through here.
         if !self.tabs.is_empty() {
             let snapshot = self.snapshot(window, cx);
             session::update(self.entity_id, snapshot, cx);
@@ -2567,7 +2571,7 @@ impl Render for Workspace {
                         .py(px(6.))
                         .gap(px(12.))
                         .child(Label::new(notice))
-                        .child(Button::new("dismiss-command-notice", "Cerrar").on_click(
+                        .child(Button::new("dismiss-command-notice", "Close").on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.command_notice = None;
                                 cx.notify();

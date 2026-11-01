@@ -1,116 +1,116 @@
 # Moth
 
-Terminal para macOS hecha con [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) y los componentes del crate `ui` de Zed. Usa el emulador de alacritty (el mismo fork que usa Zed).
+A macOS terminal built with [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) and the components from Zed's `ui` crate. It uses the alacritty emulator (the same fork Zed uses).
 
-El nombre viene de la polilla que el equipo del Harvard Mark II encontró trabada en un relé en 1947 y pegó en la bitácora como "el primer caso real de bug".
+The name comes from the moth the Harvard Mark II team found stuck in a relay in 1947 and taped into the logbook as the "first actual case of bug being found".
 
 ```bash
 cargo run
 ```
 
-Requiere Rust 1.99 (fijado en `rust-toolchain.toml`). Los shaders de Metal se compilan al iniciar (`runtime_shaders`), así que no hace falta el Metal Toolchain de Xcode. Para builds de release conviene instalarlo (`xcodebuild -downloadComponent MetalToolchain`) y quitar esa feature.
+Requires Rust 1.99 (pinned in `rust-toolchain.toml`). Metal shaders are compiled at startup (`runtime_shaders`), so Xcode's Metal Toolchain isn't needed. For release builds it's worth installing it (`xcodebuild -downloadComponent MetalToolchain`) and dropping that feature.
 
-Al abrir, la app vuelve a las ventanas, pestañas y paneles de la vez anterior (ver "Sesión"); la primera vez, o sin sesión guardada, abre en la última carpeta que usaste (se guarda en `~/Library/Application Support/moth/last_cwd`). Cada pestaña nueva abre en la carpeta de la pestaña activa. La shell se lanza directa como shell de login (`$SHELL -l`), sin pasar por `/usr/bin/login`, así que no aparece el "Last login: …".
+On launch, the app restores the windows, tabs and panes from last time (see "Windows and session"); on first run, or with no saved session, it opens in the last folder you used (stored in `~/Library/Application Support/moth/last_cwd`). Each new tab opens in the active tab's folder. The shell is launched directly as a login shell (`$SHELL -l`), without going through `/usr/bin/login`, so there's no "Last login: …" line.
 
-## Atajos
+## Shortcuts
 
-| Atajo | Acción |
+| Shortcut | Action |
 | --- | --- |
-| ⌘N | Nueva ventana (en la carpeta del panel activo) |
-| ⌘T | Nueva pestaña |
-| ⌘M | Minimizar la ventana |
-| ⌘W | Cerrar el panel (o la pestaña si tiene uno solo) |
-| Clic central en la pestaña | Cerrar la pestaña |
-| ⌘D / ⌘⇧D | Dividir el panel a la derecha / hacia abajo |
-| ⌘⌥← ↑ → ↓ · ⌘[ / ⌘] | Ir al panel de ese lado · anterior / siguiente |
-| ⌘⇧⏎ | Maximizar o restaurar el panel |
-| ⌘⇧T | Reabrir la última pestaña cerrada en su carpeta |
-| ⌘+ / ⌘− / ⌘0 | Aumentar / reducir / restablecer el tamaño del texto |
-| ⌘F | Buscar en la salida y el scrollback |
-| ⌘↑ / ⌘↓ | Ir al comando anterior / siguiente |
-| ⌘⇧C | Copiar la salida del comando elegido, o del último |
-| ⌘1…⌘8, ⌘9 | Ir a la pestaña N / a la última |
-| ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Pestaña siguiente / anterior |
-| ⌘K · ⌘⇧P | Paleta de comandos |
-| ⌘R | Buscar en el historial (⏎ lo lleva al prompt, ⌘⏎ lo ejecuta) |
-| ⌘L | Limpiar pantalla y scrollback |
-| ⌘⇧R | Reconectar la sesión SSH que se cortó |
-| ⌘V | Pegar (respeta bracketed paste) |
-| ⌘C | Copiar la selección (sin selección, la pantalla visible) |
-| Tab | Completion de la shell, como siempre (`Doc` → `Documents/`) |
-| ⌃Space | Sugerencias de la app (↑↓ elegir, Tab completar, ⏎ ejecutar, esc cerrar) |
-| → / Fin | Aceptar la sugerencia del historial |
-| ⌥← / ⌥→ · ⌥⌦ | Palabra anterior / siguiente · borrar la palabra siguiente (en el prompt) |
-| ⌘← / ⌘→ · ⌘⌫ | Inicio / fin de la línea · borrar la línea (en el prompt) |
+| ⌘N | New window (in the active pane's folder) |
+| ⌘T | New tab |
+| ⌘M | Minimize the window |
+| ⌘W | Close the pane (or the tab if it only has one) |
+| Middle-click on a tab | Close the tab |
+| ⌘D / ⌘⇧D | Split the pane right / down |
+| ⌘⌥← ↑ → ↓ · ⌘[ / ⌘] | Go to the pane on that side · previous / next pane |
+| ⌘⇧⏎ | Maximize or restore the pane |
+| ⌘⇧T | Reopen the last closed tab in its folder |
+| ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset the text size |
+| ⌘F | Find in the output and scrollback |
+| ⌘↑ / ⌘↓ | Go to the previous / next command |
+| ⌘⇧C | Copy the output of the selected command, or of the last one |
+| ⌘1…⌘8, ⌘9 | Go to tab N / to the last tab |
+| ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Next / previous tab |
+| ⌘K · ⌘⇧P | Command palette |
+| ⌘R | Search history (⏎ puts it on the prompt, ⌘⏎ runs it) |
+| ⌘L | Clear the screen and scrollback |
+| ⌘⇧R | Reconnect a dropped SSH session |
+| ⌘V | Paste (honors bracketed paste) |
+| ⌘C | Copy the selection (with no selection, the visible screen) |
+| Tab | Shell completion, as usual (`Doc` → `Documents/`) |
+| ⌃Space | App suggestions (↑↓ choose, Tab complete, ⏎ run, esc close) |
+| → / End | Accept the history suggestion |
+| ⌥← / ⌥→ · ⌥⌦ | Previous / next word · delete the next word (at the prompt) |
+| ⌘← / ⌘→ · ⌘⌫ | Start / end of line · delete the line (at the prompt) |
 
-## Paneles
+## Panes
 
-⌘D divide el panel activo a la derecha y ⌘⇧D hacia abajo; el nuevo abre en la misma carpeta y queda con el foco. Dividir parte el panel a la mitad; dividir varias veces en el mismo sentido agrega paneles uno al lado del otro en vez de anidarlos. El divisor entre paneles se arrastra para cambiar los tamaños (ningún panel baja de 80 px), y al cerrar un panel su espacio pasa al vecino. Un clic en un panel le da el foco, y los demás se ven atenuados. ⌘⌥ con las flechas va al panel de ese lado, y ⌘[ / ⌘] recorren los paneles en orden de lectura. ⌘⇧⏎ maximiza el panel activo dentro de la pestaña y lo restaura.
+⌘D splits the active pane to the right and ⌘⇧D splits it down; the new pane opens in the same folder and gets focus. Splitting halves the pane; splitting several times in the same direction adds panes side by side instead of nesting them. Drag the divider between panes to resize them (no pane goes below 80 px), and when a pane is closed its space goes to its neighbor. Clicking a pane focuses it, and the others are dimmed. ⌘⌥ plus the arrow keys moves to the pane on that side, and ⌘[ / ⌘] cycle through panes in reading order. ⌘⇧⏎ maximizes the active pane within the tab and restores it.
 
-⌘W cierra el panel activo (con la confirmación si tiene algo corriendo) y el foco pasa al anterior; con un solo panel cierra la pestaña. La × de la pestaña la cierra con todos sus paneles. El título de la pestaña y la barra de estado muestran el panel activo.
+⌘W closes the active pane (asking for confirmation if something is running) and focus moves to the previous one; with a single pane it closes the tab. The tab's × closes it along with all its panes. The tab title and the status bar reflect the active pane.
 
-## Ventanas y sesión
+## Windows and session
 
-⌘N abre otra ventana, corrida un poco respecto de la actual y en la carpeta del panel activo. ⌘Q pide confirmación si hay algo corriendo en cualquier ventana. Además de Shell, la barra de menús tiene Edición (copiar, pegar, buscar, copiar la salida del comando, limpiar) y Ventana (minimizar, zoom, pestañas y paneles).
+⌘N opens another window, offset slightly from the current one and in the active pane's folder. ⌘Q asks for confirmation if anything is running in any window. Besides Shell, the menu bar has Edit (copy, paste, find, copy command output, clear) and Window (minimize, zoom, tabs and panes).
 
-La app guarda en `session.json` las ventanas (con su posición), sus pestañas y la distribución de los paneles con la carpeta de cada uno, y al relanzarla los abre igual. No restaura procesos, el contenido de la pantalla ni las sesiones SSH. Salir con ⌘Q conserva todo; cerrar una ventana a mano la descarta, y si era la última, la próxima vez se empieza de cero. Para no restaurar nada, `"restore_session": false` en la configuración.
+The app saves the windows (with their position), their tabs and the pane layout with each pane's folder to `session.json`, and reopens them the same way on relaunch. It doesn't restore processes, screen contents or SSH sessions. Quitting with ⌘Q keeps everything; closing a window by hand discards it, and if it was the last one, the next launch starts fresh. To never restore anything, set `"restore_session": false` in the settings.
 
-## Teclado
+## Keyboard
 
-En el prompt, ⌥ y ⌘ editan como en el resto de macOS (mandan `ESC b`/`ESC f` y `⌃A`/`⌃E`/`⌃U`, que entienden zsh, bash y readline). En programas de pantalla completa (vim, less, htop) esas teclas mandan las secuencias estándar de xterm.
+At the prompt, ⌥ and ⌘ edit like everywhere else in macOS (they send `ESC b`/`ESC f` and `⌃A`/`⌃E`/`⌃U`, which zsh, bash and readline understand). In full-screen programs (vim, less, htop) those keys send the standard xterm sequences.
 
-Por defecto ⌥+letra escribe el carácter de macOS, porque en teclados como el español ⌥ es la forma de escribir `@`, `#` o `|`. "Usar ⌥ como Meta" en la paleta (⌘K) hace que ⌥+tecla mande `ESC` + tecla (⌥B, ⌥F, ⌥. en zsh); la opción se guarda entre ejecuciones.
+By default ⌥+letter types the macOS character, because on layouts such as Spanish ⌥ is how you type `@`, `#` or `|`. "Use ⌥ as Meta" in the palette (⌘K) makes ⌥+key send `ESC` + key (⌥B, ⌥F, ⌥. in zsh); the choice persists across runs.
 
-## Cerrar pestañas y salir
+## Closing tabs and quitting
 
-Si una pestaña tiene un comando en curso o una sesión SSH, ⌘W, ⌘Q, el botón de cerrar de la pestaña o el de la ventana piden confirmación con la lista de lo que se cortaría (⏎ confirma, esc cancela; repetir el atajo también confirma). Requiere la integración de zsh para saber qué está corriendo.
+If a tab has a running command or an SSH session, ⌘W, ⌘Q, the tab's close button or the window's close button ask for confirmation ("Close this tab?", "Close this pane?", "Quit Moth?") and list what would be interrupted (⏎ confirms, esc cancels; pressing the shortcut again also confirms). This needs the zsh integration to know what's running.
 
-Cuando la shell termina con `exit` o ⌃D, la pestaña se cierra. Si la mata una señal o sale con error apenas abre (un `.zshrc` roto, por ejemplo), la pestaña queda abierta con la salida y un aviso: ⏎ abre una shell nueva en la misma carpeta y ⌘W cierra.
+When the shell exits with `exit` or ⌃D, the tab closes. If it's killed by a signal or exits with an error right after starting (a broken `.zshrc`, for example), the tab stays open with the output and a banner: "Open New Shell" (⏎) starts a new shell in the same folder and "Close" (⌘W) closes the tab.
 
-## Avisos, zoom y recuperación de pestañas
+## Notifications, zoom and reopening tabs
 
-Cuando un comando dura al menos 10 segundos y termina en una pestaña inactiva o con la ventana en segundo plano, la app marca la pestaña y muestra un aviso con el comando, su resultado y duración. El aviso se cierra con su botón. Si la app está en segundo plano, además aparece una notificación de macOS con el resultado (✓ o ✕), el comando y la duración; `"notifications": false` en la configuración la apaga. Requiere la integración de zsh.
+When a command runs for at least 10 seconds and finishes in an inactive tab or while the window is in the background, the app flags the tab and shows a notice with the command, its result and duration. The notice is dismissed with its button. If the app is in the background, a macOS notification also appears with the result (✓ or ✕), the command and the duration; `"notifications": false` in the settings turns it off. Requires the zsh integration.
 
-El zoom cambia el texto de todas las pestañas, ajusta el tamaño de las celdas y se guarda entre ejecuciones. El rango es de 8 a 32 puntos y ⌘0 restaura 13,5 puntos.
+Zoom changes the text in every tab, adjusts the cell size and persists across runs. The range is 8 to 32 points and ⌘0 resets it to 13.5 points.
 
-⌘⇧T recupera hasta las últimas 20 carpetas de pestañas cerradas, incluso tras reiniciar la app. Abre una shell nueva: no restaura procesos ni ejecuta de nuevo comandos SSH. Si la carpeta ya no existe, se omite.
+⌘⇧T ("Reopen Closed Tab") brings back up to the last 20 folders of closed tabs, even after restarting the app. It opens a new shell: it doesn't restore processes or re-run SSH commands. Folders that no longer exist are skipped.
 
-## Bloques de comandos
+## Command blocks
 
-Con la integración de zsh, la salida queda dividida en bloques: un prompt, el comando y lo que imprimió.
+With the zsh integration, the output is split into command blocks: a prompt, the command and what it printed.
 
-- ⌘↑ y ⌘↓ recorren los comandos: el elegido se resalta con una barra de acento y queda arriba de la vista. Pasado el último, ⌘↓ vuelve al final; escribir cualquier cosa quita la selección.
-- ⌘⇧C copia la salida del comando elegido o, sin elegir, la del último comando. Copia solo la salida, sin el prompt ni el comando.
-- Los comandos que terminaron con error (incluido ⌃C) llevan una barra roja en el margen izquierdo.
+- ⌘↑ and ⌘↓ ("Go to Previous Command") step through commands: the selected one is highlighted with an accent bar and scrolled to the top of the view. Past the last one, ⌘↓ returns to the bottom; typing anything clears the selection.
+- ⌘⇧C copies the output of the selected command or, with nothing selected, of the last command ("Copy Last Command Output"). It copies only the output, without the prompt or the command.
+- Commands that failed (including ⌃C) get a red bar in the left margin.
 
-Para delimitar los bloques, el escáner del PTY inserta después de cada fin de prompt (`OSC 133;B`) unos caracteres invisibles de ancho cero que alacritty guarda en la celda. Así los bloques siguen al texto al hacer scroll, al cambiar el tamaño de la ventana o cuando el scrollback descarta líneas viejas. Esos caracteres se quitan al copiar y no se dibujan. La integración informa además cuántas filas ocupa el prompt; con temas que arman el prompt en tiempo de ejecución (p10k), ese número puede quedar corto y el bloque incluir la primera fila del prompt siguiente.
+To delimit blocks, the PTY scanner inserts a few invisible zero-width characters after each end of prompt (`OSC 133;B`), which alacritty stores in the cell. That way blocks follow the text when scrolling, when the window is resized or when the scrollback drops old lines. These characters are stripped when copying and never drawn. The integration also reports how many rows the prompt takes up; with themes that build the prompt at runtime (p10k), that number can come up short and the block may include the first row of the next prompt.
 
-## Buscar en la salida
+## Find in output
 
-⌘F abre un campo sobre la terminal. Busca texto literal en la pantalla y el scrollback, incluidas las líneas partidas; resalta la coincidencia y desplaza la vista hasta ella. ⏎ busca la siguiente, ⇧⏎ la anterior y Esc cierra el buscador. Los botones ↑ y ↓ también navegan y la búsqueda vuelve al principio o al final al llegar al extremo. Las consultas en minúsculas ignoran mayúsculas; incluir una mayúscula hace que la búsqueda distinga el caso.
+⌘F ("Find in Output") opens a field above the terminal. It searches for literal text in the screen and scrollback, including wrapped lines; it highlights the match and scrolls the view to it. ⏎ finds the next match, ⇧⏎ the previous one and Esc closes the find bar. The ↑ and ↓ buttons also navigate, and the search wraps around at either end. Lowercase queries are case-insensitive; including an uppercase letter makes the search case-sensitive.
 
-## Selección y mouse
+## Selection and mouse
 
-Arrastrar selecciona, doble clic selecciona una palabra, triple clic una línea y Shift+clic extiende la selección; ⌘C la copia y escribir la descarta. Cuando un programa pide el mouse (vim, htop, lazygit, Claude Code…), los clics, el arrastre y la rueda le llegan a él en formato SGR o X10; con Shift se selecciona igual.
+Dragging selects, double-click selects a word, triple-click a line and Shift+click extends the selection; ⌘C copies it and typing clears it. When a program requests the mouse (vim, htop, lazygit, Claude Code…), clicks, drags and the scroll wheel go to it in SGR or X10 format; hold Shift to select anyway.
 
 ## Completions
 
-Tab en el prompt es la completion de la shell, así que navegar carpetas con `Doc` + Tab funciona como en cualquier terminal. Las sugerencias de la app van aparte, para no pisar ese hábito: la del historial se ve en gris y se acepta con → o Fin, y ⌃Space abre un popup con lo que se puede escribir donde está el cursor: comandos (PATH, alias, funciones, builtins), subcomandos y flags de herramientas comunes con su descripción, ramas de git, scripts de `package.json`, hosts de `~/.ssh/config`, rutas e historial. El resto del candidato elegido se ve en gris en la línea y un panel muestra su documentación (uso y flags). Si hay un solo candidato se completa directo, y después de completar una carpeta el popup se vuelve a abrir con lo que hay adentro. Sin nada que sugerir, ⌃Space le llega a la shell como siempre. Con `"tab_completion": "popup"` en la configuración, Tab abre el popup como antes. Las especificaciones están en [`assets/completions/specs.json`](assets/completions/specs.json) y se pueden ampliar.
+Tab at the prompt is the shell's completion, so navigating folders with `Doc` + Tab works like in any terminal. The app's suggestions are separate so they don't get in the way of that habit: the history suggestion appears in gray and is accepted with → or End, and ⌃Space ("Show Suggestions") opens a popup with what can be typed at the cursor: commands (PATH, aliases, functions, builtins), subcommands and flags of common tools with their descriptions, git branches, `package.json` scripts, hosts from `~/.ssh/config`, paths and history. The rest of the selected candidate is shown in gray on the line, and a side panel shows its documentation (usage and flags). If there's only one candidate it's completed right away, and after completing a folder the popup reopens with its contents. With nothing to suggest, ⌃Space goes to the shell as usual. With `"tab_completion": "popup"` in the settings, Tab opens the popup as it used to. The specs live in [`assets/completions/specs.json`](assets/completions/specs.json) and can be extended.
 
 ## Links
 
-Las URLs de la salida (`http`, `https`, `ftp`, `file`, `mailto`), incluso las que se parten en dos filas, y los hipervínculos OSC 8 (`ls --hyperlink`, compiladores) se subrayan al pasar el mouse y se abren en el navegador predeterminado con un clic. Se abren al soltar el botón sobre el mismo link, y el clic que solo activa la ventana no abre nada. En la línea que estás escribiendo el clic sigue moviendo el cursor. Por seguridad no se abren otros esquemas, aunque lleguen por OSC 8.
+URLs in the output (`http`, `https`, `ftp`, `file`, `mailto`), including ones wrapped across two rows, and OSC 8 hyperlinks (`ls --hyperlink`, compilers) are underlined on hover and open in the default browser with a click. They open when the button is released over the same link, and a click that only activates the window opens nothing. On the line you're typing, a click still moves the cursor. For safety, other schemes are never opened, even when they arrive via OSC 8.
 
-Las rutas a archivos también son links, con su línea y columna si la salida las trae: `src/main.rs:12:5` (rustc, grep, go, pytest), `src/app.ts(12,5)` (tsc) y `File "app.py", line 7` (Python). Se resuelven contra la carpeta actual de la pestaña (también `~/…`, absolutas y las `a/…` y `b/…` de `git diff`), y solo se subrayan si el archivo existe. Un clic las abre en el editor:
+File paths are links too, with their line and column if the output includes them: `src/main.rs:12:5` (rustc, grep, go, pytest), `src/app.ts(12,5)` (tsc) and `File "app.py", line 7` (Python). They're resolved against the tab's current folder (also `~/…`, absolute paths and the `a/…` and `b/…` paths from `git diff`), and are only underlined if the file exists. A click opens them in the editor:
 
-- el de `editor` en la configuración, o el primero que encuentre entre Zed, Cursor, VS Code, Windsurf y Sublime Text (en el PATH de la shell o dentro de la app en `/Applications`);
-- sin ninguno, con la app predeterminada de macOS, sin ir a la línea.
+- the one set as `editor` in the settings, or the first one found among Zed, Cursor, VS Code, Windsurf and Sublime Text (on the shell's PATH or inside the app in `/Applications`);
+- if none is found, the macOS default app, without jumping to the line.
 
-Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pestaña nueva. En una sesión SSH las rutas no son links, porque son archivos del servidor. Los hipervínculos `file://` locales también van al editor.
+Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an SSH session paths aren't links, since they're files on the server. Local `file://` hyperlinks also go to the editor.
 
-## Configuración
+## Settings
 
-"Abrir configuración" en la paleta (⌘K) crea y abre `~/Library/Application Support/moth/config.json`. Todo es opcional:
+"Open Settings (font, editor, scrollback)" in the palette (⌘K) creates and opens `~/Library/Application Support/moth/config.json`. Everything is optional:
 
 ```json
 {
@@ -123,30 +123,30 @@ Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pe
 }
 ```
 
-- `font_family`: la fuente de la terminal. Con Geist Mono (la de siempre), los íconos de starship o p10k salen de "Symbols Nerd Font" si la tienes instalada.
-- `editor`: `zed`, `code`, `cursor`, `windsurf`, `subl`, `idea`, `nvim`, `hx`… o una plantilla con `{file}`, `{line}` y `{column}`, como `"myeditor --goto {file}:{line}"`.
-- `scrollback`: líneas que guarda cada pestaña nueva (hasta 100.000).
-- `restore_session`: abrir las ventanas, pestañas y paneles de la vez anterior (sí por defecto).
-- `notifications`: notificación de macOS cuando un comando largo termina con la app en segundo plano (sí por defecto).
-- `tab_completion`: `"shell"` (por defecto) deja Tab a la completion de zsh; `"popup"` hace que Tab abra las sugerencias de la app.
+- `font_family`: the terminal font. With Geist Mono (the default), starship or p10k icons come from "Symbols Nerd Font" if you have it installed.
+- `editor`: `zed`, `code`, `cursor`, `windsurf`, `subl`, `idea`, `nvim`, `hx`… or a template with `{file}`, `{line}` and `{column}`, such as `"myeditor --goto {file}:{line}"`.
+- `scrollback`: lines kept by each new tab (up to 100,000).
+- `restore_session`: reopen the previous session's windows, tabs and panes (on by default).
+- `notifications`: macOS notification when a long command finishes while the app is in the background (on by default).
+- `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
 
-El archivo se relee al volver a la ventana. Una clave mal escrita o un JSON inválido muestran un aviso y se usan los valores por defecto.
+The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
 
-## Paleta de comandos e historial
+## Command palette and history
 
-⌘K abre la paleta: acciones (con sus atajos), las pestañas abiertas y las carpetas recientes, que abren en una pestaña nueva. ⌘R abre la búsqueda en el historial de zsh: arranca con lo que ya estaba escrito en el prompt, filtra con coincidencia difusa y resalta los caracteres que coinciden. ⏎ lleva el comando al prompt para editarlo y ⌘⏎ lo ejecuta. Clic en la rama de la barra de estado (o "Cambiar de rama…" en la paleta) abre el mismo buscador con las ramas locales.
+⌘K opens the command palette: actions (with their shortcuts), open tabs and recent folders, which open in a new tab. ⌘R ("Search History") opens the zsh history search: it starts with whatever was already typed at the prompt, filters with fuzzy matching and highlights the matching characters. ⏎ puts the command on the prompt for editing and ⌘⏎ runs it. Clicking the branch in the status bar (or "Switch Branch…" in the palette) opens the same picker with the local branches.
 
-## Sesiones SSH
+## SSH sessions
 
-Cuando ejecutas `ssh` (con la integración de zsh), la app reconoce el destino (`user@host`, `-p`, `-J`, `-l`, `ssh://…`) y lo resuelve con `ssh -G`, que aplica tu `~/.ssh/config` sin conectarse. Mientras dure la sesión:
+When you run `ssh` (with the zsh integration), the app recognizes the destination (`user@host`, `-p`, `-J`, `-l`, `ssh://…`) and resolves it with `ssh -G`, which applies your `~/.ssh/config` without connecting. For the duration of the session:
 
-- la pestaña muestra el host con un ícono ⇄, su chip (`PROD`, `STG`…) y la línea superior en el color del host;
-- la barra de estado cambia a `usuario@host`, `hostname:puerto`, la carpeta remota (si el servidor la pone en el título, como hacen Debian y Ubuntu) y el tiempo conectado;
-- si el host es de producción, aparece una franja bajo las pestañas, un borde alrededor de la terminal, y pegar varias líneas pide confirmación (esc cancela, ⌘⏎ pega igual).
+- the tab shows the host with a ⇄ icon, its chip (`PROD`, `STG`…) and the top line in the host's color;
+- the status bar switches to `user@host`, `hostname:port`, the remote folder (if the server puts it in the title, as Debian and Ubuntu do) and the time connected;
+- if the host is production, a banner appears below the tabs, a border surrounds the terminal, and pasting multiple lines asks for confirmation (esc cancels, ⌘⏎ is "Paste Anyway").
 
-Si `ssh` termina con exit 255 (la conexión se cortó), la pestaña queda tachada con un botón para reconectar (también ⌘⇧R o desde la paleta). "Conectar a…" en ⌘K lista las sesiones cortadas, los hosts de `~/.ssh/config` (con sus `Include`) y los `ssh` del historial; ⏎ abre una pestaña nueva y ⌘⏎ conecta en la actual.
+If `ssh` exits with code 255 (the connection dropped), the tab is struck through and gets a button to reconnect (also ⌘⇧R or "Reconnect" in the palette). "Connect to…" in ⌘K lists dropped sessions, hosts from `~/.ssh/config` (following its `Include`s) and `ssh` commands from history; ⏎ opens a new tab and ⌘⏎ connects in the current one.
 
-La identidad de cada host se define en `~/Library/Application Support/moth/hosts.json`. Cada regla se compara (glob con `*` y `?`) contra el alias y contra el hostname real; gana la primera que coincide:
+Each host's identity is defined in `~/Library/Application Support/moth/hosts.json`. Each rule is matched (glob with `*` and `?`) against the alias and against the real hostname; the first match wins:
 
 ```json
 {
@@ -157,82 +157,82 @@ La identidad de cada host se define en `~/Library/Application Support/moth/hosts
 }
 ```
 
-`color` acepta colores ANSI del tema (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`) o un hex. Sin ese archivo se usan reglas por defecto: `*prod*`, `*production*` y `*live*` como producción, y `*staging*` y `*stg*` como STG. Si creas el archivo, reemplaza esas reglas. Los hosts sin regla reciben un color estable según su nombre.
+`color` accepts ANSI colors from the theme (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`) or a hex value. Without that file, built-in rules are used: `*prod*`, `*production*` and `*live*` as production, and `*staging*` and `*stg*` as STG. If you create the file, it replaces those rules. Hosts without a rule get a stable color based on their name.
 
-## Temas
+## Themes
 
-Los colores salen de tokens (los de la hoja "Tokens y componentes" del diseño): interfaz, estado, sintaxis de la línea de comandos y los 16 colores ANSI. Vienen dos temas, **Graphite** (oscuro) y **Graphite Light**. "Cambiar tema…" en la paleta (⌘K) abre el selector: con ↑↓ se ve una vista previa en vivo, ⏎ lo guarda y esc vuelve al anterior. El cambio recolorea también la salida que ya está en pantalla y el prompt, porque usan colores ANSI que se resuelven con el tema activo.
+Colors come from tokens (the ones on the design's "Tokens and components" sheet): UI, status, command-line syntax and the 16 ANSI colors. Two themes ship with the app, **Graphite** (dark) and **Graphite Light**. "Change Theme…" in the palette (⌘K) opens the picker: ↑↓ shows a live preview, ⏎ saves it and esc goes back to the previous one. Switching also recolors the output already on screen and the prompt, since they use ANSI colors resolved against the active theme.
 
-Para crear un tema, agrega un `.json` en `~/Library/Application Support/moth/themes/`. Hereda de `base` (Graphite si no se indica) y basta con los colores que cambian; el selector relee la carpeta cada vez que se abre:
+To create a theme, add a `.json` file to `~/Library/Application Support/moth/themes/`. It inherits from `base` (Graphite if omitted), so only the colors that change are needed; the picker re-reads the folder every time it opens:
 
 ```json
 {
-  "name": "Graphite Naranja",
+  "name": "Graphite Orange",
   "base": "Graphite",
   "ui": { "accent": "#FF9F43" },
   "syntax": { "command": "#FF9F43" }
 }
 ```
 
-Las claves disponibles están en [`assets/themes/graphite.json`](assets/themes/graphite.json). Un color inválido o una clave mal escrita invalida el tema, y el error queda en el log de la app.
+The available keys are in [`assets/themes/graphite.json`](assets/themes/graphite.json). An invalid color or a misspelled key invalidates the theme, and the error goes to the app log.
 
-## Log y seguridad
+## Logging and security
 
-Los errores de la app (un tema o `hosts.json` inválidos, una pestaña que no se pudo abrir) se guardan en `~/Library/Logs/moth/moth.log`, además de la salida estándar.
+App errors (an invalid theme or `hosts.json`, a tab that failed to open) are written to `~/Library/Logs/moth/moth.log`, in addition to standard output.
 
-La app antes se llamaba terminalapp. Al abrir Moth por primera vez, si existe `~/Library/Application Support/terminalapp` y todavía no hay una carpeta `moth`, se mueve entera, así se conservan la configuración, los temas, los hosts y la sesión.
+The app used to be called terminalapp. The first time Moth starts, if `~/Library/Application Support/terminalapp` exists and there's no `moth` folder yet, it's moved over wholesale, so settings, themes, hosts and the session are kept.
 
-Los programas pueden copiar al portapapeles con OSC 52 (útil para copiar desde vim o tmux en un servidor remoto), pero no leerlo: así un servidor SSH o un archivo con secuencias de escape no pueden llevarse lo que copiaste.
+Programs can copy to the clipboard with OSC 52 (handy for copying from vim or tmux on a remote server), but can't read it: that way an SSH server or a file full of escape sequences can't grab what you copied.
 
-## Integración con zsh
+## zsh integration
 
-Al abrir una pestaña con zsh, la app instala `assets/shell/zsh/` en `~/Library/Application Support/moth/shell/zsh` y arranca zsh con `ZDOTDIR` apuntando ahí. Ese `.zshenv` restaura tu `ZDOTDIR`, carga tu `.zshenv` y luego la integración; `.zprofile` y `.zshrc` siguen siendo los tuyos.
+When a tab opens with zsh, the app installs `assets/shell/zsh/` into `~/Library/Application Support/moth/shell/zsh` and starts zsh with `ZDOTDIR` pointing there. That `.zshenv` restores your `ZDOTDIR`, sources your `.zshenv` and then the integration; `.zprofile` and `.zshrc` are still your own.
 
-La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code; el fin de prompt lleva también las filas del prompt y si falló el comando anterior), OSC 7 (directorio actual) y OSC 7777, propios: la línea en edición en cada tecla, el comando ejecutado, `HISTFILE`, `PATH` y los nombres de alias, funciones y builtins. La app los detecta en la salida del PTY antes de pasársela a alacritty y con eso:
+The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH` and the names of aliases, functions and builtins. The app picks these up from the PTY output before handing it to alacritty, and uses them to:
 
-- colorea la línea que estás escribiendo (comando, subcomando, flags, strings, rutas, operadores, variables; comando inexistente en rojo ondulado);
-- sugiere en gris el resto del comando más reciente del historial que empieza igual; → o Fin lo acepta;
-- un clic sobre la línea que estás escribiendo lleva el cursor ahí, como en un editor (también en líneas partidas y con caracteres anchos);
-- muestra en la pestaña el comando en ejecución o la carpeta, y en la barra de estado la ruta y el resultado y la duración del último comando;
-- muestra el estado de git en cada prompt (rama, `↓`/`↑` respecto del upstream, `+` en stage, `~` modificados, `?` sin seguimiento, `!` en conflicto). Elegir una rama en el buscador escribe y ejecuta `git switch` en la shell, así el resultado o cualquier error queda a la vista. Solo se puede cambiar con la shell en el prompt, no con un comando en curso.
+- highlight the line you're typing (command, subcommand, flags, strings, paths, operators, variables; unknown commands get a red squiggle);
+- suggest in gray the rest of the most recent history command that starts the same way; → or End accepts it;
+- move the cursor where you click on the line you're typing, like in an editor (including wrapped lines and wide characters);
+- show the running command or the folder in the tab, and the path plus the last command's result and duration in the status bar;
+- show the git status on every prompt (branch, `↓`/`↑` relative to upstream, `+` staged, `~` modified, `?` untracked, `!` conflicted). Picking a branch in the picker types and runs `git switch` in the shell, so the result or any error stays visible. Switching only works with the shell at the prompt, not while a command is running.
 
-Si usas el prompt de zsh por defecto de macOS, la integración lo reemplaza por uno con el estilo de la app: un encabezado tenue con la carpeta (las últimas tres si la ruta es larga), la rama, el resultado y la duración del comando anterior y la hora; debajo, `❯` en verde, o en rojo si el comando falló, con una línea en blanco entre bloques. Si tienes tu propio prompt (starship, p10k…) no se toca; para desactivarlo igual, pon `MOTH_PROMPT=0` en tu `.zshrc`.
+If you use macOS's default zsh prompt, the integration replaces it with one in the app's style: a dim header with the folder (the last three if the path is long), the branch, the previous command's result and duration, and the time; below it, `❯` in green, or red if the command failed, with a blank line between blocks. If you have your own prompt (starship, p10k…) it's left alone; to disable it anyway, set `MOTH_PROMPT=0` in your `.zshrc`.
 
-Si la app no recibe locale (al abrirla desde el Finder), le pasa a la shell un `LANG` UTF-8 según el idioma de macOS, para que los acentos y la ñ funcionen.
+If the app gets no locale (when launched from Finder), it passes the shell a UTF-8 `LANG` based on the macOS language, so accented and other non-ASCII characters work.
 
-Con otras shells la terminal funciona igual, sin estas funciones.
+Other shells work the same, just without these features.
 
-## Estructura
+## Project structure
 
-- `src/workspace.rs`: ventana, barra de pestañas, paneles, barra de estado con el selector de ramas, acciones.
-- `src/panes.rs`: árbol de paneles de una pestaña (dividir, cerrar, redimensionar, vecino en cada dirección).
-- `src/session.rs`: guarda y restaura ventanas, pestañas y paneles.
-- `src/notify.rs`: notificaciones de macOS (con `osascript`).
-- `src/terminal.rs`: PTY + `alacritty_terminal`, eventos hacia gpui.
-- `src/terminal_view.rs`: pinta la grilla con el text system de gpui, cursor, IME.
-- `src/shell.rs`: instalación del script de zsh, detección de OSC en el PTY, historial.
-- `src/ssh.rs`: reconoce el comando `ssh`, lo resuelve con `ssh -G` y lee `~/.ssh/config`.
-- `src/hosts.rs`: reglas de `hosts.json` (etiqueta, color, producción).
-- `src/git.rs`: estado del repo (`git status --porcelain=v2`), lista de ramas, comando para cambiar.
-- `src/highlight.rs`: lexer de la línea de comandos para el coloreado.
-- `src/picker.rs`: buscador en overlay (lista virtualizada, secciones, teclado) que usan la paleta, el historial y las ramas.
-- `src/text_input.rs`: campo de texto de una línea con IME (el crate `ui` no trae uno).
-- `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
-- `src/state.rs`: última carpeta, carpetas recientes, tema, zoom y ⌥ como Meta.
-- `src/log.rs`: errores a stderr y a `~/Library/Logs/moth/`.
-- `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
-- `src/blocks.rs`: bloques de comandos: marcas invisibles en la grilla, salida de cada comando y resultado.
-- `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).
-- `src/mouse.rs`: reporte de mouse a los programas que lo piden (SGR y X10).
-- `src/links.rs`: URLs y rutas con línea y columna en la salida, esquemas permitidos.
-- `src/editor.rs`: abre archivos en el editor (detección, posición según cada editor, editores de terminal).
-- `src/config.rs`: `config.json` (fuente, editor, scrollback), relectura al volver a la ventana.
-- `src/keys.rs`: teclas especiales → secuencias de escape.
-- `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.
-- `src/theme.rs`: aplica el tema activo a la app y al sistema de temas de Zed (para los componentes de `ui`), cambio en caliente.
-- `src/components.rs`: componentes del diseño: `TabItem`, `Kbd`, `KindBadge`, `StatusDot`, `BlockStatus`.
-- `src/palette.rs`: colores de la grilla (ANSI, 256, truecolor) resueltos con los tokens.
+- `src/workspace.rs`: window, tab bar, panes, status bar with the branch picker, actions.
+- `src/panes.rs`: a tab's pane tree (split, close, resize, neighbor in each direction).
+- `src/session.rs`: saves and restores windows, tabs and panes.
+- `src/notify.rs`: macOS notifications (via `osascript`).
+- `src/terminal.rs`: PTY + `alacritty_terminal`, events to gpui.
+- `src/terminal_view.rs`: paints the grid with gpui's text system, cursor, IME.
+- `src/shell.rs`: zsh script installation, OSC detection in the PTY, history.
+- `src/ssh.rs`: recognizes the `ssh` command, resolves it with `ssh -G` and reads `~/.ssh/config`.
+- `src/hosts.rs`: `hosts.json` rules (label, color, production).
+- `src/git.rs`: repo status (`git status --porcelain=v2`), branch list, switch command.
+- `src/highlight.rs`: command-line lexer for highlighting.
+- `src/picker.rs`: overlay picker (virtualized list, sections, keyboard) used by the palette, history and branches.
+- `src/text_input.rs`: single-line text field with IME (the `ui` crate doesn't ship one).
+- `src/fuzzy.rs`: fuzzy matching with scoring and positions for highlighting.
+- `src/state.rs`: last folder, recent folders, theme, zoom and ⌥ as Meta.
+- `src/log.rs`: errors to stderr and to `~/Library/Logs/moth/`.
+- `src/glyphs.rs`: block elements (`▀▄█▐▛▜`…) and box-drawing lines (`─│╭╮`…) drawn as cell-filling rectangles, so logos like Claude Code's and TUI borders don't show gaps.
+- `src/blocks.rs`: command blocks: invisible marks in the grid, each command's output and result.
+- `src/completions.rs`: completion engine (parses the line, picks the source, ranks and applies).
+- `src/mouse.rs`: mouse reporting to programs that request it (SGR and X10).
+- `src/links.rs`: URLs and paths with line and column in the output, allowed schemes.
+- `src/editor.rs`: opens files in the editor (detection, per-editor position arguments, terminal editors).
+- `src/config.rs`: `config.json` (font, editor, scrollback), reloaded when the window regains focus.
+- `src/keys.rs`: special keys → escape sequences.
+- `src/tokens.rs`: design tokens, JSON theme loading with inheritance, spacing and radius metrics.
+- `src/theme.rs`: applies the active theme to the app and to Zed's theme system (for the `ui` components), with live switching.
+- `src/components.rs`: design components: `TabItem`, `Kbd`, `KindBadge`, `StatusDot`, `BlockStatus`.
+- `src/palette.rs`: grid colors (ANSI, 256, truecolor) resolved through the tokens.
 
-## Licencias
+## Licenses
 
-El crate `ui` de Zed es GPL-3.0-or-later, por eso este proyecto también lo es. Las fuentes Geist (`assets/fonts`) son OFL; los íconos de `assets/icons` vienen del repo de Zed.
+Zed's `ui` crate is GPL-3.0-or-later, so this project is too. The Geist fonts (`assets/fonts`) are OFL; the icons in `assets/icons` come from the Zed repo.

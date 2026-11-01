@@ -1,9 +1,9 @@
-//! Las ventanas, pestañas y paneles abiertos, para abrirlos igual al relanzar la app. Se
-//! guardan las carpetas y la distribución, no los procesos ni lo que había en pantalla.
+//! Open windows, tabs and panes, so they come back the same way when the app is relaunched.
+//! Folders and layout are saved, not processes or what was on screen.
 //!
-//! Cada ventana deja su parte en un registro global y el archivo se reescribe cuando algo
-//! cambia. Cerrar una ventana a mano la saca del registro; salir con ⌘Q no, así la próxima vez
-//! vuelve todo lo que estaba abierto.
+//! Each window registers its part in a global store and the file is rewritten whenever
+//! something changes. Closing a window by hand removes it from the store; quitting with ⌘Q
+//! doesn't, so everything that was open comes back next time.
 
 use std::path::PathBuf;
 
@@ -20,17 +20,17 @@ pub struct Session {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowSession {
     pub tabs: Vec<TabSession>,
-    /// Pestaña activa.
+    /// Active tab.
     pub active: usize,
-    /// Posición y tamaño de la ventana: x, y, ancho, alto.
+    /// Window position and size: x, y, width, height.
     pub bounds: Option<[f32; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TabSession {
-    /// La carpeta de cada panel.
+    /// Each pane's folder.
     pub layout: PaneTree<Option<PathBuf>>,
-    /// Panel activo, en orden de lectura.
+    /// Active pane, in reading order.
     pub active_pane: usize,
 }
 
@@ -38,13 +38,13 @@ fn path() -> Option<PathBuf> {
     Some(crate::state::state_dir()?.join("session.json"))
 }
 
-/// La sesión guardada, sin ventanas vacías.
+/// The saved session, without empty windows.
 pub fn load() -> Option<Session> {
     let text = std::fs::read_to_string(path()?).ok()?;
     let session = match serde_json::from_str::<Session>(&text) {
         Ok(session) => session,
         Err(err) => {
-            crate::log::error(format!("session.json inválido: {err}"));
+            crate::log::error(format!("invalid session.json: {err}"));
             return None;
         }
     };
@@ -67,7 +67,7 @@ fn clean(session: Session) -> Session {
     Session { windows }
 }
 
-/// Lo que cada ventana abierta aporta a la sesión, en el orden en que se abrieron.
+/// What each open window contributes to the session, in the order they were opened.
 #[derive(Default)]
 struct Store {
     windows: Vec<(EntityId, WindowSession)>,
@@ -76,7 +76,7 @@ struct Store {
 
 impl Global for Store {}
 
-/// Actualiza la parte de una ventana y reescribe el archivo si cambió algo.
+/// Updates a window's part and rewrites the file if anything changed.
 pub fn update(workspace: EntityId, window: WindowSession, cx: &mut App) {
     let store = cx.default_global::<Store>();
     match store.windows.iter_mut().find(|(id, _)| *id == workspace) {
@@ -87,7 +87,7 @@ pub fn update(workspace: EntityId, window: WindowSession, cx: &mut App) {
     write(cx);
 }
 
-/// La ventana se cerró a mano: no vuelve la próxima vez.
+/// The window was closed by hand: it won't come back next time.
 pub fn remove(workspace: EntityId, cx: &mut App) {
     let store = cx.default_global::<Store>();
     store.windows.retain(|(id, _)| *id != workspace);
@@ -110,14 +110,14 @@ fn write(cx: &mut App) {
     cx.background_executor()
         .spawn(async move {
             if let Err(err) = save(&session) {
-                crate::log::error(format!("no se pudo guardar la sesión: {err}"));
+                crate::log::error(format!("couldn't save the session: {err}"));
             }
         })
         .detach();
 }
 
 fn save(session: &Session) -> anyhow::Result<()> {
-    let path = path().ok_or_else(|| anyhow::anyhow!("sin HOME"))?;
+    let path = path().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn round_trips_and_cleans_up() {
         let mut layout = PaneTree::Leaf(Some(PathBuf::from("/a")));
-        // Un árbol con tamaños rotos (editado a mano) se arregla al cargar.
+        // A tree with broken sizes (edited by hand) gets fixed on load.
         layout = PaneTree::Split {
             axis: Axis::Row,
             children: vec![layout, PaneTree::Leaf(None)],
@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(loaded.windows.len(), 1);
         assert_eq!(loaded.windows[0].active, 0);
         let PaneTree::Split { sizes, .. } = &loaded.windows[0].tabs[0].layout else {
-            panic!("se esperaba una división");
+            panic!("expected a split");
         };
         assert_eq!(sizes, &vec![0.5, 0.5]);
     }

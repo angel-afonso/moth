@@ -1,5 +1,5 @@
-//! Colores de la grilla: traduce los colores de alacritty (ANSI, 256, truecolor) con los
-//! tokens del tema activo, así cambiar de tema recolorea también la salida ya impresa.
+//! Grid colors: maps alacritty's colors (ANSI, 256, truecolor) through the active theme's
+//! tokens, so switching themes also recolors output that's already printed.
 
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 use gpui::{Hsla, Rgba};
@@ -26,7 +26,7 @@ fn to_rgb(color: Hsla) -> Rgb {
     }
 }
 
-/// Resuelve un índice de la paleta de 256 colores de xterm.
+/// Resolves an index into xterm's 256-color palette.
 pub fn indexed(
     index: u8,
     overrides: &dyn Fn(usize) -> Option<Rgb>,
@@ -88,7 +88,7 @@ pub fn resolve(
     }
 }
 
-/// Respuesta a OSC 4/10/11/12 (`ColorRequest`): los programas preguntan los colores reales.
+/// Reply to OSC 4/10/11/12 (`ColorRequest`): programs asking for the actual colors.
 pub fn rgb_for_index(index: usize, colors: &TerminalColors) -> Rgb {
     to_rgb(match index {
         0..=15 => colors.ansi.get(index),

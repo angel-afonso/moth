@@ -1,15 +1,15 @@
-//! Árbol de paneles de una pestaña: divisiones en fila (lado a lado) o en columna (uno sobre
-//! otro), cada hijo con su fracción del espacio. Dividir parte el panel a la mitad; dentro de
-//! una división del mismo sentido agrega un hermano en vez de anidar, como en iTerm.
+//! A tab's pane tree: row splits (side by side) or column splits (stacked), each child with its
+//! fraction of the space. Splitting halves the pane; inside a split along the same axis it adds
+//! a sibling instead of nesting, like iTerm does.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Axis {
-    /// Hijos de izquierda a derecha.
+    /// Children left to right.
     Row,
-    /// Hijos de arriba abajo.
+    /// Children top to bottom.
     Column,
 }
 
@@ -28,12 +28,12 @@ pub enum PaneTree<T> {
     Split {
         axis: Axis,
         children: Vec<PaneTree<T>>,
-        /// Fracción del espacio de cada hijo; suman 1.
+        /// Each child's fraction of the space; they add up to 1.
         sizes: Vec<f32>,
     },
 }
 
-/// Rectángulo normalizado: la pestaña entera va de 0 a 1 en cada eje.
+/// Normalized rectangle: the whole tab spans 0 to 1 on each axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
     pub x: f32,
@@ -53,7 +53,7 @@ impl<T> PaneTree<T> {
         }
     }
 
-    /// El mismo árbol con otro tipo de hoja (para guardar la sesión con carpetas, por ejemplo).
+    /// The same tree with a different leaf type (e.g. to save the session with folders).
     pub fn map<U>(&self, f: &mut impl FnMut(&T) -> U) -> PaneTree<U> {
         match self {
             Self::Leaf(leaf) => PaneTree::Leaf(f(leaf)),
@@ -69,7 +69,7 @@ impl<T> PaneTree<T> {
         }
     }
 
-    /// Corrige tamaños que no cuadran (de un archivo editado a mano, por ejemplo).
+    /// Fixes sizes that don't add up (from a hand-edited file, for example).
     pub fn normalized(self) -> Self {
         match self {
             Self::Leaf(_) => self,
@@ -93,7 +93,7 @@ impl<T> PaneTree<T> {
 }
 
 impl<T: Copy + PartialEq> PaneTree<T> {
-    /// Los paneles en orden de lectura (izquierda a derecha, arriba abajo).
+    /// Panes in reading order (left to right, top to bottom).
     pub fn leaves(&self) -> Vec<T> {
         match self {
             Self::Leaf(id) => vec![*id],
@@ -105,8 +105,8 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         matches!(self, Self::Leaf(id) if *id == target)
     }
 
-    /// Agrega `new` a la derecha (`Row`) o debajo (`Column`) de `target`, con la mitad de su
-    /// espacio.
+    /// Adds `new` to the right of (`Row`) or below (`Column`) `target`, taking half of its
+    /// space.
     pub fn split(&mut self, target: T, new: T, axis: Axis) -> bool {
         match self {
             Self::Leaf(id) if *id == target => {
@@ -137,9 +137,9 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         }
     }
 
-    /// Quita `target`; su espacio pasa al hermano anterior (o al siguiente si era el primero).
-    /// Una división que queda con un solo hijo se reemplaza por él. Devuelve `false` si no
-    /// estaba o si era el único panel.
+    /// Removes `target`; its space goes to the previous sibling (or the next one if it was
+    /// first). A split left with a single child is replaced by that child. Returns `false` if
+    /// it wasn't found or was the only pane.
     pub fn remove(&mut self, target: T) -> bool {
         let Self::Split {
             axis,
@@ -157,8 +157,8 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         } else if !children.iter_mut().any(|child| child.remove(target)) {
             return false;
         }
-        // Si un hijo colapsó a una división del mismo sentido, sus hijos pasan a ser hermanos
-        // con su parte del espacio.
+        // If a child collapsed into a split along the same axis, its children become siblings
+        // with their share of the space.
         let own = *axis;
         let mut flat_children = Vec::new();
         let mut flat_sizes = Vec::new();
@@ -199,9 +199,9 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         }
     }
 
-    /// Mueve el divisor que está antes del hijo `divider` de la división en `path` (índices de
-    /// hijos desde la raíz) a `position`, entre 0 y 1 a lo largo de esa división. Ningún panel
-    /// queda más chico que `min`.
+    /// Moves the divider before child `divider` of the split at `path` (child indices from the
+    /// root) to `position`, between 0 and 1 along that split. No pane ends up smaller than
+    /// `min`.
     pub fn resize(&mut self, path: &[usize], divider: usize, position: f32, min: f32) -> bool {
         let mut node = self;
         for &ix in path {
@@ -228,7 +228,7 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         true
     }
 
-    /// Dónde queda cada panel dentro de la pestaña.
+    /// Where each pane sits within the tab.
     pub fn rects(&self) -> Vec<(T, Rect)> {
         let mut out = Vec::new();
         self.collect_rects(
@@ -272,8 +272,8 @@ impl<T: Copy + PartialEq> PaneTree<T> {
         }
     }
 
-    /// El panel vecino de `from` hacia `direction`: el más cercano de los que están de ese lado
-    /// y comparten parte del otro eje; entre los que están igual de cerca, el más alineado.
+    /// The pane next to `from` in `direction`: the closest one on that side that overlaps on
+    /// the other axis; among equally close ones, the best aligned.
     pub fn neighbor(&self, from: T, direction: Direction) -> Option<T> {
         let rects = self.rects();
         let (_, current) = *rects.iter().find(|(id, _)| *id == from)?;
@@ -326,7 +326,7 @@ mod tests {
         assert!(tree.split(2, 3, Row));
         assert_eq!(tree.leaves(), vec![1, 2, 3]);
         assert_eq!(sizes_of(&tree), vec![0.5, 0.25, 0.25]);
-        // En el otro sentido, el panel se convierte en una división.
+        // Along the other axis, the pane turns into a split.
         assert!(tree.split(2, 4, Column));
         assert_eq!(tree.leaves(), vec![1, 2, 4, 3]);
         assert!(!tree.split(9, 5, Row));
@@ -338,17 +338,17 @@ mod tests {
         tree.split(1, 2, Row);
         tree.split(2, 3, Column);
         tree.split(3, 4, Row);
-        // Row[1, Column[2, Row[3, 4]]]: al quitar 2 queda Row[1, 3, 4], sin anidar, y 3 y 4
-        // se reparten la mitad derecha.
+        // Row[1, Column[2, Row[3, 4]]]: removing 2 leaves Row[1, 3, 4], flattened, with 3 and
+        // 4 sharing the right half.
         assert!(tree.remove(2));
         assert_eq!(tree.leaves(), vec![1, 3, 4]);
         assert_eq!(sizes_of(&tree), vec![0.5, 0.25, 0.25]);
-        // El espacio de 3 pasa a 1, el hermano anterior.
+        // 3's space goes to 1, the previous sibling.
         assert!(tree.remove(3));
         assert_eq!(sizes_of(&tree), vec![0.75, 0.25]);
         assert!(tree.remove(4));
         assert_eq!(tree, leaf(1));
-        // El último panel no se quita: se cierra la pestaña.
+        // The last pane isn't removed: the tab gets closed instead.
         assert!(!tree.remove(1));
     }
 
@@ -357,10 +357,10 @@ mod tests {
         let mut tree = leaf(1);
         tree.split(1, 2, Row);
         tree.split(2, 3, Row);
-        // [0.5, 0.25, 0.25]: el divisor entre 2 y 3 (antes del hijo 2) pasa a 0.9.
+        // [0.5, 0.25, 0.25]: the divider between 2 and 3 (before child 2) moves to 0.9.
         assert!(tree.resize(&[], 2, 0.9, 0.05));
         assert_close(&sizes_of(&tree), &[0.5, 0.4, 0.1]);
-        // No deja un panel por debajo del mínimo.
+        // No pane goes below the minimum.
         assert!(tree.resize(&[], 1, 0.0, 0.1));
         assert_close(&sizes_of(&tree), &[0.1, 0.8, 0.1]);
         assert!(!tree.resize(&[0], 1, 0.5, 0.1));

@@ -1,13 +1,13 @@
-//! Teclas especiales → secuencias de escape (basado en el mapeo de Zed/alacritty).
-//! El texto imprimible no pasa por aquí: llega por el `InputHandler` para soportar IME y teclas muertas.
+//! Special keys → escape sequences (based on Zed's/alacritty's mapping).
+//! Printable text doesn't go through here: it arrives via the `InputHandler` to support IME and dead keys.
 
 use std::borrow::Cow;
 
 use alacritty_terminal::term::TermMode;
 use gpui::Keystroke;
 
-/// Con `option_as_meta`, ⌥+tecla manda ESC + tecla (⌥B, ⌥F, ⌥. en zsh) en vez del carácter
-/// de macOS; queda apagado por defecto porque en teclados como el español ⌥ escribe `@`, `#`, `|`…
+/// With `option_as_meta`, ⌥+key sends ESC + key (⌥B, ⌥F, ⌥. in zsh) instead of the macOS
+/// character; off by default because on layouts like Spanish ⌥ types `@`, `#`, `|`…
 pub fn to_esc_str(
     keystroke: &Keystroke,
     mode: TermMode,
@@ -15,9 +15,9 @@ pub fn to_esc_str(
 ) -> Option<Cow<'static, str>> {
     let m = &keystroke.modifiers;
     let key = keystroke.key.as_str();
-    // En la línea de comandos, ⌥ y ⌘ editan como en el resto de macOS (ESC b/f de readline y
-    // zsh, ⌃A/⌃E/⌃U). En pantalla completa (vim, less) se mandan las secuencias estándar, para
-    // no meter un ⌃A que vim interpreta como "incrementar".
+    // At the command line, ⌥ and ⌘ edit like the rest of macOS (readline/zsh ESC b/f,
+    // ⌃A/⌃E/⌃U). In full-screen apps (vim, less) the standard sequences are sent, so we
+    // don't inject a ⌃A that vim reads as "increment".
     if !mode.contains(TermMode::ALT_SCREEN) {
         let only_alt = m.alt && !m.control && !m.shift && !m.platform;
         let only_cmd = m.platform && !m.alt && !m.control && !m.shift;
@@ -81,7 +81,7 @@ pub fn to_esc_str(
         return Some(Cow::Borrowed(s));
     }
 
-    // Ctrl + letra / símbolo → carácter de control.
+    // Ctrl + letter / symbol → control character.
     if m.control && !m.alt && key.len() == 1 {
         let c = key.as_bytes()[0].to_ascii_lowercase();
         let ctrl = match c {
@@ -163,7 +163,7 @@ mod tests {
             esc("cmd-backspace", TermMode::NONE).as_deref(),
             Some("\x15")
         );
-        // En vim y otras pantallas completas, las secuencias estándar.
+        // In vim and other full-screen apps, the standard sequences.
         assert_eq!(
             esc("alt-left", TermMode::ALT_SCREEN).as_deref(),
             Some("\x1b[1;3D")

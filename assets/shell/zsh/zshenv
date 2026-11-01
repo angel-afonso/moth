@@ -1,6 +1,6 @@
-# Moth: se instala como $ZDOTDIR/.zshenv. Restaura el ZDOTDIR del usuario,
-# carga su .zshenv y, en shells interactivas, la integración. zsh vuelve a leer
-# ZDOTDIR antes de cada archivo de inicio, así que .zprofile/.zshrc son los del usuario.
+# Moth: installed as $ZDOTDIR/.zshenv. Restores the user's ZDOTDIR, sources
+# their .zshenv and, in interactive shells, the integration. zsh rereads ZDOTDIR
+# before each startup file, so .zprofile/.zshrc are the user's own.
 if [[ -n "${MOTH_ORIG_ZDOTDIR+x}" ]]; then
   ZDOTDIR="$MOTH_ORIG_ZDOTDIR"
   unset MOTH_ORIG_ZDOTDIR

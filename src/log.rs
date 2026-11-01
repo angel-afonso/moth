@@ -1,9 +1,9 @@
-//! Errores de la app. Abierta desde el Finder no hay terminal donde ver stderr, así que además
-//! se guardan en `~/Library/Logs/moth/moth.log`.
+//! App errors. When launched from Finder there's no terminal to show stderr, so they're also
+//! written to `~/Library/Logs/moth/moth.log`.
 
 use std::{fmt::Display, io::Write as _, path::PathBuf};
 
-/// Al pasar este tamaño, el log pasa a `moth.log.old` y se empieza uno nuevo.
+/// Past this size, the log is moved to `moth.log.old` and a new one is started.
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 pub fn log_path() -> Option<PathBuf> {

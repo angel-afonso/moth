@@ -1,9 +1,9 @@
-//! Bloques de comandos: prompt, línea escrita y salida.
+//! Command blocks: prompt, typed input and output.
 //!
-//! Cada prompt deja en la grilla una marca invisible: caracteres de ancho cero que el escáner
-//! del PTY inserta justo después de `OSC 133;B` y que alacritty guarda pegados a la última celda
-//! del prompt. Así la marca viaja con el texto al hacer scroll, al redimensionar la ventana y
-//! cuando el scrollback descarta líneas viejas; una fila guardada aparte se desfasaría.
+//! Each prompt leaves an invisible mark in the grid: zero-width characters that the PTY scanner
+//! inserts right after `OSC 133;B` and that alacritty stores attached to the prompt's last cell.
+//! That way the mark travels with the text when scrolling, when the window is resized and when
+//! the scrollback drops old lines; a row number stored separately would drift.
 
 use alacritty_terminal::{
     grid::Dimensions,
@@ -11,19 +11,19 @@ use alacritty_terminal::{
     term::{Term, cell::Flags},
 };
 
-/// Marca de un prompt cuyo comando anterior terminó bien / con error.
+/// Mark for a prompt whose previous command succeeded / failed.
 const MARK_OK: char = '\u{2061}';
 const MARK_FAILED: char = '\u{2062}';
-/// Una por cada fila del prompt por encima de la que tiene la marca.
+/// One per prompt row above the row that holds the mark.
 const MARK_ROW: char = '\u{2063}';
 const MAX_PROMPT_ROWS: u8 = 8;
 
-/// Lo que la integración cuenta del prompt en `OSC 133;B;rows=N;prev_err=0|1`.
+/// What the shell integration reports about the prompt in `OSC 133;B;rows=N;prev_err=0|1`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PromptMark {
-    /// Filas que ocupa el prompt, incluida la línea en blanco que lo separa del bloque anterior.
+    /// Rows the prompt takes up, including the blank line separating it from the previous block.
     pub rows: u8,
-    /// El comando anterior terminó con error: el bloque anterior queda marcado al aparecer este.
+    /// The previous command failed: the previous block gets flagged when this one appears.
     pub previous_failed: bool,
 }
 
@@ -39,7 +39,7 @@ impl PromptMark {
         text
     }
 
-    /// Si zsh redibuja el prompt, la marca puede quedar repetida en la celda: vale la primera.
+    /// If zsh redraws the prompt, the mark may be repeated in the cell: the first one wins.
     fn decode(chars: &[char]) -> Option<Self> {
         let start = chars
             .iter()
@@ -59,37 +59,37 @@ pub fn is_mark_char(c: char) -> bool {
     matches!(c, MARK_OK | MARK_FAILED | MARK_ROW)
 }
 
-/// Quita las marcas de un texto sacado de la grilla (copiar, por ejemplo).
+/// Strips the marks from text taken out of the grid (when copying, for example).
 pub fn strip_marks(text: &str) -> String {
     text.chars().filter(|&c| !is_mark_char(c)).collect()
 }
 
-/// Un comando con su prompt y su salida, en líneas de la grilla.
+/// A command with its prompt and output, as grid lines.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block {
-    /// Primera fila del prompt.
+    /// First row of the prompt.
     pub start: Line,
-    /// Fila donde empieza lo que se escribió (la de la marca).
+    /// Row where the typed input starts (the one with the mark).
     pub input: Line,
-    /// Primera fila de la salida; si pasa de `end`, el comando no imprimió nada.
+    /// First row of the output; if it's past `end`, the command printed nothing.
     pub output: Line,
-    /// Última fila del bloque.
+    /// Last row of the block.
     pub end: Line,
-    /// El comando terminó con error. Se sabe recién cuando aparece el prompt siguiente.
+    /// The command failed. Only known once the next prompt appears.
     pub failed: bool,
-    /// La cola de un bloque cuyo prompt está más arriba de donde se empezó a buscar.
+    /// The tail of a block whose prompt is above where the search started.
     pub partial: bool,
 }
 
-/// Bloques con alguna fila entre `top` y el final de la pantalla. Las filas de arriba de la
-/// primera marca son la cola de un bloque cuyo prompt queda más arriba: van como bloque
-/// `partial`, con su resultado, sin recorrer el scrollback para encontrarle el inicio.
+/// Blocks with at least one row between `top` and the bottom of the screen. Rows above the
+/// first mark are the tail of a block whose prompt is further up: they come back as a `partial`
+/// block, with its result, without walking the scrollback to find its start.
 pub fn blocks_from<T>(term: &Term<T>, top: Line) -> Vec<Block> {
     blocks_in(term, top, None)
 }
 
-/// Como `blocks_from`, pero deja de buscar en la primera marca después de `bottom`: alcanza
-/// para saber si falló el último bloque visible, sin recorrer todo lo que queda abajo.
+/// Like `blocks_from`, but stops at the first mark after `bottom`: enough to know whether the
+/// last visible block failed, without scanning everything below it.
 pub fn visible_blocks<T>(term: &Term<T>, top: Line, bottom: Line) -> Vec<Block> {
     blocks_in(term, top, Some(bottom))
 }
@@ -131,7 +131,7 @@ fn blocks_in<T>(term: &Term<T>, top: Line, stop_after: Option<Line>) -> Vec<Bloc
         let end = next
             .map_or(cursor.max(line), |next| start_of(next) - 1)
             .max(line);
-        // Lo escrito sigue en las filas que partió el ancho de la terminal.
+        // The input continues on the rows the terminal width wrapped it onto.
         let mut input_end = line;
         while input_end < end
             && grid[input_end][term.last_column()]
@@ -152,7 +152,7 @@ fn blocks_in<T>(term: &Term<T>, top: Line, stop_after: Option<Line>) -> Vec<Bloc
     blocks
 }
 
-/// Los bloques completos ya ejecutados o en ejecución (sin el prompt donde está el cursor).
+/// Complete blocks that already ran or are running (excluding the prompt under the cursor).
 pub fn commands<T>(term: &Term<T>) -> Vec<Block> {
     let cursor = term.grid().cursor.point.line;
     blocks_from(term, term.topmost_line())
@@ -161,7 +161,7 @@ pub fn commands<T>(term: &Term<T>) -> Vec<Block> {
         .collect()
 }
 
-/// Filas del bloque sin las líneas en blanco de los bordes (la que separa los prompts).
+/// The block's rows without the blank lines at its edges (the one separating prompts).
 pub fn trimmed_rows<T>(term: &Term<T>, block: &Block) -> Option<(Line, Line)> {
     let blank = |line: Line| {
         let row = &term.grid()[line];
@@ -178,7 +178,7 @@ pub fn trimmed_rows<T>(term: &Term<T>, block: &Block) -> Option<(Line, Line)> {
     (start <= end).then_some((start, end))
 }
 
-/// La salida del comando como texto, sin las marcas ni el espacio final.
+/// The command's output as text, without marks or trailing whitespace.
 pub fn output_text<T>(term: &Term<T>, block: &Block) -> String {
     if block.output > block.end {
         return String::new();
@@ -190,8 +190,8 @@ pub fn output_text<T>(term: &Term<T>, block: &Block) -> String {
     strip_marks(&text).trim_end().to_string()
 }
 
-/// Una fila que sigue a su texto aunque entren líneas al scrollback. Con el scrollback lleno
-/// no hay cómo saber cuánto se corrió y puede quedar desfasada.
+/// A row that follows its text as lines move into the scrollback. Once the scrollback is full
+/// there's no way to tell how far it shifted, so it may drift.
 #[derive(Clone, Copy, Debug)]
 pub struct Anchor {
     line: Line,
@@ -234,7 +234,7 @@ mod tests {
         Term::new(Default::default(), &size, VoidListener)
     }
 
-    /// Simula lo que hace el escáner: la marca va justo después del prompt.
+    /// Mimics the scanner: the mark goes right after the prompt.
     fn prompt(rows: u8, previous_failed: bool) -> String {
         format!(
             "❯ {}",
@@ -268,7 +268,7 @@ mod tests {
     fn finds_blocks_their_output_and_failures() {
         let mut term = term(20, 12);
         let text = format!(
-            "{}ls\r\nuno\r\ndos\r\n\r\n{}false\r\n\r\n{}",
+            "{}ls\r\none\r\ntwo\r\n\r\n{}false\r\n\r\n{}",
             prompt(1, false),
             prompt(2, false),
             prompt(2, true),
@@ -276,20 +276,20 @@ mod tests {
         feed(&mut term, &text);
         let blocks = blocks_from(&term, term.topmost_line());
         assert_eq!(blocks.len(), 3);
-        // `ls`: entrada en la fila 0, salida en 1–2; la fila 3 es la línea en blanco del
-        // prompt siguiente, que ocupa dos filas.
+        // `ls`: input on row 0, output on 1–2; row 3 is the blank line of the next prompt,
+        // which spans two rows.
         assert_eq!(
             (blocks[0].input, blocks[0].output, blocks[0].end),
             (Line(0), Line(1), Line(2))
         );
         assert!(!blocks[0].failed);
-        assert_eq!(output_text(&term, &blocks[0]), "uno\ndos");
-        // `false` falló: lo dice la marca del prompt siguiente.
+        assert_eq!(output_text(&term, &blocks[0]), "one\ntwo");
+        // `false` failed: the next prompt's mark says so.
         assert_eq!((blocks[1].start, blocks[1].input), (Line(3), Line(4)));
         assert!(blocks[1].failed);
         assert_eq!(output_text(&term, &blocks[1]), "");
         assert_eq!(trimmed_rows(&term, &blocks[1]), Some((Line(4), Line(4))));
-        // El prompt actual no es un comando.
+        // The current prompt isn't a command.
         assert_eq!(commands(&term).len(), 2);
     }
 
@@ -299,14 +299,14 @@ mod tests {
         feed(
             &mut term,
             &format!(
-                "{}echo 123456789\r\nfin\r\n{}",
+                "{}echo 123456789\r\nend\r\n{}",
                 prompt(1, false),
                 prompt(1, false)
             ),
         );
         let blocks = commands(&term);
         assert_eq!(blocks[0].output, Line(2));
-        assert_eq!(output_text(&term, &blocks[0]), "fin");
+        assert_eq!(output_text(&term, &blocks[0]), "end");
     }
 
     #[test]

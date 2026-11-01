@@ -1,4 +1,4 @@
-//! Resaltado de la línea en edición: un lexer pequeño de sintaxis de shell.
+//! Highlighting for the line being edited: a small shell syntax lexer.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -25,12 +25,12 @@ pub enum TokenKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
-    /// Rango en bytes dentro de la línea.
+    /// Byte range within the line.
     pub range: Range<usize>,
     pub kind: TokenKind,
 }
 
-/// Herramientas cuyo primer argumento es un subcomando (`git push`, `cargo build`).
+/// Tools whose first argument is a subcommand (`git push`, `cargo build`).
 const SUBCOMMAND_TOOLS: &[&str] = &[
     "git",
     "cargo",
@@ -60,7 +60,7 @@ const SUBCOMMAND_TOOLS: &[&str] = &[
     "just",
 ];
 
-/// Prefijos tras los que la siguiente palabra vuelve a ser un comando.
+/// Prefixes after which the next word is a command again.
 const PRECOMMANDS: &[&str] = &[
     "sudo", "time", "env", "exec", "nohup", "command", "builtin", "noglob", "nice", "xargs",
     "watch",
@@ -71,7 +71,7 @@ const KEYWORDS: &[&str] = &[
     "esac", "function", "select", "repeat", "{", "}", "[[", "]]", "!",
 ];
 
-/// Builtins de zsh habituales; la shell además envía su lista real al iniciar.
+/// Common zsh builtins; the shell also sends its actual list on startup.
 const BUILTINS: &[&str] = &[
     "cd",
     "echo",
@@ -134,13 +134,13 @@ const BUILTINS: &[&str] = &[
     "compdef",
 ];
 
-/// Resuelve si una palabra es un comando ejecutable. Guarda en caché las búsquedas en PATH.
+/// Resolves whether a word is an executable command. Caches PATH lookups.
 #[derive(Default)]
 pub struct CommandResolver {
     path: Vec<PathBuf>,
     names: HashSet<String>,
     cache: HashMap<String, bool>,
-    /// Ejecutables del PATH, ordenados; se arma la primera vez que se completa un comando.
+    /// PATH executables, sorted; built the first time a command is completed.
     executables: Option<Vec<String>>,
 }
 
@@ -157,8 +157,8 @@ impl CommandResolver {
         self.executables = None;
     }
 
-    /// Comandos que empiezan con `prefix`: builtins, alias y funciones de la shell y
-    /// ejecutables del PATH.
+    /// Commands that start with `prefix`: shell builtins, aliases and functions, and
+    /// PATH executables.
     pub fn names_with_prefix(&mut self, prefix: &str) -> Vec<String> {
         let path = &self.path;
         let executables = self.executables.get_or_insert_with(|| {
@@ -190,7 +190,7 @@ impl CommandResolver {
         found
     }
 
-    /// Alias, funciones y builtins que reporta la shell.
+    /// Aliases, functions and builtins reported by the shell.
     pub fn set_names(&mut self, names: &str) {
         self.names = names.split_whitespace().map(str::to_string).collect();
     }
@@ -240,15 +240,15 @@ fn is_operator_char(c: char) -> bool {
 #[derive(PartialEq)]
 enum Expect {
     Command,
-    /// Primer argumento de una herramienta con subcomandos.
+    /// First argument of a tool with subcommands.
     Subcommand,
     Argument,
-    /// Destino de una redirección.
+    /// Target of a redirection.
     Target,
 }
 
-/// Divide la línea en tokens coloreables. `cursor` es un índice en bytes: la palabra que
-/// termina en el cursor no se marca como comando desconocido mientras se escribe.
+/// Splits the line into highlightable tokens. `cursor` is a byte index: the word ending at
+/// the cursor isn't flagged as an unknown command while it's being typed.
 pub fn highlight(
     line: &str,
     cursor: usize,
@@ -356,7 +356,7 @@ pub fn highlight(
             continue;
         }
 
-        // Palabra: hasta un espacio, operador o comilla, respetando `\`.
+        // Word: up to a space, operator or quote, honoring `\`.
         let mut j = i;
         while j < chars.len() {
             let ch = chars[j].1;
@@ -494,13 +494,13 @@ mod tests {
     fn variables_assignments_and_comments() {
         use TokenKind::*;
         assert_eq!(
-            kinds("FOO=1 echo $HOME ${PATH} # nota"),
+            kinds("FOO=1 echo $HOME ${PATH} # note"),
             vec![
                 ("FOO=1", Variable),
                 ("echo", Command),
                 ("$HOME", Variable),
                 ("${PATH}", Variable),
-                ("# nota", Comment),
+                ("# note", Comment),
             ]
         );
     }
@@ -525,8 +525,8 @@ mod tests {
     fn handles_non_ascii() {
         use TokenKind::*;
         assert_eq!(
-            kinds("echo \"canción\" ñandú"),
-            vec![("echo", Command), ("\"canción\"", String), ("ñandú", Plain)]
+            kinds("echo \"naïve\" 日本語"),
+            vec![("echo", Command), ("\"naïve\"", String), ("日本語", Plain)]
         );
     }
 }

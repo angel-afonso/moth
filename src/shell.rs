@@ -1,5 +1,5 @@
-//! Integración con la shell: instala el script de zsh, detecta sus secuencias OSC en la
-//! salida del PTY (antes de que lleguen a alacritty) y mantiene el historial compartido.
+//! Shell integration: installs the zsh script, detects its OSC sequences in the PTY
+//! output (before they reach alacritty) and maintains the shared history.
 
 use std::{
     collections::HashMap,
@@ -19,11 +19,11 @@ use polling::{Event, PollMode, Poller};
 
 use crate::{assets::Assets, blocks::PromptMark};
 
-/// Lo que la shell nos cuenta por OSC.
+/// What the shell tells us over OSC.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShellEvent {
     PromptStart,
-    /// Fin del prompt: ahí empieza lo que se escribe. Deja una marca en la grilla (ver `blocks`).
+    /// End of the prompt, where typed input begins. Leaves a mark in the grid (see `blocks`).
     PromptEnd(PromptMark),
     CommandStart,
     CommandFinished(Option<i32>),
@@ -39,8 +39,8 @@ pub enum ShellEvent {
     Names(String),
 }
 
-/// Variables de entorno para que zsh cargue la integración. `None` si la shell no es zsh
-/// o si no se pudieron escribir los archivos.
+/// Environment variables that make zsh load the integration. `None` if the shell isn't zsh
+/// or the files couldn't be written.
 pub fn integration_env() -> Option<HashMap<String, String>> {
     let shell = std::env::var("SHELL").unwrap_or_default();
     if !shell.ends_with("/zsh") {
@@ -70,7 +70,7 @@ fn install_dir() -> Option<PathBuf> {
         ] {
             let data = Assets::get(asset).ok_or(io::ErrorKind::NotFound)?.data;
             let target = dir.join(name);
-            // Se reescribe solo si cambió, para no tocar el archivo en cada pestaña.
+            // Only rewrite it if it changed, so the file isn't touched on every tab.
             if std::fs::read(&target).ok().as_deref() != Some(&data[..]) {
                 std::fs::write(&target, &data)?;
             }
@@ -80,15 +80,15 @@ fn install_dir() -> Option<PathBuf> {
     match write() {
         Ok(()) => Some(dir),
         Err(err) => {
-            crate::log::error(format!("no se pudo instalar la integración de zsh: {err}"));
+            crate::log::error(format!("failed to install the zsh integration: {err}"));
             None
         }
     }
 }
 
-/// `LANG` para la shell cuando la app no recibió locale (lanzada desde el Finder no lo trae):
-/// sin UTF-8, zsh y muchos programas tratan mal los acentos. Se deriva del idioma de macOS,
-/// como hace Terminal.app.
+/// `LANG` for the shell when the app didn't receive a locale (launching from Finder doesn't
+/// provide one): without UTF-8, zsh and many programs mangle non-ASCII characters. It's
+/// derived from the macOS language, as Terminal.app does.
 pub fn locale_env() -> Option<(String, String)> {
     let has_locale = ["LC_ALL", "LC_CTYPE", "LANG"]
         .iter()
@@ -116,7 +116,7 @@ pub fn locale_env() -> Option<(String, String)> {
 }
 
 // ---------------------------------------------------------------------------------------
-// Detección de OSC
+// OSC detection
 
 const MAX_OSC_LEN: usize = 64 * 1024;
 
@@ -129,8 +129,8 @@ enum ScanState {
     OscEscape,
 }
 
-/// Máquina de estados mínima que extrae el contenido de `ESC ] … (BEL | ESC \)`.
-/// No altera el flujo: alacritty sigue recibiendo todos los bytes e ignora estos OSC.
+/// Minimal state machine that extracts the payload of `ESC ] … (BEL | ESC \)`.
+/// It doesn't alter the stream: alacritty still receives every byte and ignores these OSCs.
 #[derive(Default)]
 pub struct OscScanner {
     state: ScanState,
@@ -138,8 +138,8 @@ pub struct OscScanner {
 }
 
 impl OscScanner {
-    /// Llama a `on_osc` con el contenido de cada secuencia y la posición en `bytes` del
-    /// último byte de su terminador.
+    /// Calls `on_osc` with each sequence's payload and the position in `bytes` of the
+    /// last byte of its terminator.
     pub fn feed(&mut self, bytes: &[u8], mut on_osc: impl FnMut(&[u8], usize)) {
         for (ix, &byte) in bytes.iter().enumerate() {
             self.state = match self.state {
@@ -255,7 +255,7 @@ fn percent_decode(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// PTY con escáner
+// Scanning PTY
 
 pub struct ScanningReader {
     file: File,
@@ -263,9 +263,9 @@ pub struct ScanningReader {
     events: UnboundedSender<ShellEvent>,
 }
 
-/// Lugar que se deja libre en cada lectura para insertar las marcas de prompt. Van en el mismo
-/// buffer y no se guardan para la lectura siguiente: el event loop de alacritty no vuelve a
-/// leer hasta que el PTY tenga datos nuevos, y lo guardado quedaría colgado.
+/// Space left free on each read to insert the prompt marks. They go in the same buffer and
+/// aren't held over for the next read: alacritty's event loop doesn't read again until the
+/// PTY has new data, so anything held back would be stuck.
 const MARK_ROOM: usize = 64;
 
 impl Read for ScanningReader {
@@ -291,11 +291,11 @@ impl Read for ScanningReader {
     }
 }
 
-/// Inserta cada marca en su posición mientras quepa en `room`; devuelve el largo nuevo.
+/// Inserts each mark at its position while it fits in `room`; returns the new length.
 fn insert_marks(buf: &mut [u8], len: usize, room: usize, marks: &[(usize, String)]) -> usize {
     let mut len = len;
     let mut used = 0;
-    // De atrás hacia adelante, para que las posiciones de las anteriores sigan valiendo.
+    // Back to front, so the positions of earlier marks stay valid.
     for (at, mark) in marks.iter().rev() {
         let mark = mark.as_bytes();
         if used + mark.len() > room {
@@ -309,7 +309,7 @@ fn insert_marks(buf: &mut [u8], len: usize, room: usize, marks: &[(usize, String
     len
 }
 
-/// Envuelve el `Pty` de alacritty: lee por un descriptor duplicado que pasa por el escáner.
+/// Wraps alacritty's `Pty`: reads through a duplicated descriptor that goes through the scanner.
 pub struct ShellPty {
     pty: Pty,
     reader: ScanningReader,
@@ -372,9 +372,9 @@ impl OnResize for ShellPty {
 }
 
 // ---------------------------------------------------------------------------------------
-// Historial
+// History
 
-/// Historial de comandos compartido por todas las pestañas, el más reciente al final.
+/// Command history shared by all tabs, most recent last.
 #[derive(Default)]
 pub struct History {
     pub loaded_from: Option<PathBuf>,
@@ -393,7 +393,7 @@ impl History {
         self.entries.push(command.to_string());
     }
 
-    /// El resto de la entrada más reciente que empieza con `prefix`.
+    /// The rest of the most recent entry that starts with `prefix`.
     pub fn suggest(&self, prefix: &str) -> Option<&str> {
         if prefix.trim().is_empty() {
             return None;
@@ -410,12 +410,12 @@ pub fn history(cx: &App) -> Option<&History> {
     cx.try_global::<History>()
 }
 
-/// Lee un `.zsh_history` (formato simple o extendido, con la "metafication" de zsh).
+/// Reads a `.zsh_history` (simple or extended format, with zsh's "metafication").
 pub fn read_history_file(path: &Path) -> Vec<String> {
     let Ok(raw) = std::fs::read(path) else {
         return Vec::new();
     };
-    // zsh escapa bytes especiales como 0x83 seguido del byte XOR 32.
+    // zsh escapes special bytes as 0x83 followed by the byte XOR 32.
     let mut bytes = Vec::with_capacity(raw.len());
     let mut iter = raw.into_iter();
     while let Some(b) = iter.next() {
@@ -432,7 +432,7 @@ pub fn read_history_file(path: &Path) -> Vec<String> {
     let mut entries: Vec<String> = Vec::new();
     let mut pending = String::new();
     for line in text.lines() {
-        // Las líneas terminadas en `\` continúan el comando anterior.
+        // Lines ending in `\` continue the previous command.
         if let Some(stripped) = line.strip_suffix('\\') {
             pending.push_str(stripped);
             pending.push('\n');
@@ -450,7 +450,7 @@ pub fn read_history_file(path: &Path) -> Vec<String> {
         pending.clear();
     }
 
-    // Sin duplicados, conservando la aparición más reciente.
+    // Deduplicate, keeping the most recent occurrence.
     let mut seen = std::collections::HashSet::new();
     let mut deduped: Vec<String> = entries
         .into_iter()
@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn parses_shell_markers() {
         let events = scan(
-            b"hola\x1b]133;A\x07$ \x1b]133;B\x07ls\x1b]7777;E;ls -la\x07\x1b]133;C\x07out\x1b]133;D;1\x1b\\",
+            b"hello\x1b]133;A\x07$ \x1b]133;B\x07ls\x1b]7777;E;ls -la\x07\x1b]133;C\x07out\x1b]133;D;1\x1b\\",
         );
         assert_eq!(
             events,
@@ -533,7 +533,7 @@ mod tests {
         let len = insert_marks(&mut buf, input.len(), 32, &marks);
         let expected = format!("$ \x1b]133;B\x07{mark}ls");
         assert_eq!(&buf[..len], expected.as_bytes());
-        // Sin lugar, el texto queda igual.
+        // With no room, the text is unchanged.
         let mut buf = input.to_vec();
         assert_eq!(insert_marks(&mut buf, input.len(), 0, &marks), input.len());
     }
@@ -541,8 +541,8 @@ mod tests {
     #[test]
     fn decodes_cwd() {
         assert_eq!(
-            scan(b"\x1b]7;file://mac.local/Users/dev/mi%20proyecto\x07"),
-            vec![ShellEvent::Cwd("/Users/dev/mi proyecto".into())]
+            scan(b"\x1b]7;file://mac.local/Users/dev/my%20project\x07"),
+            vec![ShellEvent::Cwd("/Users/dev/my project".into())]
         );
     }
 

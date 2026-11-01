@@ -1,5 +1,5 @@
-//! Lista filtrable sobre un campo de texto: base de la paleta de comandos, la búsqueda en
-//! el historial y el selector de ramas. Se dibuja como un overlay sobre la ventana.
+//! Filterable list over a text field: the basis of the command palette, history search
+//! and the branch picker. Drawn as an overlay on top of the window.
 
 use std::path::PathBuf;
 
@@ -41,7 +41,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Lo que pasa al elegir un elemento; lo resuelve el `Workspace`.
+/// What happens when an item is chosen; the `Workspace` carries it out.
 pub enum PickerAction {
     Dispatch(Box<dyn Action>),
     ActivateTab(usize),
@@ -49,7 +49,7 @@ pub enum PickerAction {
     InsertCommand(String),
     SwitchBranch(String),
     SetTheme(String),
-    /// Ejecuta un comando en una pestaña nueva (con ⌘⏎, en la actual).
+    /// Runs a command in a new tab (with ⌘⏎, in the current one).
     RunCommand(String),
     ReconnectTab(usize),
 }
@@ -70,18 +70,18 @@ impl Clone for PickerAction {
 }
 
 pub struct PickerItem {
-    /// Sección bajo la que se agrupa con la consulta vacía ("" = sin encabezado).
+    /// Section it's grouped under when the query is empty ("" = no header).
     pub section: SharedString,
     pub label: SharedString,
     pub detail: Option<SharedString>,
     pub icon: Option<IconName>,
-    /// Tipo de sugerencia; si está, se muestra en lugar del ícono.
+    /// Suggestion kind; if set, shown instead of the icon.
     pub kind: Option<SuggestionKind>,
-    /// Punto de color en lugar del ícono (hosts).
+    /// Color dot instead of the icon (hosts).
     pub dot: Option<gpui::Hsla>,
-    /// Chip después del texto (etiqueta del host).
+    /// Chip after the text (host label).
     pub chip: Option<(SharedString, gpui::Hsla)>,
-    /// Acción cuyo atajo se muestra a la derecha.
+    /// Action whose shortcut is shown on the right.
     pub shortcut: Option<Box<dyn Action>>,
     pub mono: bool,
     pub action: PickerAction,
@@ -143,16 +143,16 @@ pub struct PickerConfig {
     pub placeholder: SharedString,
     pub query: String,
     pub empty_text: SharedString,
-    /// Atajos que se explican al pie: (tecla, descripción).
+    /// Shortcuts explained in the footer: (key, description).
     pub hints: Vec<(SharedString, SharedString)>,
-    /// Si está, elegir no hace nada y se muestra este aviso.
+    /// If set, choosing does nothing and this notice is shown.
     pub disabled_reason: Option<SharedString>,
-    /// Elemento resaltado al abrir, con la consulta vacía (índice en la lista de elementos).
+    /// Item highlighted on open, with an empty query (index into the item list).
     pub selected_item: Option<usize>,
 }
 
 pub enum PickerEvent {
-    /// Cambió el elemento resaltado (para vistas previas, como el selector de tema).
+    /// The highlighted item changed (for previews, like the theme picker).
     Selected(PickerAction),
     Confirm {
         action: PickerAction,
@@ -225,7 +225,7 @@ impl Picker {
                     fuzzy_match(&query, &item.label).map(|m| (m.score, ix, m.positions))
                 })
                 .collect();
-            // Mejor puntaje primero; a igual puntaje, el orden original (p. ej. lo más reciente).
+            // Best score first; ties keep the original order (e.g. most recent first).
             matches.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
             self.rows.extend(
                 matches
@@ -272,7 +272,7 @@ impl Picker {
         } else {
             item_rows(Box::new((0..current).rev()))
         };
-        // Al llegar a un extremo, da la vuelta.
+        // Wrap around at either end.
         let next = candidates.first().copied().or_else(|| {
             let all = item_rows(Box::new(0..self.rows.len()));
             if forward {
@@ -479,7 +479,7 @@ impl Render for Picker {
             .rounded(metrics::RADIUS_POPUP)
             .shadow_lg()
             .overflow_hidden()
-            // Clic dentro del cuadro no debe cerrarlo (el fondo sí).
+            // A click inside the box must not close it (clicking the backdrop does).
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()

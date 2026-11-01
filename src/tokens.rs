@@ -1,11 +1,11 @@
-//! Tokens de diseño: los colores de la hoja "Tokens y componentes", cargados de temas JSON.
+//! Design tokens: the colors from the "Tokens and components" sheet, loaded from JSON themes.
 //!
-//! Los temas incluidos viven en `assets/themes/`. Los del usuario van en
-//! `~/Library/Application Support/moth/themes/*.json` y pueden heredar de otro con
-//! `"base"`, definiendo solo lo que cambian:
+//! Built-in themes live in `assets/themes/`. User themes go in
+//! `~/Library/Application Support/moth/themes/*.json` and can inherit from another with
+//! `"base"`, defining only what they change:
 //!
 //! ```json
-//! { "name": "Graphite Naranja", "base": "Graphite", "ui": { "accent": "#FF9F43" } }
+//! { "name": "Graphite Orange", "base": "Graphite", "ui": { "accent": "#FF9F43" } }
 //! ```
 
 use std::{path::Path, sync::Arc};
@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::assets::Assets;
 
-/// Escala de espaciado, radios y tipografía (no cambian con el tema).
+/// Spacing, radius and type scale (doesn't change with the theme).
 pub mod metrics {
     use gpui::{Pixels, px};
 
@@ -33,7 +33,7 @@ pub mod metrics {
     pub const TEXT_META: Pixels = px(11.);
 }
 
-/// Colores en el JSON como `#RRGGBB` o `#RRGGBBAA`.
+/// Colors in the JSON as `#RRGGBB` or `#RRGGBBAA`.
 mod hex {
     use gpui::{Hsla, Rgba};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -74,7 +74,7 @@ mod hex {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Hsla, D::Error> {
         let text = String::deserialize(deserializer)?;
-        parse(&text).ok_or_else(|| D::Error::custom(format!("color inválido: {text}")))
+        parse(&text).ok_or_else(|| D::Error::custom(format!("invalid color: {text}")))
     }
 }
 
@@ -93,7 +93,7 @@ macro_rules! color_group {
 }
 
 color_group!(
-    /// Superficies, bordes y texto de la interfaz.
+    /// UI surfaces, borders and text.
     UiColors {
         background,
         chrome,
@@ -113,12 +113,12 @@ color_group!(
 );
 
 color_group!(
-    /// Resultado de comandos y avisos.
+    /// Command results and notices.
     StatusColors { success, warning, error }
 );
 
 color_group!(
-    /// Resaltado de la línea de comandos.
+    /// Command line highlighting.
     SyntaxColors {
         command,
         subcommand,
@@ -133,8 +133,8 @@ color_group!(
 );
 
 color_group!(
-    /// Los 16 colores ANSI. El prompt de la integración usa `white` para texto secundario,
-    /// `bright_black` para metadatos, `magenta` para la rama y `green`/`red` para el estado.
+    /// The 16 ANSI colors. The integration prompt uses `white` for secondary text,
+    /// `bright_black` for metadata, `magenta` for the branch and `green`/`red` for status.
     AnsiColors {
         black,
         red,
@@ -187,7 +187,7 @@ pub struct TerminalColors {
     pub background: Hsla,
     #[serde(with = "hex")]
     pub cursor: Hsla,
-    /// Fondo del texto seleccionado (con transparencia).
+    /// Background of selected text (with transparency).
     #[serde(with = "hex")]
     pub selection: Hsla,
     pub ansi: AnsiColors,
@@ -234,7 +234,7 @@ fn user_sources(dir: &Path) -> Vec<(String, Value)> {
             match serde_json::from_str(&text) {
                 Ok(value) => Some((path.display().to_string(), value)),
                 Err(err) => {
-                    crate::log::error(format!("tema inválido en {}: {err}", path.display()));
+                    crate::log::error(format!("invalid theme in {}: {err}", path.display()));
                     None
                 }
             }
@@ -244,7 +244,7 @@ fn user_sources(dir: &Path) -> Vec<(String, Value)> {
     sources
 }
 
-/// Mezcla `overlay` sobre `base`, recursivamente en los objetos.
+/// Merges `overlay` onto `base`, recursing into objects.
 fn merge(base: &mut Value, overlay: Value) {
     match (base, overlay) {
         (Value::Object(base), Value::Object(overlay)) => {
@@ -261,7 +261,7 @@ fn merge(base: &mut Value, overlay: Value) {
     }
 }
 
-/// Resuelve un tema de usuario sobre su `base` (o Graphite) y valida que quede completo.
+/// Resolves a user theme on top of its `base` (or Graphite) and checks that it's complete.
 fn resolve(source: Value, builtins: &[Tokens]) -> Result<Tokens> {
     let base_name = source
         .get("base")
@@ -271,17 +271,17 @@ fn resolve(source: Value, builtins: &[Tokens]) -> Result<Tokens> {
     let base = builtins
         .iter()
         .find(|t| t.name.eq_ignore_ascii_case(&base_name))
-        .ok_or_else(|| anyhow!("el tema base \"{base_name}\" no existe"))?;
+        .ok_or_else(|| anyhow!("base theme \"{base_name}\" doesn't exist"))?;
     let mut value = serde_json::to_value(base)?;
     let mut source = source;
     if let Value::Object(map) = &mut source {
         map.remove("base");
     }
     merge(&mut value, source);
-    serde_json::from_value(value).context("faltan colores o hay claves desconocidas")
+    serde_json::from_value(value).context("missing colors or unknown keys")
 }
 
-/// Todos los temas disponibles: los incluidos y luego los del usuario.
+/// All available themes: built-in first, then the user's.
 pub fn load_themes(user_dir: Option<&Path>) -> Vec<Arc<Tokens>> {
     let mut builtins: Vec<Tokens> = builtin_sources()
         .into_iter()
@@ -296,7 +296,7 @@ pub fn load_themes(user_dir: Option<&Path>) -> Vec<Arc<Tokens>> {
                 themes.retain(|t| t.name != tokens.name);
                 themes.push(Arc::new(tokens));
             }
-            Err(err) => crate::log::error(format!("tema inválido en {path}: {err:#}")),
+            Err(err) => crate::log::error(format!("invalid theme in {path}: {err:#}")),
         }
     }
     themes
@@ -306,7 +306,7 @@ pub fn user_themes_dir() -> Option<std::path::PathBuf> {
     Some(crate::state::state_dir()?.join("themes"))
 }
 
-/// El tema activo.
+/// The active theme.
 pub struct ActiveTokens(pub Arc<Tokens>);
 
 impl Global for ActiveTokens {}
@@ -321,7 +321,7 @@ impl TokensExt for App {
     }
 }
 
-/// Un color con otra opacidad, para fondos tenues de badges.
+/// A color with a different opacity, for subtle badge backgrounds.
 pub fn tint(color: Hsla, alpha: f32) -> Hsla {
     let mut rgba: Rgba = color.into();
     rgba.a = alpha;
@@ -352,12 +352,12 @@ mod tests {
     #[test]
     fn user_theme_inherits_from_base() {
         let source = serde_json::json!({
-            "name": "Naranja",
+            "name": "Orange",
             "base": "Graphite Light",
             "ui": { "accent": "#FF9F43" }
         });
         let tokens = resolve(source, &builtins()).unwrap();
-        assert_eq!(tokens.name, "Naranja");
+        assert_eq!(tokens.name, "Orange");
         assert_eq!(tokens.appearance, Appearance::Light);
         assert_eq!(hex::format(&tokens.ui.accent), "#FF9F43");
         assert_eq!(hex::format(&tokens.ui.background), "#FBFBFC");
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_colors_and_unknown_keys() {
-        let bad_color = serde_json::json!({ "name": "x", "ui": { "accent": "naranja" } });
+        let bad_color = serde_json::json!({ "name": "x", "ui": { "accent": "orange" } });
         assert!(resolve(bad_color, &builtins()).is_err());
         let typo = serde_json::json!({ "name": "x", "ui": { "acent": "#FFFFFF" } });
         assert!(resolve(typo, &builtins()).is_err());
@@ -378,13 +378,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("moth-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            dir.join("mio.json"),
-            r##"{ "name": "Mío", "ui": { "accent": "#00FF00" } }"##,
+            dir.join("mine.json"),
+            r##"{ "name": "Mine", "ui": { "accent": "#00FF00" } }"##,
         )
         .unwrap();
-        std::fs::write(dir.join("roto.json"), "{ no es json").unwrap();
+        std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
         let themes = load_themes(Some(&dir));
-        let mine = themes.iter().find(|t| t.name == "Mío").unwrap();
+        let mine = themes.iter().find(|t| t.name == "Mine").unwrap();
         assert_eq!(hex::format(&mine.ui.accent), "#00FF00");
         assert_eq!(themes.len(), 3);
         std::fs::remove_dir_all(dir).ok();

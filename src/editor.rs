@@ -1,25 +1,25 @@
-//! Abrir archivos de la salida en el editor del usuario, en la línea y columna indicadas.
+//! Opens files from the output in the user's editor, at the given line and column.
 
 use std::path::{Path, PathBuf};
 
 use crate::links::FileLink;
 
-/// Cómo abrir el archivo.
+/// How to open the file.
 #[derive(Debug, PartialEq)]
 pub enum Launch {
-    /// Un editor con ventana propia (Zed, VS Code…): se ejecuta directo.
+    /// A GUI editor (Zed, VS Code…): run it directly.
     App { program: PathBuf, args: Vec<String> },
-    /// Un editor de terminal (vim, helix…): este comando va en una pestaña nueva.
+    /// A terminal editor (vim, helix…): this command runs in a new tab.
     Terminal(String),
-    /// Sin editor configurado ni detectado: la app predeterminada de macOS (sin línea).
+    /// No editor configured or detected: the macOS default app (no line number).
     System,
-    /// El editor configurado no está en el PATH.
+    /// The configured editor isn't on the PATH.
     Missing(String),
 }
 
-/// Editores con ventana que se buscan en el PATH si no hay uno configurado, en este orden.
+/// GUI editors looked up on the PATH, in this order, when none is configured.
 const DETECTED: &[&str] = &["zed", "cursor", "code", "windsurf", "subl"];
-/// La CLI dentro de la app, para cuando no se instaló en el PATH (Zed sin `zed`, por ejemplo).
+/// The CLI bundled inside the app, for when it isn't installed on the PATH (Zed without `zed`, say).
 const BUNDLED_CLIS: &[(&str, &str)] = &[
     ("zed", "Zed.app/Contents/MacOS/cli"),
     (
@@ -35,14 +35,14 @@ const BUNDLED_CLIS: &[(&str, &str)] = &[
 ];
 const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "vi", "hx", "helix", "nano", "micro", "kak"];
 
-/// El PATH de una shell sin integración o abierta desde el Finder no trae Homebrew.
+/// The PATH of a shell without integration, or one launched from Finder, lacks Homebrew.
 pub fn fallback_path() -> String {
     let path = std::env::var("PATH").unwrap_or_default();
     format!("{path}:/opt/homebrew/bin:/usr/local/bin")
 }
 
-/// `editor` es lo que dice la configuración: un nombre conocido (`zed`, `code`, `nvim`…) o una
-/// plantilla con `{file}`, `{line}` y `{column}`. Sin configurar, el primero de `DETECTED`.
+/// `editor` is the configured value: a known name (`zed`, `code`, `nvim`…) or a template with
+/// `{file}`, `{line}` and `{column}`. When unset, the first one found from `DETECTED`.
 pub fn launch(editor: Option<&str>, file: &FileLink, search_path: &str) -> Launch {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let app_dirs: Vec<PathBuf> = std::iter::once(PathBuf::from("/Applications"))
@@ -99,7 +99,7 @@ fn launch_in(
     }
 }
 
-/// Ejecuta el editor sin esperar a que termine (se espera en otro hilo para no dejar zombis).
+/// Runs the editor without waiting for it (it's reaped on another thread to avoid zombies).
 pub fn spawn(program: &Path, args: &[String], search_path: &str) -> std::io::Result<()> {
     let mut child = std::process::Command::new(program)
         .args(args)
@@ -112,7 +112,7 @@ pub fn spawn(program: &Path, args: &[String], search_path: &str) -> std::io::Res
     Ok(())
 }
 
-/// Cómo pide cada editor conocido abrir en una línea y columna.
+/// How each known editor expects to be told the line and column.
 fn position_args(name: &str, file: &FileLink) -> Vec<String> {
     let path = file.path.display().to_string();
     let (Some(line), column) = (file.line, file.column) else {
@@ -134,7 +134,7 @@ fn position_args(name: &str, file: &FileLink) -> Vec<String> {
             column.to_string(),
             path,
         ],
-        // zed, subl, hx, micro y cualquier otro: `archivo:línea:columna`.
+        // zed, subl, hx, micro and anything else: `file:line:column`.
         _ => vec![joined],
     }
 }
@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    /// Una carpeta con ejecutables falsos para simular el PATH.
+    /// A folder of fake executables to simulate the PATH.
     fn fake_path(programs: &[&str]) -> (PathBuf, String) {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = std::env::temp_dir().join(format!(
@@ -235,16 +235,16 @@ mod tests {
     #[test]
     fn detects_an_installed_editor_or_falls_back_to_macos() {
         let (dir, search) = fake_path(&["subl", "cursor"]);
-        // `cursor` va antes que `subl` en el orden de detección.
+        // `cursor` comes before `subl` in the detection order.
         assert!(
             matches!(launch_in(None, &file("/a.rs", None, None), &search, &[]), Launch::App { program, .. } if program == dir.join("cursor"))
         );
         assert_eq!(
-            launch_in(None, &file("/a.rs", None, None), "/nada", &[]),
+            launch_in(None, &file("/a.rs", None, None), "/nowhere", &[]),
             Launch::System
         );
         assert_eq!(
-            launch_in(Some("code"), &file("/a.rs", None, None), "/nada", &[]),
+            launch_in(Some("code"), &file("/a.rs", None, None), "/nowhere", &[]),
             Launch::Missing("code".into())
         );
         std::fs::remove_dir_all(dir).ok();
@@ -260,7 +260,7 @@ mod tests {
         std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
         let f = file("/p/a.rs", Some(2), Some(4));
         assert_eq!(
-            launch_in(None, &f, "/nada", std::slice::from_ref(&apps)),
+            launch_in(None, &f, "/nowhere", std::slice::from_ref(&apps)),
             Launch::App {
                 program: cli.clone(),
                 args: vec!["/p/a.rs:2:4".into()]
@@ -274,14 +274,19 @@ mod tests {
         assert_eq!(
             launch_in(
                 Some("nvim"),
-                &file("/p/mi archivo.rs", Some(3), None),
-                "/nada",
+                &file("/p/my file.rs", Some(3), None),
+                "/nowhere",
                 &[]
             ),
-            Launch::Terminal("nvim '+call cursor(3,1)' '/p/mi archivo.rs'".into())
+            Launch::Terminal("nvim '+call cursor(3,1)' '/p/my file.rs'".into())
         );
         assert_eq!(
-            launch_in(Some("hx"), &file("/p/a.rs", Some(3), Some(2)), "/nada", &[]),
+            launch_in(
+                Some("hx"),
+                &file("/p/a.rs", Some(3), Some(2)),
+                "/nowhere",
+                &[]
+            ),
             Launch::Terminal("hx /p/a.rs:3:2".into())
         );
         let (dir, search) = fake_path(&["myedit"]);

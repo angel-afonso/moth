@@ -1,5 +1,5 @@
-//! Reporte de mouse a los programas que lo piden (vim, htop, lazygit…): codifica clics,
-//! arrastres, movimiento y rueda en las secuencias de xterm (SGR o el formato clásico X10).
+//! Mouse reporting for programs that ask for it (vim, htop, lazygit…): encodes clicks,
+//! drags, motion and wheel as xterm sequences (SGR or the classic X10 format).
 
 use alacritty_terminal::term::TermMode;
 
@@ -16,7 +16,7 @@ pub enum Button {
 pub enum Action {
     Press,
     Release,
-    /// Movimiento; con `button`, arrastre.
+    /// Motion; with `button`, a drag.
     Motion,
 }
 
@@ -27,13 +27,13 @@ pub struct Mods {
     pub control: bool,
 }
 
-/// El programa quiere eventos del mouse (y por lo tanto la selección local queda para Shift).
+/// The program wants mouse events (so local selection is left to Shift).
 pub fn wants_mouse(mode: TermMode) -> bool {
     mode.intersects(TermMode::MOUSE_MODE)
 }
 
-/// Secuencia para el evento, o `None` si el modo actual no lo pide. `column` y `line` son de
-/// la pantalla visible, desde 0.
+/// Sequence for the event, or `None` if the current mode doesn't ask for it. `column` and
+/// `line` are in the visible screen, 0-based.
 pub fn report(
     button: Option<Button>,
     action: Action,
@@ -65,7 +65,7 @@ pub fn report(
         Some(Button::WheelDown) => 65,
         None => 3,
     };
-    // En el formato clásico la liberación no dice qué botón: siempre es 3.
+    // In the classic format a release doesn't say which button: it's always 3.
     if action == Action::Release && !sgr {
         code = 3;
     }
@@ -155,7 +155,7 @@ mod tests {
             s(report(Some(Button::Right), Action::Press, 0, 0, ctrl, mode)).unwrap(),
             "\x1b[<18;1;1M"
         );
-        // Movimiento sin botón solo con MOUSE_MOTION.
+        // Motion without a button only with MOUSE_MOTION.
         assert_eq!(report(None, Action::Motion, 1, 1, m, mode), None);
         let any = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
         assert_eq!(
@@ -172,17 +172,17 @@ mod tests {
             report(Some(Button::Left), Action::Press, 0, 0, m, mode).unwrap(),
             b"\x1b[M !!".to_vec()
         );
-        // La liberación no indica el botón.
+        // A release doesn't indicate the button.
         assert_eq!(
             report(Some(Button::Right), Action::Release, 0, 0, m, mode).unwrap(),
             b"\x1b[M#!!".to_vec()
         );
-        // Fuera de rango en X10 no se reporta.
+        // Out of range in X10 isn't reported.
         assert_eq!(
             report(Some(Button::Left), Action::Press, 300, 0, m, mode),
             None
         );
-        // Con UTF8_MOUSE sí, codificado en UTF-8.
+        // With UTF8_MOUSE it is, encoded as UTF-8.
         let utf8 = report(
             Some(Button::Left),
             Action::Press,

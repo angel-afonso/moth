@@ -1,4 +1,4 @@
-//! Modelo de una sesión: PTY + emulador de alacritty, con eventos reenviados a gpui.
+//! Session model: PTY + alacritty emulator, with events forwarded to gpui.
 
 use std::{
     borrow::Cow,
@@ -46,7 +46,7 @@ impl EventListener for Listener {
     }
 }
 
-/// Tamaño de la grilla en celdas, más el tamaño de celda que reporta el PTY.
+/// Grid size in cells, plus the cell size reported to the PTY.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TermSize {
     pub columns: usize,
@@ -81,7 +81,7 @@ impl Dimensions for TermSize {
 }
 
 pub enum TerminalEvent {
-    /// Cambió algo que se muestra en la pestaña o la barra de estado (título, cwd, comando).
+    /// Something shown in the tab or status bar changed (title, cwd, command).
     TitleChanged,
     CommandFinished {
         command: String,
@@ -89,15 +89,15 @@ pub enum TerminalEvent {
         duration: Duration,
     },
     Bell,
-    /// La shell terminó; si fue con un error (ver `Terminal::exit_failure`), la pestaña queda abierta.
+    /// The shell exited; if it was an error (see `Terminal::exit_failure`), the tab stays open.
     Exited,
 }
 
-/// La línea que zsh está editando, tal como la reporta la integración.
+/// The line zsh is editing, as reported by the integration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditLine {
     pub buffer: String,
-    /// Posición del cursor en caracteres.
+    /// Cursor position in characters.
     pub cursor: usize,
 }
 
@@ -111,7 +111,7 @@ pub struct FinishedCommand {
     pub duration: Duration,
 }
 
-/// Estado que conocemos gracias a la integración con la shell.
+/// State we know about thanks to the shell integration.
 #[derive(Default)]
 pub struct ShellState {
     pub integrated: bool,
@@ -120,27 +120,27 @@ pub struct ShellState {
     pub line: Option<EditLine>,
     pub running: Option<RunningCommand>,
     pub last: Option<FinishedCommand>,
-    /// Sesión SSH interactiva en curso.
+    /// Interactive SSH session in progress.
     pub remote: Option<RemoteSession>,
-    /// Última sesión SSH que se cortó (exit 255), para reconectar.
+    /// Last SSH session that dropped (exit 255), for reconnecting.
     pub disconnected: Option<Disconnected>,
-    /// El PATH de la shell, para encontrar el editor aunque la app se abra desde el Finder.
+    /// The shell's PATH, to find the editor even when the app is launched from Finder.
     pub path_env: Option<String>,
 }
 
 pub struct RemoteSession {
-    /// El comando tal como se ejecutó, para reconectar.
+    /// The command exactly as it was run, for reconnecting.
     pub command: String,
     pub target: SshTarget,
     pub identity: HostIdentity,
     pub resolved: Option<ResolvedHost>,
     pub started: Instant,
-    /// Carpeta remota, si el servidor la pone en el título (`usuario@host: ~/dir`).
+    /// Remote folder, if the server puts it in the title (`user@host: ~/dir`).
     pub remote_cwd: Option<String>,
 }
 
 impl RemoteSession {
-    /// `usuario@host` con lo mejor que se sepa.
+    /// `user@host`, as best we know it.
     pub fn user_at_host(&self) -> String {
         let user = self
             .resolved
@@ -172,10 +172,10 @@ pub struct Terminal {
     resolver: CommandResolver,
     git_refresh: Option<Task<()>>,
     ssh_resolve: Option<Task<()>>,
-    /// Comando a ejecutar apenas la shell muestre el prompt (pestañas de "Conectar a…").
+    /// Command to run as soon as the shell shows its prompt ("Connect to…" tabs).
     startup_command: Option<String>,
     started: Instant,
-    /// La shell terminó, con su estado si se conoce.
+    /// The shell exited, with its status if known.
     exited: Option<Option<ExitStatus>>,
     _events: Task<()>,
 }
@@ -187,7 +187,7 @@ enum Incoming {
 
 impl EventEmitter<TerminalEvent> for Terminal {}
 
-/// PTY y emulador ya creados, antes de tener un `Context` de gpui donde colgar los eventos.
+/// PTY and emulator already created, before there's a gpui `Context` to attach events to.
 pub struct TerminalBuilder {
     term: Arc<FairMutex<Term<Listener>>>,
     sender: EventLoopSender,
@@ -197,7 +197,7 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    /// Abre una sesión en `cwd`; sin carpeta (o si ya no existe), en el home.
+    /// Opens a session in `cwd`; with no folder (or if it no longer exists), in the home folder.
     pub fn new(cwd: Option<PathBuf>, scrollback: Option<usize>) -> Result<Self> {
         let size = TermSize {
             columns: 100,
@@ -213,8 +213,8 @@ impl TerminalBuilder {
         ]);
         env.extend(shell::locale_env());
         env.extend(shell::integration_env().unwrap_or_default());
-        // La shell se lanza directa como shell de login (`-l`, carga .zprofile y .zshrc). Sin
-        // `shell`, alacritty pasa por /usr/bin/login, que imprime "Last login: …" al abrir.
+        // Launch the shell directly as a login shell (`-l`, loads .zprofile and .zshrc). Without
+        // `shell`, alacritty goes through /usr/bin/login, which prints "Last login: …" on startup.
         let program = std::env::var("SHELL")
             .ok()
             .filter(|s| !s.is_empty())
@@ -263,7 +263,7 @@ impl TerminalBuilder {
             self.events_rx.map(Incoming::Terminal),
             self.shell_rx.map(Incoming::Shell),
         );
-        // Los `Wakeup` llegan en ráfagas: se agrupan y se procesan en un solo update.
+        // `Wakeup`s arrive in bursts: batch them and process them in a single update.
         let events = cx.spawn(async move |this, cx| {
             while let Some(event) = incoming.next().await {
                 let mut batch = vec![event];
@@ -311,8 +311,8 @@ impl Terminal {
         &self.shell
     }
 
-    /// Lo que falta para completar la línea actual con la entrada más reciente del historial.
-    /// Solo con el cursor al final de la línea.
+    /// What's missing to complete the current line with the most recent history entry.
+    /// Only when the cursor is at the end of the line.
     pub fn suggestion(&self, cx: &App) -> Option<String> {
         let line = self.shell.line.as_ref()?;
         if self.shell.running.is_some() || line.cursor != line.buffer.chars().count() {
@@ -324,7 +324,7 @@ impl Terminal {
             .map(str::to_string)
     }
 
-    /// La línea en edición con sus tokens de resaltado.
+    /// The line being edited, with its highlighting tokens.
     pub fn highlighted_line(&mut self) -> Option<(EditLine, Vec<Token>)> {
         let line = self.shell.line.clone()?;
         if line.buffer.is_empty() {
@@ -349,7 +349,7 @@ impl Terminal {
             ShellEvent::PromptStart => self.shell.integrated = true,
             ShellEvent::PromptEnd(_) => {}
             ShellEvent::Cwd(cwd) => {
-                // Llega en cada prompt: buen momento para refrescar git (cambió de rama, commit…).
+                // Arrives on every prompt: a good time to refresh git (branch switch, commit…).
                 self.refresh_git(cwd.clone(), cx);
                 if self.shell.cwd.as_ref() != Some(&cwd) {
                     let save = cwd.clone();
@@ -367,7 +367,7 @@ impl Terminal {
             ShellEvent::CommandStart => {
                 self.shell.line = None;
                 let text = self.pending_command.take().unwrap_or_default();
-                // Un comando nuevo deja atrás la sesión cortada.
+                // A new command leaves the dropped session behind.
                 self.shell.disconnected = None;
                 self.start_remote_session(&text, cx);
                 self.shell.running = Some(RunningCommand {
@@ -389,7 +389,7 @@ impl Terminal {
                     });
                     if let Some(remote) = self.shell.remote.take() {
                         self.ssh_resolve = None;
-                        // 255 es el código de ssh cuando la conexión falla o se corta.
+                        // 255 is ssh's exit code when the connection fails or drops.
                         if exit_code == Some(255) {
                             self.shell.disconnected = Some(Disconnected {
                                 command: remote.command,
@@ -426,7 +426,7 @@ impl Terminal {
                         let entries = read.await;
                         cx.update(|cx| {
                             let history = cx.default_global::<History>();
-                            // Lo ejecutado en esta sesión queda como lo más reciente.
+                            // Commands run in this session stay as the most recent.
                             let session = std::mem::replace(&mut history.entries, entries);
                             for command in session {
                                 history.push(&command);
@@ -449,7 +449,7 @@ impl Terminal {
         let read = cx
             .background_executor()
             .spawn(async move { git::read_status(&cwd) });
-        // Reemplazar la tarea cancela una lectura anterior que todavía no terminó.
+        // Replacing the task cancels a previous read that hasn't finished yet.
         self.git_refresh = Some(cx.spawn(async move |this, cx| {
             let status = read.await;
             this.update(cx, |this, cx| {
@@ -477,7 +477,7 @@ impl Terminal {
             let resolved = resolve.await;
             this.update(cx, |this, cx| {
                 if let Some(remote) = &mut this.shell.remote {
-                    // Con el hostname real, una regla puede coincidir aunque el alias no.
+                    // With the real hostname, a rule may match even if the alias didn't.
                     if let Some(resolved) = &resolved {
                         remote.identity =
                             rules.identify(&remote.target.alias, Some(&resolved.hostname));
@@ -498,7 +498,7 @@ impl Terminal {
         });
     }
 
-    /// Qué se puede escribir en la posición del cursor de la línea en edición.
+    /// What can be typed at the cursor position of the line being edited.
     pub fn complete(&mut self, cx: &App) -> Option<completions::Completion> {
         let line = self.shell.line.clone().filter(|_| self.at_prompt())?;
         let cursor = line
@@ -547,7 +547,7 @@ impl Terminal {
         result
     }
 
-    /// Vuelve a ejecutar el `ssh` que se cortó.
+    /// Reruns the `ssh` command that dropped.
     pub fn reconnect(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(command) = self.shell.disconnected.as_ref().map(|d| d.command.clone()) else {
             return false;
@@ -555,7 +555,7 @@ impl Terminal {
         self.insert_command(&command, true, cx)
     }
 
-    /// Ejecuta `command` en cuanto la shell esté lista (o ya, si lo está).
+    /// Runs `command` as soon as the shell is ready (or right away, if it already is).
     pub fn run_when_ready(&mut self, command: String, cx: &mut Context<Self>) {
         if self.at_prompt() {
             self.insert_command(&command, true, cx);
@@ -564,24 +564,24 @@ impl Terminal {
         }
     }
 
-    /// La shell está esperando input: se le puede escribir un comando sin pisar un programa.
+    /// The shell is waiting for input: a command can be typed without clobbering a running program.
     pub fn at_prompt(&self) -> bool {
         self.shell.line.is_some() && self.shell.running.is_none()
     }
 
-    /// Escribe y ejecuta `git switch` en la shell, para que el cambio (y cualquier error)
-    /// quede visible en la terminal. Solo cuando la shell está en el prompt.
+    /// Types and runs `git switch` in the shell, so the switch (and any error) shows up
+    /// in the terminal. Only when the shell is at the prompt.
     pub fn switch_branch(&mut self, branch: &str, cx: &mut Context<Self>) -> bool {
         if !self.at_prompt() {
             return false;
         }
-        // Ctrl-E + Ctrl-U: va al final y borra lo que hubiera escrito en la línea.
+        // Ctrl-E + Ctrl-U: jump to the end and clear whatever was typed on the line.
         let command = format!("\x05\x15{}\r", git::switch_command(branch));
         self.input(command.into_bytes(), cx);
         true
     }
 
-    /// Escribe `command` en el prompt, reemplazando lo que hubiera; con `run`, además lo ejecuta.
+    /// Types `command` at the prompt, replacing whatever was there; with `run`, also runs it.
     pub fn insert_command(&mut self, command: &str, run: bool, cx: &mut Context<Self>) -> bool {
         if !self.at_prompt() {
             return false;
@@ -594,7 +594,7 @@ impl Terminal {
         true
     }
 
-    /// Borra el scrollback y, si la shell está en el prompt, le pide redibujar la pantalla.
+    /// Clears the scrollback and, if the shell is at the prompt, asks it to redraw the screen.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.term.lock().grid_mut().clear_history();
         if self.at_prompt() {
@@ -611,14 +611,14 @@ impl Terminal {
         }
     }
 
-    /// Por qué terminó la shell, si fue un error que conviene mostrar en vez de cerrar la
-    /// pestaña: la mató una señal, o salió con error apenas abrió (un `.zshrc` roto, una shell
-    /// que no existe). Un `exit` o ⌃D más tarde puede salir con el código del último comando,
-    /// así que eso no cuenta.
     pub fn has_exited(&self) -> bool {
         self.exited.is_some()
     }
 
+    /// Why the shell exited, if it was an error worth showing instead of closing the tab:
+    /// it was killed by a signal, or it failed right after starting (a broken `.zshrc`, a
+    /// shell that doesn't exist). A later `exit` or ⌃D may exit with the last command's
+    /// code, so that doesn't count.
     pub fn exit_failure(&self) -> Option<String> {
         let status = (*self.exited.as_ref()?)?;
         exit_failure(status, self.started.elapsed())
@@ -659,11 +659,11 @@ impl Terminal {
             AlacEvent::ClipboardStore(_, text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
             }
-            // Responder a OSC 52 le daría el portapapeles a cualquier programa que lo pida: un
-            // servidor SSH o un `cat` de un archivo preparado. Como alacritty, solo se permite copiar.
+            // Answering OSC 52 would hand the clipboard to any program that asks: an SSH
+            // server or a `cat` of a crafted file. Like alacritty, only copying is allowed.
             AlacEvent::ClipboardLoad(..) => {}
             AlacEvent::Bell => cx.emit(TerminalEvent::Bell),
-            // `ChildExit` trae el estado y llega antes que `Exit`; `Exit` solo si no se supo.
+            // `ChildExit` carries the status and arrives before `Exit`; `Exit` only if it wasn't known.
             AlacEvent::ChildExit(status) => self.exited(Some(status), cx),
             AlacEvent::Exit => self.exited(None, cx),
         }
@@ -671,17 +671,17 @@ impl Terminal {
 
     fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
         let bytes = bytes.into();
-        // Una escritura vacía traba la cola de escritura del event loop de alacritty: todo lo
-        // que se mande después queda sin enviarse al PTY.
+        // An empty write jams the write queue of alacritty's event loop: anything sent
+        // afterwards never reaches the PTY.
         if !bytes.is_empty() {
             self.sender.send(Msg::Input(bytes)).ok();
         }
     }
 
-    /// Entrada del usuario: vuelve al final del scrollback antes de escribir.
+    /// User input: scrolls back to the bottom before writing.
     pub fn input(&mut self, bytes: impl Into<Cow<'static, [u8]>>, cx: &mut Context<Self>) {
         let mut term = self.term.lock();
-        // Escribir descarta la selección, como en cualquier terminal.
+        // Typing clears the selection, as in any terminal.
         if term.selection.take().is_some() {
             cx.notify();
         }
@@ -726,17 +726,17 @@ impl Drop for Terminal {
 
 fn exit_failure(status: ExitStatus, lived: Duration) -> Option<String> {
     if let Some(signal) = status.signal() {
-        return Some(format!("La shell terminó por la señal {signal}"));
+        return Some(format!("The shell was killed by signal {signal}"));
     }
     match status.code() {
         Some(code) if code != 0 && lived < Duration::from_secs(5) => {
-            Some(format!("La shell terminó con código {code} al abrir"))
+            Some(format!("The shell exited with code {code} on startup"))
         }
         _ => None,
     }
 }
 
-/// Carpeta del título que ponen muchos servidores: `usuario@host: ~/dir` o `usuario@host:~/dir`.
+/// Folder from the title many servers set: `user@host: ~/dir` or `user@host:~/dir`.
 fn remote_cwd_from_title(title: &str) -> Option<String> {
     let (who, rest) = title.split_once(':')?;
     if !who.contains('@') || who.contains(' ') {
@@ -756,7 +756,7 @@ mod tests {
     fn keeps_tabs_only_for_abnormal_exits() {
         let quick = Duration::from_secs(1);
         let later = Duration::from_secs(60);
-        // `from_raw` recibe el estado de waitpid: código en el byte alto, señal en el bajo.
+        // `from_raw` takes the waitpid status: exit code in the high byte, signal in the low one.
         let code = |code: i32| ExitStatus::from_raw(code << 8);
         assert_eq!(exit_failure(code(0), quick), None);
         assert_eq!(exit_failure(code(1), later), None);
@@ -764,7 +764,7 @@ mod tests {
         assert!(
             exit_failure(ExitStatus::from_raw(9), later)
                 .unwrap()
-                .contains("señal 9")
+                .contains("signal 9")
         );
     }
 

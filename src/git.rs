@@ -1,12 +1,12 @@
-//! Estado del repositorio de la carpeta actual, leído con el `git` del sistema.
+//! Repository status of the current folder, read with the system `git`.
 
 use std::{path::Path, process::Command};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GitStatus {
-    /// `None` con HEAD separado (detached).
+    /// `None` with a detached HEAD.
     pub branch: Option<String>,
-    /// Commit actual abreviado (o vacío en un repo sin commits).
+    /// Current commit, abbreviated (or empty in a repo with no commits).
     pub head: String,
     pub upstream: Option<String>,
     pub ahead: u32,
@@ -15,12 +15,12 @@ pub struct GitStatus {
     pub modified: u32,
     pub untracked: u32,
     pub conflicted: u32,
-    /// Ramas locales, las de commits más recientes primero.
+    /// Local branches, most recently committed first.
     pub branches: Vec<String>,
 }
 
 impl GitStatus {
-    /// Nombre para mostrar: la rama o el commit si HEAD está separado.
+    /// Display name: the branch, or the commit if HEAD is detached.
     pub fn display_name(&self) -> String {
         match &self.branch {
             Some(branch) => branch.clone(),
@@ -32,7 +32,7 @@ impl GitStatus {
 
 fn git(dir: &Path) -> Command {
     let mut command = Command::new("git");
-    // Sin locks opcionales: no compite con un `git` que el usuario esté corriendo.
+    // No optional locks: don't compete with a `git` the user is running.
     command
         .arg("--no-optional-locks")
         .arg("-C")
@@ -42,8 +42,8 @@ fn git(dir: &Path) -> Command {
     command
 }
 
-/// `None` si la carpeta no está en un repositorio o no hay `git` instalado.
-/// Bloquea: llamar desde el executor de fondo.
+/// `None` if the folder isn't in a repository or `git` isn't installed.
+/// Blocking: call from the background executor.
 pub fn read_status(dir: &Path) -> Option<GitStatus> {
     let output = git(dir)
         .args(["status", "--porcelain=v2", "--branch"])
@@ -116,7 +116,7 @@ pub fn parse_porcelain(output: &str) -> GitStatus {
     status
 }
 
-/// Comando de shell para cambiar de rama, con el nombre entre comillas simples.
+/// Shell command to switch branches, with the name in single quotes.
 pub fn switch_command(branch: &str) -> String {
     format!("git switch '{}'", branch.replace('\'', r"'\''"))
 }

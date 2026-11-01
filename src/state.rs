@@ -1,4 +1,4 @@
-//! Estado que sobrevive entre ejecuciones: la última carpeta, las recientes y el tema.
+//! State that persists across runs: the last folder, recent folders and the theme.
 
 use std::path::{Path, PathBuf};
 
@@ -7,8 +7,9 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(Path::new(&home).join("Library/Application Support/moth"))
 }
 
-/// La app se llamaba terminalapp: si queda su carpeta y todavía no hay una de Moth, se mueve
-/// entera (configuración, temas, hosts, sesión, carpetas recientes) para no perder nada.
+/// The app used to be called terminalapp: if its folder is still around and there's no Moth
+/// folder yet, move the whole thing over (settings, themes, hosts, session, recent folders) so
+/// nothing is lost.
 pub fn migrate_legacy_dir() {
     let (Some(home), Some(dir)) = (std::env::var_os("HOME"), state_dir()) else {
         return;
@@ -16,7 +17,7 @@ pub fn migrate_legacy_dir() {
     let legacy = Path::new(&home).join("Library/Application Support/terminalapp");
     if let Err(err) = migrate(&legacy, &dir) {
         crate::log::error(format!(
-            "no se pudo mover {} a {}: {err}",
+            "couldn't move {} to {}: {err}",
             legacy.display(),
             dir.display()
         ));
@@ -28,34 +29,34 @@ fn migrate(legacy: &Path, dir: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     std::fs::rename(legacy, dir)?;
-    // La integración de zsh se vuelve a instalar con el nombre nuevo.
+    // The zsh integration gets reinstalled under the new name.
     std::fs::remove_file(dir.join("shell/zsh/terminalapp.zsh")).ok();
     Ok(())
 }
 
-/// La última carpeta guardada, si todavía existe.
+/// The last saved folder, if it still exists.
 pub fn last_cwd() -> Option<PathBuf> {
     read_last_cwd(&state_dir()?)
 }
 
 const MAX_RECENT_DIRS: usize = 15;
 
-/// Carpetas usadas, la más reciente primero, solo las que todavía existen.
+/// Folders used, most recent first, only those that still exist.
 pub fn recent_dirs() -> Vec<PathBuf> {
     state_dir().map(|dir| read_recent(&dir)).unwrap_or_default()
 }
 
-/// Guarda `cwd` como última carpeta y al frente de las recientes.
+/// Saves `cwd` as the last folder and moves it to the front of the recent ones.
 pub fn record_dir(cwd: &Path) {
     if let Some(dir) = state_dir() {
         let result = write_last_cwd(&dir, cwd).and_then(|()| write_recent(&dir, cwd));
         if let Err(err) = result {
-            crate::log::error(format!("no se pudo guardar la carpeta actual: {err}"));
+            crate::log::error(format!("couldn't save the current folder: {err}"));
         }
     }
 }
 
-/// Nombre del tema elegido la última vez.
+/// Name of the theme picked last time.
 pub fn saved_theme() -> Option<String> {
     let text = std::fs::read_to_string(state_dir()?.join("theme")).ok()?;
     Some(text.trim().to_string()).filter(|name| !name.is_empty())
@@ -68,7 +69,7 @@ pub fn save_theme(name: &str) {
     let result =
         std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
     if let Err(err) = result {
-        crate::log::error(format!("no se pudo guardar el tema: {err}"));
+        crate::log::error(format!("couldn't save the theme: {err}"));
     }
 }
 
@@ -100,13 +101,13 @@ fn read_last_cwd(dir: &Path) -> Option<PathBuf> {
 
 fn write_last_cwd(dir: &Path, cwd: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    // Escribe a un temporal y renombra, para no dejar el archivo a medias.
+    // Write to a temp file and rename it, so the file is never left half-written.
     let tmp = dir.join("last_cwd.tmp");
     std::fs::write(&tmp, cwd.as_os_str().as_encoded_bytes())?;
     std::fs::rename(tmp, dir.join("last_cwd"))
 }
 
-/// Tamaño de texto de terminal, validado antes de usarlo.
+/// Terminal text size, validated before use.
 pub fn saved_font_size() -> f32 {
     state_dir()
         .and_then(|dir| std::fs::read_to_string(dir.join("font_size")).ok())
@@ -120,11 +121,11 @@ pub fn save_font_size(size: f32) {
         && let Err(err) = std::fs::create_dir_all(&dir)
             .and_then(|()| std::fs::write(dir.join("font_size"), size.to_string()))
     {
-        crate::log::error(format!("no se pudo guardar el tamaño de texto: {err}"));
+        crate::log::error(format!("couldn't save the text size: {err}"));
     }
 }
 
-/// Si ⌥ funciona como Meta en la terminal; apagado si nunca se eligió.
+/// Whether ⌥ acts as Meta in the terminal; off unless it was ever turned on.
 pub fn option_as_meta() -> bool {
     state_dir().is_some_and(|dir| dir.join("option_as_meta").exists())
 }
@@ -143,11 +144,11 @@ pub fn save_option_as_meta(enabled: bool) {
         })
     };
     if let Err(err) = result {
-        crate::log::error(format!("no se pudo guardar Option como Meta: {err}"));
+        crate::log::error(format!("couldn't save Option as Meta: {err}"));
     }
 }
 
-/// Carpetas de pestañas cerradas; no guarda ni vuelve a ejecutar comandos.
+/// Folders of closed tabs; commands are neither saved nor re-run.
 pub fn closed_dirs() -> Vec<PathBuf> {
     state_dir()
         .and_then(|dir| std::fs::read(dir.join("closed_tabs.json")).ok())
@@ -175,9 +176,7 @@ pub fn save_closed_dirs(dirs: &[PathBuf]) {
         Ok(())
     })();
     if let Err(err) = result {
-        crate::log::error(format!(
-            "no se pudieron guardar las pestañas cerradas: {err}"
-        ));
+        crate::log::error(format!("couldn't save the closed tabs: {err}"));
     }
 }
 
@@ -197,7 +196,7 @@ mod tests {
         assert!(!legacy.exists());
         assert!(dir.join("config.json").exists());
         assert!(!dir.join("shell/zsh/terminalapp.zsh").exists());
-        // Si ya hay carpeta de Moth, la vieja no la pisa.
+        // If a Moth folder already exists, the old one doesn't overwrite it.
         std::fs::create_dir_all(&legacy).unwrap();
         migrate(&legacy, &dir).unwrap();
         assert!(legacy.exists());
@@ -207,14 +206,14 @@ mod tests {
     #[test]
     fn round_trips_and_ignores_missing_dirs() {
         let dir = std::env::temp_dir().join(format!("moth-state-{}", std::process::id()));
-        let existing = dir.join("proyecto con espacios");
+        let existing = dir.join("project with spaces");
         std::fs::create_dir_all(&existing).unwrap();
 
         assert_eq!(read_last_cwd(&dir), None);
         write_last_cwd(&dir, &existing).unwrap();
         assert_eq!(read_last_cwd(&dir), Some(existing.clone()));
 
-        write_last_cwd(&dir, &dir.join("ya-no-existe")).unwrap();
+        write_last_cwd(&dir, &dir.join("no-longer-exists")).unwrap();
         assert_eq!(read_last_cwd(&dir), None);
 
         std::fs::remove_dir_all(dir).ok();
