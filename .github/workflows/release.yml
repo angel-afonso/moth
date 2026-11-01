@@ -1,8 +1,8 @@
 name: Release
 
 # A push to main whose Cargo.toml version has no `v*` tag yet (the merged release-plz pull
-# request) tags that version, builds Moth for Apple Silicon and Intel, merges both into one
-# universal app and publishes it as a GitHub release. A `v*` tag pushed by hand does the same
+# request) tags that version, builds Moth for macOS (one universal app for Apple Silicon and
+# Intel), Linux and Windows, and publishes the downloads as a GitHub release. A `v*` tag pushed by hand does the same
 # for that tag. Running it by hand from a branch only builds it and keeps the archives as
 # workflow artifacts. The release pull request comes from the Release PR workflow, run by
 # hand.
@@ -75,7 +75,7 @@ jobs:
             echo "build=$build"
           } >> "$GITHUB_OUTPUT"
 
-  # Each architecture compiles on its own; the universal job merges them.
+  # Each Mac architecture compiles on its own; the macos-universal job merges them.
   build:
     name: Build (${{ matrix.target }})
     needs: version
@@ -250,10 +250,200 @@ jobs:
             dist/*.dmg
           if-no-files-found: error
 
+  # Linux and Windows: the release build in one folder, packed as the archive users
+  # download, then unpacked and opened the way a user would.
+  package:
+    name: Build (${{ matrix.target }})
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported runner, so the binary runs on any distribution with glibc
+          # 2.35 or newer.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      # NTFS and Defender scanning make Windows builds slow; a trusted ReFS Dev Drive avoids
+      # both. The build runs in its copy of the checkout.
+      - name: Dev Drive
+        if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v4
+        with:
+          drive-size: 30GB
+          workspace-copy: true
+          trusted-dev-drive: true
+          env-mapping: |
+            CARGO_HOME,{{ DEV_DRIVE }}/.cargo
+            RUSTUP_HOME,{{ DEV_DRIVE }}/.rustup
+
+      # What gpui needs to link on Linux (X11, Wayland and fonts), then what opening the
+      # download needs, as in CI: a virtual X server and window manager, a headless Wayland
+      # compositor, Mesa's software Vulkan and screenshots.
+      - name: System dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev \
+            imagemagick xvfb openbox sway grim mesa-vulkan-drivers vulkan-tools x11-utils
+
+      - name: Workspace
+        run: echo "WORKSPACE=${DEV_DRIVE_WORKSPACE:-$GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+
+      # The version comes from rust-toolchain.toml.
+      - name: Toolchain
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.WORKSPACE }}
+          key: ${{ matrix.target }}
+
+      - name: Build
+        working-directory: ${{ env.WORKSPACE }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # .cargo/config.toml links the C runtime into moth.exe, so it starts on PCs without the
+      # Visual C++ Redistributable. Runners have it installed, so only the import table shows
+      # a build that needs it.
+      - name: Check the C runtime is linked in
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          rustup component add llvm-tools
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          readobj="$(cygpath -u "$(rustc --print sysroot)")/lib/rustlib/$host/bin/llvm-readobj.exe"
+          imports="$("$readobj" --coff-imports target/${{ matrix.target }}/release/moth.exe | sed -n 's/^ *Name: //p')"
+          echo "moth.exe imports:" $imports
+          if grep -iE '^(vcruntime|msvcp|ucrtbase|api-ms-win-crt)' <<< "$imports"; then
+            echo "::error::moth.exe needs the Visual C++ runtime DLLs above; check .cargo/config.toml."
+            exit 1
+          fi
+
+      - name: Archive name
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          version="${TAG:-${GITHUB_SHA::7}}"
+          echo "ARCHIVE=moth-$version-${{ matrix.target }}" >> "$GITHUB_ENV"
+
+      # moth/ holds the executable, its icon, a desktop entry and an install script that adds
+      # them to the user's applications menu.
+      - name: Linux archive
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          folder="stage/moth"
+          mkdir -p "$folder" dist
+          cp target/${{ matrix.target }}/release/moth "$folder/moth"
+          # Rust's release profile keeps the standard library's symbols.
+          strip "$folder/moth"
+          cp packaging/linux/moth.desktop packaging/linux/install.sh packaging/linux/README.txt LICENSE "$folder/"
+          cp assets/branding/moth-256.png "$folder/moth.png"
+          chmod 755 "$folder/moth" "$folder/install.sh"
+
+          # What it needs from the system, and the newest glibc symbol it uses: the oldest
+          # distribution it runs on.
+          ldd "$folder/moth"
+          glibc="$(objdump -T "$folder/moth" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+          echo "Newest glibc symbol: $glibc"
+          echo "::notice::Linux build needs $glibc or newer"
+
+          tar -C stage -czf "dist/$ARCHIVE.tar.gz" --owner=0 --group=0 moth
+          tar -tzvf "dist/$ARCHIVE.tar.gz"
+
+      # Moth/ holds moth.exe, which needs nothing else (it links the C runtime statically).
+      - name: Windows archive
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          folder="stage/Moth"
+          mkdir -p "$folder" dist
+          cp target/${{ matrix.target }}/release/moth.exe "$folder/moth.exe"
+          cp packaging/windows/README.txt LICENSE "$folder/"
+          (cd stage && 7z a -tzip -mx=9 "../dist/$ARCHIVE.zip" Moth >/dev/null)
+          7z l "dist/$ARCHIVE.zip"
+
+      # The download as a user gets it, unpacked into a fresh folder: the next steps open that
+      # Moth, so a missing file shows here rather than on someone's computer.
+      - name: Unpack the download
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            unpacked="$(cygpath -u "$RUNNER_TEMP")/unpacked"
+            mkdir -p "$unpacked"
+            7z x "dist/$ARCHIVE.zip" -o"$(cygpath -w "$unpacked")" >/dev/null
+            app="$(cygpath -w "$unpacked/Moth/moth.exe")"
+          else
+            unpacked="$RUNNER_TEMP/unpacked"
+            mkdir -p "$unpacked"
+            tar -xzf "dist/$ARCHIVE.tar.gz" -C "$unpacked"
+            app="$unpacked/moth/moth"
+          fi
+          ls -R "$unpacked"
+          echo "DOWNLOAD_APP=$app" >> "$GITHUB_ENV"
+
+      # Open it for 30 seconds, as CI opens its debug build; fails only if Moth quits before
+      # then.
+      - name: Launch the download (Linux)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.WORKSPACE }}
+        run: .github/scripts/launch-linux.sh "$DOWNLOAD_APP" smoke
+
+      - name: Launch the download (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.WORKSPACE }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $env:RUST_BACKTRACE = '1'
+          $app = Start-Process $env:DOWNLOAD_APP -PassThru `
+            -RedirectStandardOutput smoke\stdout.log -RedirectStandardError smoke\moth.log
+          Start-Sleep -Seconds 30
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+          [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+          $bitmap.Save("smoke\screen.png")
+          $exited = $app.HasExited
+          if ($exited) { "exited with $($app.ExitCode)" | Add-Content smoke\moth.log } else { "still running" | Add-Content smoke\moth.log; Stop-Process $app }
+          Get-Content smoke\stdout.log, smoke\moth.log
+          if ($exited) { Write-Output "::error::The packaged Moth quit within 30 seconds of starting."; exit 1 }
+
+      - name: Upload launch results
+        if: ${{ !cancelled() && env.DOWNLOAD_APP != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-${{ matrix.target }}
+          path: ${{ env.WORKSPACE }}/smoke/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            ${{ env.WORKSPACE }}/dist/*.tar.gz
+            ${{ env.WORKSPACE }}/dist/*.zip
+          if-no-files-found: error
+
   release:
     name: GitHub release
     if: needs.version.outputs.tag != ''
-    needs: [version, macos-universal]
+    needs: [version, macos-universal, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write

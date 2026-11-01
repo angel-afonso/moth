@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Moth
+GenericName=Terminal
+Comment=A terminal for developers
+Exec=moth
+Icon=moth
+Terminal=false
+Categories=System;TerminalEmulator;Development;
+Keywords=terminal;shell;console;command;prompt;
+StartupWMClass=moth

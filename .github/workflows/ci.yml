@@ -19,37 +19,95 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
-  # Moth is a macOS app (CoreText, Metal, ~/Library paths), so everything runs there.
   build:
-    name: Format, clippy and tests
-    runs-on: macos-latest
+    name: Tests and clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
 
+      # NTFS and Defender scanning make Windows builds slow; a trusted ReFS Dev Drive avoids
+      # both. The build runs in its copy of the checkout.
+      - name: Dev Drive
+        if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v4
+        with:
+          drive-size: 30GB
+          workspace-copy: true
+          trusted-dev-drive: true
+          env-mapping: |
+            CARGO_HOME,{{ DEV_DRIVE }}/.cargo
+            RUSTUP_HOME,{{ DEV_DRIVE }}/.rustup
+
+      # What gpui needs to link on Linux (X11, Wayland and fonts), and what opening the app
+      # needs: a virtual X server and window manager, a headless Wayland compositor, Mesa's
+      # software Vulkan and screenshots.
+      - name: System dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev \
+            imagemagick xvfb openbox sway grim mesa-vulkan-drivers vulkan-tools x11-utils
+
+      - name: Workspace
+        run: echo "WORKSPACE=${DEV_DRIVE_WORKSPACE:-$GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+
       # The version comes from rust-toolchain.toml.
       - name: Toolchain
+        working-directory: ${{ env.WORKSPACE }}
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: ${{ env.WORKSPACE }}
           # PRs reuse main's cache; saving one per PR costs minutes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.WORKSPACE }}
         run: cargo fmt --all --check
 
+      # Every platform: paths, the shell, notifications and shortcuts differ by `cfg`.
       - name: Clippy
+        working-directory: ${{ env.WORKSPACE }}
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Tests
+        working-directory: ${{ env.WORKSPACE }}
         run: cargo test --locked
 
       # The bundle the Release workflow builds, checked on every change so a broken
       # Info.plist or a missing icon shows up before a release.
-      - name: App bundle
+      - name: App bundle (macOS)
+        if: runner.os == 'macOS'
         run: |
           cargo build --locked
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "moth") | .version')"
           .github/scripts/bundle-macos.sh target/debug/moth "$version" dist
           codesign --force --deep --sign - dist/Moth.app
           codesign --verify --strict dist/Moth.app
+
+      # Opens the debug build on X11 and Wayland for 30 seconds; fails if it quits sooner.
+      - name: Launch (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked
+          .github/scripts/launch-linux.sh target/debug/moth smoke
+
+      - name: Upload launch results
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-linux
+          path: smoke/
+          if-no-files-found: ignore
