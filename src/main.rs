@@ -39,6 +39,7 @@ fn main() {
             if let Err(err) = Assets.load_fonts(cx) {
                 crate::log::error(format!("{err:#}"));
             }
+            state::migrate_legacy_dir();
             config::init(cx);
             theme::init(cx);
             workspace::init(cx);
@@ -58,11 +59,11 @@ fn menus() -> Vec<Menu> {
     use crate::{terminal_view as view, workspace as ws};
     vec![
         Menu {
-            name: "terminalapp".into(),
+            name: "Moth".into(),
             items: vec![
                 MenuItem::action("Abrir configuración", ws::OpenConfig),
                 MenuItem::separator(),
-                MenuItem::action("Salir de terminalapp", ws::Quit),
+                MenuItem::action("Salir de Moth", ws::Quit),
             ],
             disabled: false,
         },

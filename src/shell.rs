@@ -50,24 +50,23 @@ pub fn integration_env() -> Option<HashMap<String, String>> {
     let mut env = HashMap::from([
         ("ZDOTDIR".to_string(), dir.display().to_string()),
         (
-            "TERMINALAPP_SHELL_INTEGRATION".to_string(),
-            dir.join("terminalapp.zsh").display().to_string(),
+            "MOTH_SHELL_INTEGRATION".to_string(),
+            dir.join("moth.zsh").display().to_string(),
         ),
     ]);
     if let Ok(orig) = std::env::var("ZDOTDIR") {
-        env.insert("TERMINALAPP_ORIG_ZDOTDIR".to_string(), orig);
+        env.insert("MOTH_ORIG_ZDOTDIR".to_string(), orig);
     }
     Some(env)
 }
 
 fn install_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let dir = Path::new(&home).join("Library/Application Support/terminalapp/shell/zsh");
+    let dir = crate::state::state_dir()?.join("shell/zsh");
     let write = || -> io::Result<()> {
         std::fs::create_dir_all(&dir)?;
         for (asset, name) in [
             ("shell/zsh/zshenv", ".zshenv"),
-            ("shell/zsh/terminalapp.zsh", "terminalapp.zsh"),
+            ("shell/zsh/moth.zsh", "moth.zsh"),
         ] {
             let data = Assets::get(asset).ok_or(io::ErrorKind::NotFound)?.data;
             let target = dir.join(name);
@@ -561,7 +560,7 @@ mod tests {
 
     #[test]
     fn reads_extended_history() {
-        let dir = std::env::temp_dir().join(format!("tapp-hist-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-hist-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("hist");
         std::fs::write(

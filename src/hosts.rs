@@ -1,6 +1,6 @@
 //! Identidad de los hosts remotos: etiqueta, color y si es de producción.
 //!
-//! Se configura en `~/Library/Application Support/terminalapp/hosts.json`. Cada regla se
+//! Se configura en `~/Library/Application Support/moth/hosts.json`. Cada regla se
 //! compara (glob con `*` y `?`) contra el alias que escribiste y contra el hostname real; gana
 //! la primera que coincide. Sin ese archivo se usan reglas por defecto para `prod` y `staging`.
 //!
@@ -102,8 +102,7 @@ fn default_rules() -> Vec<HostRule> {
 }
 
 pub fn hosts_file() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join("Library/Application Support/terminalapp/hosts.json"))
+    Some(crate::state::state_dir()?.join("hosts.json"))
 }
 
 pub fn load_rules(path: Option<&Path>) -> HostRules {
@@ -256,7 +255,7 @@ mod tests {
 
     #[test]
     fn file_rules_replace_defaults() {
-        let dir = std::env::temp_dir().join(format!("tapp-hosts-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-hosts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("hosts.json");
         std::fs::write(

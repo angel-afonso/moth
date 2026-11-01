@@ -1,6 +1,8 @@
-# terminalapp
+# Moth
 
 Terminal para macOS hecha con [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) y los componentes del crate `ui` de Zed. Usa el emulador de alacritty (el mismo fork que usa Zed).
+
+El nombre viene de la polilla que el equipo del Harvard Mark II encontró trabada en un relé en 1947 y pegó en la bitácora como "el primer caso real de bug".
 
 ```bash
 cargo run
@@ -8,7 +10,7 @@ cargo run
 
 Requiere Rust 1.99 (fijado en `rust-toolchain.toml`). Los shaders de Metal se compilan al iniciar (`runtime_shaders`), así que no hace falta el Metal Toolchain de Xcode. Para builds de release conviene instalarlo (`xcodebuild -downloadComponent MetalToolchain`) y quitar esa feature.
 
-Al abrir, la app vuelve a las ventanas, pestañas y paneles de la vez anterior (ver "Sesión"); la primera vez, o sin sesión guardada, abre en la última carpeta que usaste (se guarda en `~/Library/Application Support/terminalapp/last_cwd`). Cada pestaña nueva abre en la carpeta de la pestaña activa. La shell se lanza directa como shell de login (`$SHELL -l`), sin pasar por `/usr/bin/login`, así que no aparece el "Last login: …".
+Al abrir, la app vuelve a las ventanas, pestañas y paneles de la vez anterior (ver "Sesión"); la primera vez, o sin sesión guardada, abre en la última carpeta que usaste (se guarda en `~/Library/Application Support/moth/last_cwd`). Cada pestaña nueva abre en la carpeta de la pestaña activa. La shell se lanza directa como shell de login (`$SHELL -l`), sin pasar por `/usr/bin/login`, así que no aparece el "Last login: …".
 
 ## Atajos
 
@@ -108,7 +110,7 @@ Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pe
 
 ## Configuración
 
-"Abrir configuración" en la paleta (⌘K) crea y abre `~/Library/Application Support/terminalapp/config.json`. Todo es opcional:
+"Abrir configuración" en la paleta (⌘K) crea y abre `~/Library/Application Support/moth/config.json`. Todo es opcional:
 
 ```json
 {
@@ -144,7 +146,7 @@ Cuando ejecutas `ssh` (con la integración de zsh), la app reconoce el destino (
 
 Si `ssh` termina con exit 255 (la conexión se cortó), la pestaña queda tachada con un botón para reconectar (también ⌘⇧R o desde la paleta). "Conectar a…" en ⌘K lista las sesiones cortadas, los hosts de `~/.ssh/config` (con sus `Include`) y los `ssh` del historial; ⏎ abre una pestaña nueva y ⌘⏎ conecta en la actual.
 
-La identidad de cada host se define en `~/Library/Application Support/terminalapp/hosts.json`. Cada regla se compara (glob con `*` y `?`) contra el alias y contra el hostname real; gana la primera que coincide:
+La identidad de cada host se define en `~/Library/Application Support/moth/hosts.json`. Cada regla se compara (glob con `*` y `?`) contra el alias y contra el hostname real; gana la primera que coincide:
 
 ```json
 {
@@ -161,7 +163,7 @@ La identidad de cada host se define en `~/Library/Application Support/terminalap
 
 Los colores salen de tokens (los de la hoja "Tokens y componentes" del diseño): interfaz, estado, sintaxis de la línea de comandos y los 16 colores ANSI. Vienen dos temas, **Graphite** (oscuro) y **Graphite Light**. "Cambiar tema…" en la paleta (⌘K) abre el selector: con ↑↓ se ve una vista previa en vivo, ⏎ lo guarda y esc vuelve al anterior. El cambio recolorea también la salida que ya está en pantalla y el prompt, porque usan colores ANSI que se resuelven con el tema activo.
 
-Para crear un tema, agrega un `.json` en `~/Library/Application Support/terminalapp/themes/`. Hereda de `base` (Graphite si no se indica) y basta con los colores que cambian; el selector relee la carpeta cada vez que se abre:
+Para crear un tema, agrega un `.json` en `~/Library/Application Support/moth/themes/`. Hereda de `base` (Graphite si no se indica) y basta con los colores que cambian; el selector relee la carpeta cada vez que se abre:
 
 ```json
 {
@@ -176,13 +178,15 @@ Las claves disponibles están en [`assets/themes/graphite.json`](assets/themes/g
 
 ## Log y seguridad
 
-Los errores de la app (un tema o `hosts.json` inválidos, una pestaña que no se pudo abrir) se guardan en `~/Library/Logs/terminalapp/terminalapp.log`, además de la salida estándar.
+Los errores de la app (un tema o `hosts.json` inválidos, una pestaña que no se pudo abrir) se guardan en `~/Library/Logs/moth/moth.log`, además de la salida estándar.
+
+La app antes se llamaba terminalapp. Al abrir Moth por primera vez, si existe `~/Library/Application Support/terminalapp` y todavía no hay una carpeta `moth`, se mueve entera, así se conservan la configuración, los temas, los hosts y la sesión.
 
 Los programas pueden copiar al portapapeles con OSC 52 (útil para copiar desde vim o tmux en un servidor remoto), pero no leerlo: así un servidor SSH o un archivo con secuencias de escape no pueden llevarse lo que copiaste.
 
 ## Integración con zsh
 
-Al abrir una pestaña con zsh, la app instala `assets/shell/zsh/` en `~/Library/Application Support/terminalapp/shell/zsh` y arranca zsh con `ZDOTDIR` apuntando ahí. Ese `.zshenv` restaura tu `ZDOTDIR`, carga tu `.zshenv` y luego la integración; `.zprofile` y `.zshrc` siguen siendo los tuyos.
+Al abrir una pestaña con zsh, la app instala `assets/shell/zsh/` en `~/Library/Application Support/moth/shell/zsh` y arranca zsh con `ZDOTDIR` apuntando ahí. Ese `.zshenv` restaura tu `ZDOTDIR`, carga tu `.zshenv` y luego la integración; `.zprofile` y `.zshrc` siguen siendo los tuyos.
 
 La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code; el fin de prompt lleva también las filas del prompt y si falló el comando anterior), OSC 7 (directorio actual) y OSC 7777, propios: la línea en edición en cada tecla, el comando ejecutado, `HISTFILE`, `PATH` y los nombres de alias, funciones y builtins. La app los detecta en la salida del PTY antes de pasársela a alacritty y con eso:
 
@@ -192,7 +196,7 @@ La integración emite OSC 133 (inicio/fin de prompt y de comando, con exit code;
 - muestra en la pestaña el comando en ejecución o la carpeta, y en la barra de estado la ruta y el resultado y la duración del último comando;
 - muestra el estado de git en cada prompt (rama, `↓`/`↑` respecto del upstream, `+` en stage, `~` modificados, `?` sin seguimiento, `!` en conflicto). Elegir una rama en el buscador escribe y ejecuta `git switch` en la shell, así el resultado o cualquier error queda a la vista. Solo se puede cambiar con la shell en el prompt, no con un comando en curso.
 
-Si usas el prompt de zsh por defecto de macOS, la integración lo reemplaza por uno con el estilo de la app: un encabezado tenue con la carpeta (las últimas tres si la ruta es larga), la rama, el resultado y la duración del comando anterior y la hora; debajo, `❯` en verde, o en rojo si el comando falló, con una línea en blanco entre bloques. Si tienes tu propio prompt (starship, p10k…) no se toca; para desactivarlo igual, pon `TERMINALAPP_PROMPT=0` en tu `.zshrc`.
+Si usas el prompt de zsh por defecto de macOS, la integración lo reemplaza por uno con el estilo de la app: un encabezado tenue con la carpeta (las últimas tres si la ruta es larga), la rama, el resultado y la duración del comando anterior y la hora; debajo, `❯` en verde, o en rojo si el comando falló, con una línea en blanco entre bloques. Si tienes tu propio prompt (starship, p10k…) no se toca; para desactivarlo igual, pon `MOTH_PROMPT=0` en tu `.zshrc`.
 
 Si la app no recibe locale (al abrirla desde el Finder), le pasa a la shell un `LANG` UTF-8 según el idioma de macOS, para que los acentos y la ñ funcionen.
 
@@ -215,7 +219,7 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/text_input.rs`: campo de texto de una línea con IME (el crate `ui` no trae uno).
 - `src/fuzzy.rs`: coincidencia difusa con puntaje y posiciones para resaltar.
 - `src/state.rs`: última carpeta, carpetas recientes, tema, zoom y ⌥ como Meta.
-- `src/log.rs`: errores a stderr y a `~/Library/Logs/terminalapp/`.
+- `src/log.rs`: errores a stderr y a `~/Library/Logs/moth/`.
 - `src/glyphs.rs`: bloques (`▀▄█▐▛▜`…) y líneas de caja (`─│╭╮`…) dibujados como rectángulos que llenan la celda, para que logos como el de Claude Code y los bordes de TUIs no queden con huecos.
 - `src/blocks.rs`: bloques de comandos: marcas invisibles en la grilla, salida de cada comando y resultado.
 - `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).

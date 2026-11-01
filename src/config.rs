@@ -1,4 +1,4 @@
-//! Configuración del usuario en `~/Library/Application Support/terminalapp/config.json`.
+//! Configuración del usuario en `~/Library/Application Support/moth/config.json`.
 //! Todo es opcional; se relee al volver a la ventana si el archivo cambió.
 
 use std::{path::PathBuf, time::SystemTime};

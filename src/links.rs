@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn ignores_words_versions_and_urls() {
-        assert!(paths("compilando terminalapp v0.1.0 ...").is_empty());
+        assert!(paths("compilando moth v0.1.0 ...").is_empty());
         assert!(paths("1.5s  ok").is_empty());
         assert!(paths("https://example.com/a.html").is_empty());
         assert!(paths(".. / ...").is_empty());
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn resolves_relative_home_and_git_diff_paths() {
-        let dir = std::env::temp_dir().join(format!("tapp-links-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-links-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/main.rs"), "").unwrap();
         let file = dir.join("src/main.rs");
@@ -339,8 +339,8 @@ mod tests {
     #[test]
     fn finds_urls_in_output() {
         assert_eq!(
-            urls("remote: Create a pull request: https://github.com/you/terminalapp/pull/new/feat"),
-            vec!["https://github.com/you/terminalapp/pull/new/feat"]
+            urls("remote: Create a pull request: https://github.com/you/moth/pull/new/feat"),
+            vec!["https://github.com/you/moth/pull/new/feat"]
         );
         assert_eq!(
             urls("ver http://localhost:3000/api?q=1&x=2 y ftp://files.example.com/a.tgz"),

@@ -197,7 +197,7 @@ mod tests {
     fn fake_path(programs: &[&str]) -> (PathBuf, String) {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = std::env::temp_dir().join(format!(
-            "tapp-editor-{}-{}",
+            "moth-editor-{}-{}",
             std::process::id(),
             programs.join("-")
         ));
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn finds_the_cli_inside_the_app() {
         use std::os::unix::fs::PermissionsExt as _;
-        let apps = std::env::temp_dir().join(format!("tapp-apps-{}", std::process::id()));
+        let apps = std::env::temp_dir().join(format!("moth-apps-{}", std::process::id()));
         let cli = apps.join("Zed.app/Contents/MacOS/cli");
         std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
         std::fs::write(&cli, "#!/bin/sh\n").unwrap();

@@ -1,14 +1,14 @@
 //! Errores de la app. Abierta desde el Finder no hay terminal donde ver stderr, así que además
-//! se guardan en `~/Library/Logs/terminalapp/terminalapp.log`.
+//! se guardan en `~/Library/Logs/moth/moth.log`.
 
 use std::{fmt::Display, io::Write as _, path::PathBuf};
 
-/// Al pasar este tamaño, el log pasa a `terminalapp.log.old` y se empieza uno nuevo.
+/// Al pasar este tamaño, el log pasa a `moth.log.old` y se empieza uno nuevo.
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 pub fn log_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join("Library/Logs/terminalapp/terminalapp.log"))
+    Some(PathBuf::from(home).join("Library/Logs/moth/moth.log"))
 }
 
 pub fn error(message: impl Display) {

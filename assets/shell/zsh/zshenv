@@ -1,19 +1,19 @@
-# terminalapp: se instala como $ZDOTDIR/.zshenv. Restaura el ZDOTDIR del usuario,
+# Moth: se instala como $ZDOTDIR/.zshenv. Restaura el ZDOTDIR del usuario,
 # carga su .zshenv y, en shells interactivas, la integración. zsh vuelve a leer
 # ZDOTDIR antes de cada archivo de inicio, así que .zprofile/.zshrc son los del usuario.
-if [[ -n "${TERMINALAPP_ORIG_ZDOTDIR+x}" ]]; then
-  ZDOTDIR="$TERMINALAPP_ORIG_ZDOTDIR"
-  unset TERMINALAPP_ORIG_ZDOTDIR
+if [[ -n "${MOTH_ORIG_ZDOTDIR+x}" ]]; then
+  ZDOTDIR="$MOTH_ORIG_ZDOTDIR"
+  unset MOTH_ORIG_ZDOTDIR
 else
   unset ZDOTDIR
 fi
 
 {
-  _tapp_user_zshenv="${ZDOTDIR-$HOME}/.zshenv"
-  [[ -r "$_tapp_user_zshenv" ]] && builtin source "$_tapp_user_zshenv"
+  _moth_user_zshenv="${ZDOTDIR-$HOME}/.zshenv"
+  [[ -r "$_moth_user_zshenv" ]] && builtin source "$_moth_user_zshenv"
 } always {
-  if [[ -o interactive && -r "$TERMINALAPP_SHELL_INTEGRATION" ]]; then
-    builtin source "$TERMINALAPP_SHELL_INTEGRATION"
+  if [[ -o interactive && -r "$MOTH_SHELL_INTEGRATION" ]]; then
+    builtin source "$MOTH_SHELL_INTEGRATION"
   fi
-  unset _tapp_user_zshenv
+  unset _moth_user_zshenv
 }

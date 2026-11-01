@@ -209,7 +209,7 @@ impl TerminalBuilder {
         let mut env = HashMap::from([
             ("TERM".to_string(), "xterm-256color".to_string()),
             ("COLORTERM".to_string(), "truecolor".to_string()),
-            ("TERM_PROGRAM".to_string(), "terminalapp".to_string()),
+            ("TERM_PROGRAM".to_string(), "moth".to_string()),
         ]);
         env.extend(shell::locale_env());
         env.extend(shell::integration_env().unwrap_or_default());

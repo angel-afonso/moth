@@ -4,7 +4,33 @@ use std::path::{Path, PathBuf};
 
 pub fn state_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join("Library/Application Support/terminalapp"))
+    Some(Path::new(&home).join("Library/Application Support/moth"))
+}
+
+/// La app se llamaba terminalapp: si queda su carpeta y todavía no hay una de Moth, se mueve
+/// entera (configuración, temas, hosts, sesión, carpetas recientes) para no perder nada.
+pub fn migrate_legacy_dir() {
+    let (Some(home), Some(dir)) = (std::env::var_os("HOME"), state_dir()) else {
+        return;
+    };
+    let legacy = Path::new(&home).join("Library/Application Support/terminalapp");
+    if let Err(err) = migrate(&legacy, &dir) {
+        crate::log::error(format!(
+            "no se pudo mover {} a {}: {err}",
+            legacy.display(),
+            dir.display()
+        ));
+    }
+}
+
+fn migrate(legacy: &Path, dir: &Path) -> std::io::Result<()> {
+    if !legacy.is_dir() || dir.exists() {
+        return Ok(());
+    }
+    std::fs::rename(legacy, dir)?;
+    // La integración de zsh se vuelve a instalar con el nombre nuevo.
+    std::fs::remove_file(dir.join("shell/zsh/terminalapp.zsh")).ok();
+    Ok(())
 }
 
 /// La última carpeta guardada, si todavía existe.
@@ -160,8 +186,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrates_the_old_folder_only_once() {
+        let root = std::env::temp_dir().join(format!("moth-migrate-{}", std::process::id()));
+        let legacy = root.join("terminalapp");
+        let dir = root.join("moth");
+        std::fs::create_dir_all(legacy.join("shell/zsh")).unwrap();
+        std::fs::write(legacy.join("config.json"), "{}").unwrap();
+        std::fs::write(legacy.join("shell/zsh/terminalapp.zsh"), "").unwrap();
+        migrate(&legacy, &dir).unwrap();
+        assert!(!legacy.exists());
+        assert!(dir.join("config.json").exists());
+        assert!(!dir.join("shell/zsh/terminalapp.zsh").exists());
+        // Si ya hay carpeta de Moth, la vieja no la pisa.
+        std::fs::create_dir_all(&legacy).unwrap();
+        migrate(&legacy, &dir).unwrap();
+        assert!(legacy.exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn round_trips_and_ignores_missing_dirs() {
-        let dir = std::env::temp_dir().join(format!("tapp-state-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-state-{}", std::process::id()));
         let existing = dir.join("proyecto con espacios");
         std::fs::create_dir_all(&existing).unwrap();
 
@@ -177,7 +222,7 @@ mod tests {
 
     #[test]
     fn keeps_recent_dirs_unique_and_most_recent_first() {
-        let dir = std::env::temp_dir().join(format!("tapp-recent-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-recent-{}", std::process::id()));
         let a = dir.join("a");
         let b = dir.join("b");
         std::fs::create_dir_all(&a).unwrap();

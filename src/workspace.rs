@@ -187,7 +187,7 @@ pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
-            title: Some("terminalapp".into()),
+            title: Some("Moth".into()),
             appears_transparent: true,
             // Centrados en la barra de pestañas.
             traffic_light_position: Some(point(px(14.), px(14.))),
@@ -958,7 +958,7 @@ impl Workspace {
             CloseTarget::Tab(_) => ("¿Cerrar la pestaña?", "Cerrar"),
             CloseTarget::Pane(_) => ("¿Cerrar el panel?", "Cerrar"),
             CloseTarget::Window => ("¿Cerrar la ventana?", "Cerrar"),
-            CloseTarget::Quit => ("¿Salir de terminalapp?", "Salir"),
+            CloseTarget::Quit => ("¿Salir de Moth?", "Salir"),
         };
         let detail = match busy.as_slice() {
             [] => "Ya no hay procesos en curso.".to_string(),
@@ -1721,7 +1721,7 @@ impl Workspace {
             .shortcut(CloseTab),
             PickerItem::new(
                 "Acciones",
-                "Salir de terminalapp",
+                "Salir de Moth",
                 PickerAction::Dispatch(Box::new(Quit)),
             )
             .icon(IconName::Exit)

@@ -1,7 +1,7 @@
 //! Tokens de diseño: los colores de la hoja "Tokens y componentes", cargados de temas JSON.
 //!
 //! Los temas incluidos viven en `assets/themes/`. Los del usuario van en
-//! `~/Library/Application Support/terminalapp/themes/*.json` y pueden heredar de otro con
+//! `~/Library/Application Support/moth/themes/*.json` y pueden heredar de otro con
 //! `"base"`, definiendo solo lo que cambian:
 //!
 //! ```json
@@ -303,8 +303,7 @@ pub fn load_themes(user_dir: Option<&Path>) -> Vec<Arc<Tokens>> {
 }
 
 pub fn user_themes_dir() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join("Library/Application Support/terminalapp/themes"))
+    Some(crate::state::state_dir()?.join("themes"))
 }
 
 /// El tema activo.
@@ -376,7 +375,7 @@ mod tests {
 
     #[test]
     fn user_dir_themes_override_by_name() {
-        let dir = std::env::temp_dir().join(format!("tapp-themes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moth-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("mio.json"),
