@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Debug info makes cold builds and caches much bigger, and CI only needs it for
+  # backtraces.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  # Moth is a macOS app (CoreText, Metal, ~/Library paths), so everything runs there.
+  build:
+    name: Format, clippy and tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The version comes from rust-toolchain.toml.
+      - name: Toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # PRs reuse main's cache; saving one per PR costs minutes.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      # The bundle the Release workflow builds, checked on every change so a broken
+      # Info.plist or a missing icon shows up before a release.
+      - name: App bundle
+        run: |
+          cargo build --locked
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "moth") | .version')"
+          .github/scripts/bundle-macos.sh target/debug/moth "$version" dist
+          codesign --force --deep --sign - dist/Moth.app
+          codesign --verify --strict dist/Moth.app

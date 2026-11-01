@@ -1,0 +1,278 @@
+name: Release
+
+# A push to main whose Cargo.toml version has no `v*` tag yet (the merged release-plz pull
+# request) tags that version, builds Moth for Apple Silicon and Intel, merges both into one
+# universal app and publishes it as a GitHub release. A `v*` tag pushed by hand does the same
+# for that tag. Running it by hand from a branch only builds it and keeps the archives as
+# workflow artifacts. The release pull request comes from the Release PR workflow, run by
+# hand.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # The app bundle reports the Cargo.toml version, so the release is tagged from it. Outputs
+  # the version, the tag to publish (empty when nothing is released) and whether to build.
+  version:
+    name: Version and tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+      build: ${{ steps.tag.outputs.build }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # A tag pushed with the workflow's token starts no other run, so this run goes on to
+      # build and publish it.
+      - name: Tag the version
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [[ -z "$version" ]]; then
+            echo "::error::No version in [package] of Cargo.toml."
+            exit 1
+          fi
+          echo "Cargo.toml version: $version"
+          tag="" build=true
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match the Cargo.toml version $version; bump [package] version to ${GITHUB_REF_NAME#v} or tag v$version."
+              exit 1
+            fi
+            tag="$GITHUB_REF_NAME"
+          elif [[ "$EVENT" == push ]]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+              echo "v$version is already released; nothing to build."
+              build=false
+            else
+              tag="v$version"
+              git tag "$tag" "$GITHUB_SHA"
+              git push origin "$tag"
+              echo "Tagged $tag."
+            fi
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
+  # Each architecture compiles on its own; the universal job merges them.
+  build:
+    name: Build (${{ matrix.target }})
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The version comes from rust-toolchain.toml.
+      - name: Toolchain
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Keep the binary
+        run: |
+          mkdir -p bin
+          cp target/${{ matrix.target }}/release/moth bin/moth
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: bin/
+          if-no-files-found: error
+
+  # One app for both Apple Silicon and Intel Macs: the two binaries merged with lipo into a
+  # universal binary, which macOS runs natively on either.
+  macos-universal:
+    name: macOS universal app
+    needs: [version, build]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*-apple-darwin
+          path: bin
+
+      - name: Universal binary
+        run: |
+          lipo -create -output moth \
+            bin/bin-aarch64-apple-darwin/moth \
+            bin/bin-x86_64-apple-darwin/moth
+          chmod +x moth
+          archs="$(lipo -archs moth)"
+          echo "moth architectures: $archs"
+          if [[ "$archs" != *arm64* || "$archs" != *x86_64* ]]; then
+            echo "::error::The universal binary is missing an architecture: $archs"
+            exit 1
+          fi
+
+      - name: Archive name
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          version="${TAG:-${GITHUB_SHA::7}}"
+          echo "ARCHIVE=moth-$version-universal-apple-darwin" >> "$GITHUB_ENV"
+
+      - name: App bundle
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          .github/scripts/bundle-macos.sh moth "$VERSION" "dist/$ARCHIVE"
+          cp README.md LICENSE "dist/$ARCHIVE/"
+
+      # With the Apple secrets set, the app is signed with the Developer ID certificate,
+      # notarized and stapled, so Gatekeeper opens it without a warning. Without them it
+      # falls back to an ad-hoc signature (Apple Silicon refuses to run unsigned binaries)
+      # and users have to right-click → Open the first time.
+      - name: Sign and notarize
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          app="dist/$ARCHIVE/Moth.app"
+          if [[ -z "$MACOS_CERTIFICATE" || -z "$APPLE_API_KEY" ]]; then
+            echo "::warning::Apple signing secrets are not set; Moth.app gets an ad-hoc signature and is not notarized."
+            codesign --force --deep --sign - "$app"
+            exit 0
+          fi
+
+          # A throwaway keychain holding only the Developer ID certificate.
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          # Keep the existing keychains in the search list (their paths have no spaces).
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ { print $2; exit }')"
+          if [[ -z "$identity" ]]; then
+            echo "::error::MACOS_CERTIFICATE holds no Developer ID Application identity."
+            exit 1
+          fi
+
+          # Notarization requires the hardened runtime and a secure timestamp.
+          codesign --force --options runtime --timestamp --sign "$identity" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+
+          # The installer step signs and notarizes the disk image with these.
+          echo "MACOS_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/Moth-notarize.zip"
+          .github/scripts/notarize.sh "$RUNNER_TEMP/Moth-notarize.zip"
+
+          # Staple the ticket so the app opens offline without asking Apple.
+          xcrun stapler staple "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+
+      - name: Archive
+        run: (cd dist && ditto -c -k --keepParent "$ARCHIVE" "$ARCHIVE.zip")
+
+      # The installer: a disk image with Moth.app next to a link to /Applications, so
+      # installing is dragging one onto the other. With the Apple secrets it is signed,
+      # notarized and stapled like the app.
+      - name: Installer
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          staging="$RUNNER_TEMP/dmg"
+          dmg="dist/$ARCHIVE.dmg"
+          mkdir -p "$staging"
+          ditto "dist/$ARCHIVE/Moth.app" "$staging/Moth.app"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname Moth -srcfolder "$staging" -fs HFS+ -format UDZO -ov "$dmg"
+
+          if [[ -z "${MACOS_SIGNING_IDENTITY:-}" ]]; then
+            echo "::warning::Apple signing secrets are not set; the disk image is not signed or notarized."
+            exit 0
+          fi
+          codesign --force --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$dmg"
+          .github/scripts/notarize.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: needs.version.outputs.tag != ''
+    needs: [version, macos-universal]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: moth-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum -- * > SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Moth $TAG" \
+            --generate-notes

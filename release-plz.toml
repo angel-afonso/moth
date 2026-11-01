@@ -1,0 +1,40 @@
+# release-plz opens the release pull request when the Release PR workflow is run by hand: it
+# raises the Cargo.toml version from the conventional commits since the last `v*` tag and
+# adds them to CHANGELOG.md. Merging it makes the Release workflow tag that version and
+# publish it.
+
+[workspace]
+# Moth is not on crates.io: the last release is the latest `v*` tag.
+git_only = true
+git_tag_name = "v{{ version }}"
+publish = false
+# The Release workflow tags and publishes the GitHub release.
+git_tag_enable = false
+git_release_enable = false
+# An app, not a library: there is no public API to check.
+semver_check = false
+# Dependencies are updated on purpose, not with each release.
+dependencies_update = false
+# Before 1.0 too, `feat:` raises the minor version and `fix:` the patch.
+features_always_increment_minor = true
+pr_name = "chore: release {{ version }}"
+
+[[package]]
+name = "moth"
+changelog_path = "CHANGELOG.md"
+
+# Groups the commits by their conventional type; merge commits repeat the pull request's
+# own commits, so they are left out.
+[changelog]
+commit_parsers = [
+    { message = "^Merge pull request", skip = true },
+    { message = "^chore: release", skip = true },
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Changed" },
+    { message = "^docs?", group = "Documentation" },
+    { message = "^revert", group = "Reverted" },
+    { message = "^(test|style|ci|build)", skip = true },
+    { message = ".*", group = "Other" },
+]

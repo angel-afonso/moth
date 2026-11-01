@@ -202,6 +202,37 @@ If the app gets no locale (when launched from Finder), it passes the shell a UTF
 
 Other shells work the same, just without these features.
 
+## Building and releasing
+
+To build the app bundle locally:
+
+```bash
+cargo build --release
+.github/scripts/bundle-macos.sh target/release/moth "$(cargo pkgid | sed 's/.*[#@]//')" dist
+codesign --force --deep --sign - dist/Moth.app
+open dist/Moth.app
+```
+
+`bundle-macos.sh` wraps the binary in `Moth.app` with the icon, the license and an `Info.plist` carrying the Cargo.toml version. The ad-hoc signature is enough to run it on your own Mac.
+
+Three GitHub Actions workflows cover the rest:
+
+- **CI** runs on every push to `main` and every pull request: `cargo fmt --check`, `clippy -D warnings`, the tests, and a debug build of the bundle.
+- **Release PR** is run by hand from `main`. [release-plz](https://release-plz.dev) opens (or updates) a pull request that raises the version in Cargo.toml from the [conventional commits](https://www.conventionalcommits.org) since the last `v*` tag and adds them to `CHANGELOG.md`: `feat:` raises the minor version, `fix:` the patch. Configuration in `release-plz.toml`.
+- **Release** runs when that pull request is merged: it tags `v<version>`, builds Moth for Apple Silicon and Intel, merges both into one universal app with `lipo`, and publishes a `.zip`, a `.dmg` (with the usual link to Applications) and `SHA256SUMS` as a GitHub release. Pushing a `v*` tag by hand does the same; running it by hand from a branch only builds and keeps the files as workflow artifacts.
+
+The app and the disk image are signed with a Developer ID certificate, notarized and stapled when these repository secrets are set; without them the app gets an ad-hoc signature and users have to right-click → Open the first time:
+
+| Secret | Contents |
+| --- | --- |
+| `MACOS_CERTIFICATE` | The Developer ID Application certificate exported as `.p12`, base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | The `.p12` password |
+| `APPLE_API_KEY` | An App Store Connect API key (`.p8`), base64-encoded |
+| `APPLE_API_KEY_ID` | That key's ID |
+| `APPLE_API_ISSUER_ID` | The issuer ID from App Store Connect |
+
+The icon is drawn by `assets/branding/icon.swift`; after changing it, regenerate `moth.icns` and `moth.png` with `swift assets/branding/icon.swift assets/branding/moth.icns`.
+
 ## Project structure
 
 - `src/workspace.rs`: window, tab bar, panes, status bar with the branch picker, actions.
@@ -232,6 +263,8 @@ Other shells work the same, just without these features.
 - `src/theme.rs`: applies the active theme to the app and to Zed's theme system (for the `ui` components), with live switching.
 - `src/components.rs`: design components: `TabItem`, `Kbd`, `KindBadge`, `StatusDot`, `BlockStatus`.
 - `src/palette.rs`: grid colors (ANSI, 256, truecolor) resolved through the tokens.
+- `assets/branding/`: the app icon and the script that draws it.
+- `.github/`: the CI, Release PR and Release workflows, and the scripts that bundle and notarize the app.
 
 ## Licenses
 
