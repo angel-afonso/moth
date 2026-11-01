@@ -18,6 +18,8 @@ use ui::{
 
 use crate::{
     components::{BlockStatus, DotState, StatusDot, SuggestionKind, TabItem, TabState},
+    config,
+    editor::{self, Launch},
     hosts::{self, RulesSource},
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
     shell, ssh, state,
@@ -52,9 +54,17 @@ actions!(
         ConnectToHost,
         Reconnect,
         ClearScreen,
+        OpenConfig,
         Quit,
     ]
 );
+
+/// Abrir un archivo de la salida en el editor (clic en una ruta).
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenFile {
+    pub file: crate::links::FileLink,
+}
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -170,6 +180,16 @@ impl Workspace {
             pending_close: None,
             confirm_focus: cx.focus_handle(),
         };
+        // Al volver a la app se relee config.json, por si se editó.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() && config::reload_if_changed(cx) {
+                if let Some(error) = config::error(cx) {
+                    this.command_notice = Some(error.to_string());
+                }
+                cx.refresh_windows();
+            }
+        })
+        .detach();
         // El botón rojo de la ventana también pasa por la confirmación.
         let workspace = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -211,7 +231,7 @@ impl Workspace {
             .clone()
             .filter(|dir| dir.is_dir())
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
-        let builder = match TerminalBuilder::new(cwd) {
+        let builder = match TerminalBuilder::new(cwd, config::get(cx).scrollback) {
             Ok(builder) => builder,
             Err(err) => {
                 crate::log::error(format!("no se pudo abrir la terminal: {err:#}"));
@@ -352,6 +372,62 @@ impl Workspace {
             self.active
         };
         self.activate(next, window, cx);
+    }
+
+    /// Abre el archivo en el editor de config.json (o el que se detecte): uno de terminal va en
+    /// una pestaña nueva en la carpeta actual.
+    fn open_file(
+        &mut self,
+        file: &crate::links::FileLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shell = self.active_terminal(cx).read(cx).shell();
+        let cwd = shell.cwd.clone();
+        let search_path = shell.path_env.clone().unwrap_or_else(editor::fallback_path);
+        let error = match editor::launch(config::get(cx).editor.as_deref(), file, &search_path) {
+            Launch::App { program, args } => editor::spawn(&program, &args, &search_path)
+                .err()
+                .map(|err| format!("No se pudo abrir {}: {err}", program.display())),
+            Launch::Terminal(command) => {
+                self.add_tab_in(cwd, window, cx);
+                let terminal = self.active_terminal(cx);
+                terminal.update(cx, |t, cx| t.run_when_ready(command, cx));
+                None
+            }
+            Launch::System => editor::spawn(
+                Path::new("/usr/bin/open"),
+                &[file.path.display().to_string()],
+                &search_path,
+            )
+            .err()
+            .map(|err| format!("No se pudo abrir el archivo: {err}")),
+            Launch::Missing(program) => Some(format!(
+                "No se encontró «{program}», el editor de config.json, en el PATH de la shell"
+            )),
+        };
+        if let Some(error) = error {
+            crate::log::error(&error);
+            self.command_notice = Some(error);
+            cx.notify();
+        }
+    }
+
+    fn open_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match config::ensure_file() {
+            Ok(path) => {
+                let file = crate::links::FileLink {
+                    path,
+                    line: None,
+                    column: None,
+                };
+                self.open_file(&file, window, cx);
+            }
+            Err(err) => {
+                self.command_notice = Some(format!("No se pudo crear config.json: {err}"));
+                cx.notify();
+            }
+        }
     }
 
     /// Lo que se cortaría al cerrar la pestaña: la sesión SSH o el comando en curso.
@@ -1134,6 +1210,12 @@ impl Workspace {
             .icon(IconName::Sparkle),
             PickerItem::new(
                 "Acciones",
+                "Abrir configuración (fuente, editor, scrollback)",
+                PickerAction::Dispatch(Box::new(OpenConfig)),
+            )
+            .icon(IconName::Settings),
+            PickerItem::new(
+                "Acciones",
                 "Limpiar pantalla",
                 PickerAction::Dispatch(Box::new(ClearScreen)),
             )
@@ -1781,6 +1863,10 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Quit, window, cx| {
                 this.request_close(CloseTarget::Quit, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, action: &OpenFile, w, cx| this.open_file(&action.file, w, cx)),
+            )
+            .on_action(cx.listener(|this, _: &OpenConfig, w, cx| this.open_config(w, cx)))
             .on_action(
                 cx.listener(|this, _: &terminal_view::RestartShell, w, cx| {
                     this.restart_shell(w, cx)

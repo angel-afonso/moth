@@ -124,6 +124,8 @@ pub struct ShellState {
     pub remote: Option<RemoteSession>,
     /// Última sesión SSH que se cortó (exit 255), para reconectar.
     pub disconnected: Option<Disconnected>,
+    /// El PATH de la shell, para encontrar el editor aunque la app se abra desde el Finder.
+    pub path_env: Option<String>,
 }
 
 pub struct RemoteSession {
@@ -196,7 +198,7 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     /// Abre una sesión en `cwd`; sin carpeta (o si ya no existe), en el home.
-    pub fn new(cwd: Option<PathBuf>) -> Result<Self> {
+    pub fn new(cwd: Option<PathBuf>, scrollback: Option<usize>) -> Result<Self> {
         let size = TermSize {
             columns: 100,
             lines: 30,
@@ -233,7 +235,13 @@ impl TerminalBuilder {
         let listener = Listener(events_tx);
         let pty = ShellPty::new(tty::new(&options, size.window_size(), 0)?, shell_tx)?;
         let term = Arc::new(FairMutex::new(Term::new(
-            Config::default(),
+            Config {
+                scrolling_history: scrollback
+                    .map_or(Config::default().scrolling_history, |lines| {
+                        lines.min(crate::config::MAX_SCROLLBACK)
+                    }),
+                ..Config::default()
+            },
             &size,
             listener.clone(),
         )));
@@ -429,7 +437,10 @@ impl Terminal {
                     .detach();
                 }
             }
-            ShellEvent::Path(path) => self.resolver.set_path(&path),
+            ShellEvent::Path(path) => {
+                self.resolver.set_path(&path);
+                self.shell.path_env = Some(path);
+            }
             ShellEvent::Names(names) => self.resolver.set_names(&names),
         }
     }

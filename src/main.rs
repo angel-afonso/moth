@@ -2,6 +2,8 @@ mod assets;
 mod blocks;
 mod completions;
 mod components;
+mod config;
+mod editor;
 mod fuzzy;
 mod git;
 mod glyphs;
@@ -37,6 +39,7 @@ fn main() {
             if let Err(err) = Assets.load_fonts(cx) {
                 crate::log::error(format!("{err:#}"));
             }
+            config::init(cx);
             theme::init(cx);
             workspace::init(cx);
             cx.set_menus([

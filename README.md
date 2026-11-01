@@ -80,6 +80,31 @@ Tab en el prompt abre un popup con lo que se puede escribir donde está el curso
 
 Las URLs de la salida (`http`, `https`, `ftp`, `file`, `mailto`), incluso las que se parten en dos filas, y los hipervínculos OSC 8 (`ls --hyperlink`, compiladores) se subrayan al pasar el mouse y se abren en el navegador predeterminado con un clic. Se abren al soltar el botón sobre el mismo link, y el clic que solo activa la ventana no abre nada. En la línea que estás escribiendo el clic sigue moviendo el cursor. Por seguridad no se abren otros esquemas, aunque lleguen por OSC 8.
 
+Las rutas a archivos también son links, con su línea y columna si la salida las trae: `src/main.rs:12:5` (rustc, grep, go, pytest), `src/app.ts(12,5)` (tsc) y `File "app.py", line 7` (Python). Se resuelven contra la carpeta actual de la pestaña (también `~/…`, absolutas y las `a/…` y `b/…` de `git diff`), y solo se subrayan si el archivo existe. Un clic las abre en el editor:
+
+- el de `editor` en la configuración, o el primero que encuentre entre Zed, Cursor, VS Code, Windsurf y Sublime Text (en el PATH de la shell o dentro de la app en `/Applications`);
+- sin ninguno, con la app predeterminada de macOS, sin ir a la línea.
+
+Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pestaña nueva. En una sesión SSH las rutas no son links, porque son archivos del servidor. Los hipervínculos `file://` locales también van al editor.
+
+## Configuración
+
+"Abrir configuración" en la paleta (⌘K) crea y abre `~/Library/Application Support/terminalapp/config.json`. Todo es opcional:
+
+```json
+{
+  "font_family": "JetBrainsMono Nerd Font",
+  "editor": "zed",
+  "scrollback": 10000
+}
+```
+
+- `font_family`: la fuente de la terminal. Con Geist Mono (la de siempre), los íconos de starship o p10k salen de "Symbols Nerd Font" si la tienes instalada.
+- `editor`: `zed`, `code`, `cursor`, `windsurf`, `subl`, `idea`, `nvim`, `hx`… o una plantilla con `{file}`, `{line}` y `{column}`, como `"myeditor --goto {file}:{line}"`.
+- `scrollback`: líneas que guarda cada pestaña nueva (hasta 100.000).
+
+El archivo se relee al volver a la ventana. Una clave mal escrita o un JSON inválido muestran un aviso y se usan los valores por defecto.
+
 ## Paleta de comandos e historial
 
 ⌘K abre la paleta: acciones (con sus atajos), las pestañas abiertas y las carpetas recientes, que abren en una pestaña nueva. ⌘R abre la búsqueda en el historial de zsh: arranca con lo que ya estaba escrito en el prompt, filtra con coincidencia difusa y resalta los caracteres que coinciden. ⏎ lleva el comando al prompt para editarlo y ⌘⏎ lo ejecuta. Clic en la rama de la barra de estado (o "Cambiar de rama…" en la paleta) abre el mismo buscador con las ramas locales.
@@ -167,7 +192,9 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 - `src/blocks.rs`: bloques de comandos: marcas invisibles en la grilla, salida de cada comando y resultado.
 - `src/completions.rs`: motor de completions (interpreta la línea, elige la fuente, rankea y aplica).
 - `src/mouse.rs`: reporte de mouse a los programas que lo piden (SGR y X10).
-- `src/links.rs`: búsqueda de URLs en la salida y esquemas permitidos.
+- `src/links.rs`: URLs y rutas con línea y columna en la salida, esquemas permitidos.
+- `src/editor.rs`: abre archivos en el editor (detección, posición según cada editor, editores de terminal).
+- `src/config.rs`: `config.json` (fuente, editor, scrollback), relectura al volver a la ventana.
 - `src/keys.rs`: teclas especiales → secuencias de escape.
 - `src/tokens.rs`: tokens de diseño, carga de temas JSON con herencia, métricas de espaciado y radios.
 - `src/theme.rs`: aplica el tema activo a la app y al sistema de temas de Zed (para los componentes de `ui`), cambio en caliente.

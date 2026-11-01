@@ -1,6 +1,12 @@
 //! Vista de una sesión: pinta la grilla de alacritty directamente con el text system de gpui.
 
-use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use alacritty_terminal::{
     Term,
@@ -114,7 +120,7 @@ pub struct TerminalView {
     /// Link bajo el mouse: se subraya y el cursor pasa a ser una mano.
     hovered_link: Option<HoveredLink>,
     /// Link donde se apretó el botón; se abre si se suelta sobre el mismo.
-    link_press: Option<String>,
+    link_press: Option<LinkTarget>,
     /// Botón izquierdo apretado fuera de un link: punto de partida de la selección.
     press: Option<Press>,
     /// El clic izquierdo actual se reportó al programa (vim, htop…).
@@ -161,9 +167,16 @@ struct Press {
     dragged: bool,
 }
 
+/// Adónde lleva un link: una URL (navegador) o un archivo (editor).
+#[derive(Clone, Debug, PartialEq)]
+enum LinkTarget {
+    Url(String),
+    File(links::FileLink),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct HoveredLink {
-    url: String,
+    target: LinkTarget,
     /// Celdas (línea, columna) en coordenadas de la grilla.
     cells: Vec<(i32, usize)>,
 }
@@ -519,7 +532,13 @@ impl TerminalView {
         {
             return None;
         }
-        link_at(&term, point)
+        // En SSH las rutas son del servidor: no hay archivo local que abrir.
+        let cwd = terminal
+            .shell()
+            .cwd
+            .as_deref()
+            .filter(|_| terminal.shell().remote.is_none());
+        link_at(&term, point, cwd)
     }
 
     /// El programa pide el mouse (vim, htop…) y no se forzó la selección local con Shift.
@@ -586,7 +605,7 @@ impl TerminalView {
             && event.click_count == 1
             && let Some(link) = self.link_under(event.position, cx)
         {
-            self.link_press = Some(link.url);
+            self.link_press = Some(link.target);
             return;
         }
 
@@ -678,7 +697,7 @@ impl TerminalView {
         }
     }
 
-    fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn mouse_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.reported_press) {
             self.send_mouse(
                 Some(mouse::Button::Left),
@@ -689,12 +708,17 @@ impl TerminalView {
             );
             return;
         }
-        if let Some(url) = self.link_press.take() {
+        if let Some(target) = self.link_press.take() {
             if self
                 .link_under(event.position, cx)
-                .is_some_and(|link| link.url == url)
+                .is_some_and(|link| link.target == target)
             {
-                cx.open_url(&url);
+                match target {
+                    LinkTarget::Url(url) => cx.open_url(&url),
+                    LinkTarget::File(file) => {
+                        window.dispatch_action(Box::new(crate::workspace::OpenFile { file }), cx)
+                    }
+                }
             }
             return;
         }
@@ -1725,6 +1749,26 @@ fn block_decorations(
     quads
 }
 
+/// La fuente de config.json o Geist Mono. Los íconos de Nerd Fonts que no estén en la fuente
+/// salen de "Symbols Nerd Font" si está instalada.
+fn terminal_font(cx: &App) -> Font {
+    let family = crate::config::get(cx).font_family.clone();
+    let mut fallbacks = vec![
+        "Symbols Nerd Font Mono".to_string(),
+        "Symbols Nerd Font".to_string(),
+    ];
+    if family.is_some() {
+        fallbacks.insert(0, MONO_FONT_FAMILY.to_string());
+    }
+    Font {
+        family: family
+            .unwrap_or_else(|| MONO_FONT_FAMILY.to_string())
+            .into(),
+        fallbacks: Some(gpui::FontFallbacks::from_fonts(fallbacks)),
+        ..font(MONO_FONT_FAMILY)
+    }
+}
+
 fn styled_font(base: &Font, style: &CellStyle) -> Font {
     let mut font = base.clone();
     if style.bold {
@@ -1765,7 +1809,7 @@ fn layout_grid(
         completion_ghost,
         selected_block,
     } = overlays;
-    let base_font = font(MONO_FONT_FAMILY);
+    let base_font = terminal_font(cx);
     let line_height = TERMINAL_LINE_HEIGHT * (font_size / TERMINAL_FONT_SIZE);
     let text_system = window.text_system().clone();
     let font_id = text_system.resolve_font(&base_font);
@@ -2107,7 +2151,9 @@ fn layout_grid(
 
 /// Link en `point`: un hipervínculo OSC 8 de la celda, o una URL escrita en la línea lógica
 /// (las filas partidas por el ancho de la terminal se unen). Solo esquemas seguros.
-fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
+/// El link bajo `point`: un hipervínculo OSC 8, una URL escrita o, con `cwd`, una ruta a un
+/// archivo que existe.
+fn link_at<T>(term: &Term<T>, point: AlacPoint, cwd: Option<&Path>) -> Option<HoveredLink> {
     let grid = term.grid();
     let last_column = alacritty_terminal::index::Column(term.columns() - 1);
 
@@ -2131,7 +2177,20 @@ fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
             .last()
             .unwrap_or(point.column.0);
         let cells = (start..=end).map(|c| (point.line.0, c)).collect();
-        return Some(HoveredLink { url, cells });
+        // `file://` local (`ls --hyperlink`, compiladores): al editor si es un archivo.
+        let local_file = url
+            .strip_prefix("file://")
+            .and_then(|rest| rest.find('/').map(|slash| PathBuf::from(&rest[slash..])))
+            .filter(|path| cwd.is_some() && path.is_file());
+        let target = match local_file {
+            Some(path) => LinkTarget::File(links::FileLink {
+                path,
+                line: None,
+                column: None,
+            }),
+            None => LinkTarget::Url(url),
+        };
+        return Some(HoveredLink { target, cells });
     }
 
     let wraps = |line: alacritty_terminal::index::Line| {
@@ -2172,19 +2231,32 @@ fn link_at(term: &Term<Listener>, point: AlacPoint) -> Option<HoveredLink> {
         .rev()
         .find(|(_, (l, c))| *l == point.line.0 && *c <= point.column.0)
         .map(|(offset, _)| *offset)?;
-    let range = links::find_urls(&text)
+    let url = links::find_urls(&text)
         .into_iter()
-        .find(|r| r.contains(&hovered))?;
-    let url = text[range.clone()].to_string();
-    if !links::is_openable(&url) {
-        return None;
-    }
+        .find(|r| r.contains(&hovered))
+        .filter(|range| links::is_openable(&text[range.clone()]))
+        .map(|range| (range.clone(), LinkTarget::Url(text[range].to_string())));
+    let file = || {
+        let cwd = cwd?;
+        let found = links::find_paths(&text)
+            .into_iter()
+            .find(|m| m.range.contains(&hovered))?;
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let path = links::resolve_path(&found.path, cwd, home.as_deref())?;
+        let file = links::FileLink {
+            path,
+            line: found.line,
+            column: found.column,
+        };
+        Some((found.range, LinkTarget::File(file)))
+    };
+    let (range, target) = url.or_else(file)?;
     let cells = offsets
         .iter()
         .filter(|(offset, _)| range.contains(offset))
         .map(|(_, cell)| *cell)
         .collect();
-    Some(HoveredLink { url, cells })
+    Some(HoveredLink { target, cells })
 }
 
 /// Celda de un carácter de la línea en edición: línea de la grilla, columna inicial y ancho.
@@ -2441,6 +2513,31 @@ mod tests {
             alacritty_terminal::vte::ansi::Processor::new();
         parser.advance(&mut term, text.as_bytes());
         term
+    }
+
+    #[test]
+    fn compiler_paths_link_to_the_file_and_urls_win() {
+        use alacritty_terminal::index::{Column, Line, Point};
+        let cwd = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let term = search_term(
+            "  --> src/blocks.rs:12:5\r\nver https://a.dev/src/x.rs",
+            40,
+            4,
+        );
+        let link = super::link_at(&term, Point::new(Line(0), Column(10)), Some(cwd)).unwrap();
+        assert_eq!(
+            link.target,
+            super::LinkTarget::File(crate::links::FileLink {
+                path: cwd.join("src/blocks.rs"),
+                line: Some(12),
+                column: Some(5),
+            })
+        );
+        assert_eq!(link.cells.len(), "src/blocks.rs:12:5".len());
+        // Sin carpeta (SSH) no hay link de archivo; las URLs siguen.
+        assert!(super::link_at(&term, Point::new(Line(0), Column(10)), None).is_none());
+        let url = super::link_at(&term, Point::new(Line(1), Column(20)), Some(cwd)).unwrap();
+        assert!(matches!(url.target, super::LinkTarget::Url(_)));
     }
 
     #[test]

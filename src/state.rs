@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-fn state_dir() -> Option<PathBuf> {
+pub fn state_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(Path::new(&home).join("Library/Application Support/terminalapp"))
 }
