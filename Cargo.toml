@@ -1,6 +1,6 @@
 [package]
 name = "moth"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 publish = false
 # Zed's `ui` crate is GPL-3.0-or-later; linking it makes the binary inherit that license.
