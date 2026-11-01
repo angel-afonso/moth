@@ -26,8 +26,19 @@ polling = "3"
 rust-embed = { version = "8", features = ["include-exclude"] }
 # To see what gpui reports (renderer and platform failures) instead of dropping it.
 log = "0.4"
+# The updater (src/update): the release manifest over HTTPS, its version, and the checksum and
+# minisign signature of every download.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
+minisign-verify = "0.2"
+semver = "1"
+sha2 = "0.10"
+thiserror = "2"
 # The same image crate gpui uses, for the window icon on Linux (only PNG decoding).
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+# Signs test archives with throwaway keys; the app itself only verifies.
+minisign = "0.8"
 
 [build-dependencies]
 # Embeds the icon in moth.exe (Windows only; see build.rs).

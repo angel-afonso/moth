@@ -28,6 +28,9 @@ pub struct Config {
     /// What Tab does at the prompt: the shell's completion (default) or open the app's
     /// suggestions, which are otherwise always on ⌃Space.
     pub tab_completion: Option<TabCompletion>,
+    /// Look for a new release at startup and every few hours, download it in the background
+    /// and offer the restart (yes by default; release builds only).
+    pub check_updates: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -45,7 +48,8 @@ const TEMPLATE: &str = r#"{
   "scrollback": 10000,
   "restore_session": true,
   "notifications": true,
-  "tab_completion": "shell"
+  "tab_completion": "shell",
+  "check_updates": true
 }
 "#;
 

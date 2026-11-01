@@ -31,6 +31,7 @@ use crate::{
     theme::{self, Themes},
     theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, UI_FONT_SIZE},
     tokens::{Appearance, Tokens, TokensExt, metrics, tint},
+    updates,
 };
 
 actions!(
@@ -237,6 +238,19 @@ pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
     }) {
         crate::log::error(format!("failed to open window: {err:#}"));
     }
+}
+
+/// What's running in every window (commands, SSH sessions), which a restart would end.
+pub fn busy_everywhere(cx: &App) -> Vec<String> {
+    let Some(registry) = cx.try_global::<Workspaces>() else {
+        return Vec::new();
+    };
+    registry
+        .0
+        .iter()
+        .filter_map(WeakEntity::upgrade)
+        .flat_map(|workspace| workspace.read(cx).busy(CloseTarget::Window, cx))
+        .collect()
 }
 
 /// The workspaces of every window, used to confirm on quit (and to save the session).
@@ -1426,7 +1440,8 @@ impl Workspace {
                         Label::new(format!("{}×{}", size.columns, size.lines))
                             .size(LabelSize::XSmall)
                             .color(Color::Placeholder),
-                    ),
+                    )
+                    .child(updates::status_item(cx)),
             )
             .into_any_element()
     }
@@ -1713,6 +1728,20 @@ impl Workspace {
                 PickerAction::Dispatch(Box::new(OpenConfig)),
             )
             .icon(IconName::Settings),
+            PickerItem::new(
+                "Actions",
+                if updates::ready(cx) {
+                    "Restart to Update"
+                } else {
+                    "Check for Updates…"
+                },
+                if updates::ready(cx) {
+                    PickerAction::Dispatch(Box::new(updates::RestartToUpdate))
+                } else {
+                    PickerAction::Dispatch(Box::new(updates::CheckForUpdates))
+                },
+            )
+            .icon(IconName::Download),
             PickerItem::new(
                 "Actions",
                 "Clear Screen",
@@ -2618,6 +2647,7 @@ impl Render for Workspace {
                         )),
                 )
             })
+            .children(updates::render_notice(cx))
             .children(self.render_production_strip(cx))
             .child(
                 div()

@@ -28,6 +28,24 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(base.join("moth"))
 }
 
+/// What can be thrown away (downloaded updates): `~/Library/Caches/moth` on macOS,
+/// `%LOCALAPPDATA%\moth\cache` on Windows and `$XDG_CACHE_HOME/moth` (or `~/.cache/moth`)
+/// elsewhere.
+pub fn cache_dir() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(home_dir()?.join("Library/Caches/moth"))
+    } else if cfg!(windows) {
+        Some(
+            path_var("LOCALAPPDATA")
+                .or_else(|| path_var("APPDATA"))?
+                .join("moth/cache"),
+        )
+    } else {
+        let base = path_var("XDG_CACHE_HOME").or_else(|| Some(home_dir()?.join(".cache")))?;
+        Some(base.join("moth"))
+    }
+}
+
 /// Where the log goes: `~/Library/Logs/moth` on macOS, `%LOCALAPPDATA%\moth\logs` on Windows
 /// and `$XDG_STATE_HOME/moth` (or `~/.local/state/moth`) elsewhere.
 pub fn log_dir() -> Option<PathBuf> {

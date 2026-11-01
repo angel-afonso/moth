@@ -28,6 +28,8 @@ mod terminal_view;
 mod text_input;
 mod theme;
 mod tokens;
+mod update;
+mod updates;
 mod workspace;
 
 use gpui::{App, Menu, MenuItem};
@@ -46,6 +48,7 @@ fn main() {
             config::init(cx);
             theme::init(cx);
             workspace::init(cx);
+            updates::init(cx);
             cx.set_menus(menus());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
@@ -64,6 +67,7 @@ fn menus() -> Vec<Menu> {
         Menu {
             name: "Moth".into(),
             items: vec![
+                MenuItem::action("Check for Updates…", crate::updates::CheckForUpdates),
                 MenuItem::action("Open Settings", ws::OpenConfig),
                 MenuItem::separator(),
                 MenuItem::action("Quit Moth", ws::Quit),

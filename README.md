@@ -12,7 +12,7 @@ Each [release](../../releases) has a download for every platform:
 - **Windows** (x86_64): a `.zip` with a `Moth` folder holding `moth.exe`. Unzip it anywhere and run `moth.exe`; it needs no Visual C++ redistributable. The download isn't code-signed, so SmartScreen may warn the first time ("More info" → "Run anyway").
 - **Linux** (x86_64, glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 or later): a `.tar.gz` with a `moth` folder. Run `./moth` from it; `./install.sh` adds Moth to the applications menu and links it as `~/.local/bin/moth` (`./install.sh --uninstall` removes both). It needs a Vulkan driver.
 
-`SHA256SUMS` in each release lists the files' checksums.
+`SHA256SUMS` in each release lists the files' checksums. Once installed, Moth updates itself (see [Updates](#updates)), so keep it somewhere you can write to: `/Applications` or `~/Applications` on macOS, a folder of your own on Windows and Linux (not `/usr` or `/opt`).
 
 ## Building
 
@@ -74,6 +74,12 @@ The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own bel
 ⌘D splits the active pane to the right and ⌘⇧D splits it down; the new pane opens in the same folder and gets focus. Splitting halves the pane; splitting several times in the same direction adds panes side by side instead of nesting them. Drag the divider between panes to resize them (no pane goes below 80 px), and when a pane is closed its space goes to its neighbor. Clicking a pane focuses it, and the others are dimmed. ⌘⌥ plus the arrow keys moves to the pane on that side, and ⌘[ / ⌘] cycle through panes in reading order. ⌘⇧⏎ maximizes the active pane within the tab and restores it.
 
 ⌘W closes the active pane (asking for confirmation if something is running) and focus moves to the previous one; with a single pane it closes the tab. The tab's × closes it along with all its panes. The tab title and the status bar reflect the active pane.
+
+## Updates
+
+Release builds look for a newer release 10 seconds after starting and every six hours, download it in the background and verify it: the archive is only kept if its SHA-256 and its minisign signature match the release's `latest.json`, and the signature must come from the key whose public half is built into the app ([`assets/update.pub`](assets/update.pub)). The status bar's right corner shows the running version (`v0.2.0`) or how far an update has got: `Checking for updates`, `New update available`, `Downloading update 42%`, then `Restart to update`. When it's ready, a notice above the tabs offers **Restart**: the new version replaces the installed one in place (`Moth.app`, `moth.exe` or `moth`) and Moth reopens with the same windows and tabs. If something is running in a tab (a command, an SSH session), it asks before ending it.
+
+**Check for Updates…** (in the Moth menu and the command palette) looks right away and says what it found. `"check_updates": false` in the settings turns the automatic checks off. Development builds, and builds not made by the Release workflow, don't update themselves.
 
 ## Windows and session
 
@@ -156,6 +162,7 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `shell`: the shell each new tab runs, as a command line (`zsh`, `nu`, `cmd.exe`, `wsl.exe`…); unset, `$SHELL` on macOS and Linux and PowerShell on Windows.
 - `notifications`: a desktop notification when a long command finishes while the app is in the background (on by default).
 - `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
+- `check_updates`: look for new releases automatically (on by default; see [Updates](#updates)).
 
 The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
 
@@ -265,6 +272,8 @@ Releases aren't notarized: without Apple's secrets the macOS app gets an ad-hoc 
 | `APPLE_API_KEY_ID` | That key's ID |
 | `APPLE_API_ISSUER_ID` | The issuer ID from App Store Connect |
 
+Each release also publishes `latest.json`, which the in-app updater reads from the latest release, and a minisign signature (`.minisig`) for every archive it installs (`.github/scripts/update-manifest.sh`). The workflow builds the app with `MOTH_REPOSITORY` set to the repository, which is where it then looks for updates. The app only installs archives signed by the key whose public half is `assets/update.pub`, and the workflow checks its signatures against that file. The secret half is the **`UPDATE_SIGNING_KEY`** repository secret (the passwordless minisign secret key file's contents); a release fails without it. Keep a backup of it: without it, no update can be signed for the copies already installed. To replace the key, generate a passwordless pair (`minisign -G -W`), put the public key in `assets/update.pub` and the secret in the repository secret; copies installed before the change will need one manual download.
+
 The icon is drawn by `assets/branding/icon.swift` (macOS); after changing it, regenerate every format (`moth.icns`, `moth.ico`, `moth.png`, `moth-256.png`) with `swift assets/branding/icon.swift assets/branding/moth.icns`.
 
 ## Project structure
@@ -273,6 +282,8 @@ The icon is drawn by `assets/branding/icon.swift` (macOS); after changing it, re
 - `src/panes.rs`: a tab's pane tree (split, close, resize, neighbor in each direction).
 - `src/session.rs`: saves and restores windows, tabs and panes.
 - `src/notify.rs`: desktop notifications (`osascript`, `notify-send`, a PowerShell toast).
+- `src/update/`: the updater with no UI: release manifest, verified downloads and in-place installs.
+- `src/updates.rs`: the app's side of updates: the schedule, the status bar, the notice and the restart.
 - `src/process.rs`: finding programs on the PATH and starting them in the background, per platform.
 - `src/shortcuts.rs`: shortcuts written the macOS way and translated for Linux and Windows.
 - `src/terminal.rs`: PTY + `alacritty_terminal`, events to gpui.
