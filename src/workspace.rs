@@ -8,8 +8,10 @@ use std::{
 };
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, KeyBinding,
-    MouseButton, MouseDownEvent, Pixels, Subscription, Window, actions, div, prelude::*, px,
+    Action, App, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, EntityId,
+    FocusHandle, Focusable, Global, KeyBinding, MouseButton, MouseDownEvent, Pixels, SharedString,
+    Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, actions,
+    deferred, div, point, prelude::*, px, relative, size,
 };
 use ui::{
     Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label,
@@ -23,7 +25,7 @@ use crate::{
     hosts::{self, RulesSource},
     panes::{Axis, Direction, PaneTree},
     picker::{self, Picker, PickerAction, PickerConfig, PickerEvent, PickerItem},
-    shell, ssh, state,
+    session, shell, ssh, state,
     terminal::{Terminal, TerminalBuilder, TerminalEvent},
     terminal_view::{self, TerminalView},
     theme::{self, Themes},
@@ -56,6 +58,9 @@ actions!(
         Reconnect,
         ClearScreen,
         OpenConfig,
+        NewWindow,
+        Minimize,
+        ZoomWindow,
         SplitRight,
         SplitDown,
         FocusPaneLeft,
@@ -79,6 +84,8 @@ pub struct OpenFile {
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-t", NewTab, None),
+        KeyBinding::new("cmd-n", NewWindow, None),
+        KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-t", ReopenTab, None),
         KeyBinding::new("cmd-d", SplitRight, None),
@@ -133,8 +140,68 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
 }
 
-/// Alto de la barra de pestañas; los semáforos de macOS se centran en ella (ver main.rs).
+/// Alto de la barra de pestañas; los semáforos de macOS se centran en ella.
 pub const TAB_BAR_HEIGHT: Pixels = px(40.);
+
+/// Con qué abre una ventana.
+pub enum Start {
+    /// Una pestaña en esa carpeta; sin carpeta, en la última que se usó.
+    Cwd(Option<PathBuf>),
+    /// Las pestañas y paneles de la sesión anterior.
+    Restore(session::WindowSession),
+}
+
+/// Las ventanas de la sesión anterior (si `restore_session` no está apagado), o una nueva.
+pub fn open_initial_windows(cx: &mut App) {
+    let restore = config::get(cx).restore_session != Some(false);
+    let windows = restore
+        .then(session::load)
+        .flatten()
+        .map(|s| s.windows)
+        .unwrap_or_default();
+    if windows.is_empty() {
+        open_window(Start::Cwd(None), None, cx);
+    }
+    for window in windows {
+        // Si la pantalla donde estaba ya no está conectada, se abre centrada.
+        let bounds = window
+            .bounds
+            .map(|[x, y, w, h]| Bounds::new(point(px(x), px(y)), size(px(w), px(h))))
+            .filter(|bounds| {
+                cx.displays()
+                    .iter()
+                    .any(|display| display.bounds().intersects(bounds))
+            });
+        open_window(Start::Restore(window), bounds, cx);
+    }
+}
+
+/// Abre una ventana con su workspace; sin `bounds`, centrada.
+pub fn open_window(start: Start, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
+    let bounds = bounds.unwrap_or_else(|| Bounds::centered(None, size(px(1100.), px(720.)), cx));
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("terminalapp".into()),
+            appears_transparent: true,
+            // Centrados en la barra de pestañas.
+            traffic_light_position: Some(point(px(14.), px(14.))),
+        }),
+        window_min_size: Some(size(px(480.), px(280.))),
+        ..Default::default()
+    };
+    if let Err(err) = cx.open_window(options, |window, cx| {
+        cx.new(|cx| Workspace::new(start, window, cx))
+    }) {
+        crate::log::error(format!("no se pudo abrir la ventana: {err:#}"));
+    }
+}
+
+/// Los workspaces de todas las ventanas, para confirmar al salir (y guardar la sesión).
+#[derive(Default)]
+struct Workspaces(Vec<WeakEntity<Workspace>>);
+
+impl Global for Workspaces {}
 
 /// Una terminal dentro de una pestaña.
 struct Pane {
@@ -210,10 +277,11 @@ pub struct Workspace {
     pending_close: Option<CloseTarget>,
     confirm_focus: FocusHandle,
     next_tab_id: usize,
+    entity_id: EntityId,
 }
 
 impl Workspace {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(start: Start, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let shell_name = std::env::var("SHELL")
             .ok()
             .and_then(|s| s.rsplit('/').next().map(str::to_string))
@@ -229,7 +297,12 @@ impl Workspace {
             pending_close: None,
             confirm_focus: cx.focus_handle(),
             next_tab_id: 0,
+            entity_id: cx.entity_id(),
         };
+        let me = cx.entity().downgrade();
+        let registry = &mut cx.default_global::<Workspaces>().0;
+        registry.retain(|workspace| workspace.upgrade().is_some());
+        registry.push(me);
         // Al volver a la app se relee config.json, por si se editó.
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() && config::reload_if_changed(cx) {
@@ -245,12 +318,116 @@ impl Workspace {
         window.on_window_should_close(cx, move |window, cx| {
             workspace
                 .update(cx, |this, cx| {
-                    this.should_close(CloseTarget::Window, window, cx)
+                    let close = this.should_close(CloseTarget::Window, window, cx);
+                    if close {
+                        session::remove(this.entity_id, cx);
+                    }
+                    close
                 })
                 .unwrap_or(true)
         });
-        this.add_tab(window, cx);
+        match start {
+            Start::Cwd(cwd) => this.add_tab_in(cwd.or_else(state::last_cwd), window, cx),
+            Start::Restore(saved) => {
+                for tab in saved.tabs {
+                    if let Some(tab) = this.restore_tab(tab, window, cx) {
+                        this.tabs.push(tab);
+                    }
+                }
+                if this.tabs.is_empty() {
+                    this.add_tab_in(state::last_cwd(), window, cx);
+                } else {
+                    this.activate(saved.active.min(this.tabs.len() - 1), window, cx);
+                }
+            }
+        }
+        // Mover o redimensionar la ventana se guarda en la sesión (ver `render`).
+        cx.observe_window_bounds(window, |_, _, cx| cx.notify())
+            .detach();
         this
+    }
+
+    /// Una pestaña de la sesión anterior: un panel nuevo por cada carpeta, con la misma
+    /// distribución.
+    fn restore_tab(
+        &mut self,
+        saved: session::TabSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TabEntry> {
+        let mut cwds = Vec::new();
+        saved.layout.map(&mut |cwd| cwds.push(cwd.clone()));
+        let mut panes = Vec::new();
+        for cwd in cwds {
+            panes.push(self.new_pane(cwd, window, cx)?);
+        }
+        let mut ids = panes.iter().map(|pane| pane.view.entity_id());
+        let layout = saved
+            .layout
+            .map(&mut |_| ids.next().expect("un panel por hoja"));
+        let leaves = layout.leaves();
+        self.next_tab_id += 1;
+        Some(TabEntry {
+            id: self.next_tab_id,
+            active_pane: leaves.get(saved.active_pane).copied().unwrap_or(leaves[0]),
+            panes,
+            layout,
+            zoomed: false,
+            needs_attention: false,
+        })
+    }
+
+    /// Lo que esta ventana aporta a la sesión: pestañas, paneles con su carpeta y posición.
+    fn snapshot(&self, window: &Window, cx: &App) -> session::WindowSession {
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let layout = tab.layout.map(&mut |id| {
+                    let pane = tab.pane(*id)?;
+                    pane.view
+                        .read(cx)
+                        .terminal()
+                        .read(cx)
+                        .shell()
+                        .cwd
+                        .clone()
+                        .or_else(|| pane.initial_dir.clone())
+                });
+                let active_pane = tab
+                    .layout
+                    .leaves()
+                    .iter()
+                    .position(|id| *id == tab.active_pane)
+                    .unwrap_or(0);
+                session::TabSession {
+                    layout,
+                    active_pane,
+                }
+            })
+            .collect();
+        let bounds = window.window_bounds().get_bounds();
+        session::WindowSession {
+            tabs,
+            active: self.active,
+            bounds: Some([
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+            ]),
+        }
+    }
+
+    /// ⌘N: otra ventana, corrida un poco respecto de esta y en la carpeta del panel activo.
+    fn new_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cwd = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| tab.view().read(cx).terminal().read(cx).shell().cwd.clone());
+        let current = window.bounds();
+        let bounds = Bounds::new(current.origin + point(px(24.), px(24.)), current.size);
+        cx.defer(move |cx| open_window(Start::Cwd(cwd), Some(bounds), cx));
     }
 
     /// Una pestaña nueva abre en la carpeta de la pestaña activa; la primera, en la última
@@ -501,12 +678,21 @@ impl Workspace {
                         Some(code) => format!("terminó con código {code}"),
                         None => "terminó (resultado desconocido)".to_string(),
                     };
+                    let elapsed = crate::components::format_duration(*duration);
                     self.command_notice = Some(format!(
                         "{} · {} · {}",
                         short_command(command),
                         result,
-                        crate::components::format_duration(*duration)
+                        elapsed
                     ));
+                    // Con la app en segundo plano, además una notificación de macOS.
+                    if !window.is_window_active() && config::get(cx).notifications != Some(false) {
+                        let mark = if *exit_code == Some(0) { "✓" } else { "✕" };
+                        crate::notify::send(
+                            &format!("{mark} {}", short_command(command)),
+                            &format!("{result} · {elapsed}"),
+                        );
+                    }
                     cx.notify();
                 }
             }
@@ -561,6 +747,7 @@ impl Workspace {
             _ => {}
         }
         if self.tabs.is_empty() {
+            session::remove(self.entity_id, cx);
             window.remove_window();
             return;
         }
@@ -658,6 +845,26 @@ impl Workspace {
                 _ => true,
             })
             .filter_map(|pane| Self::busy_with(pane, cx))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .chain(self.busy_elsewhere(target, cx))
+            .collect()
+    }
+
+    /// Al salir también cuentan los procesos de las otras ventanas.
+    fn busy_elsewhere(&self, target: CloseTarget, cx: &App) -> Vec<String> {
+        if target != CloseTarget::Quit {
+            return Vec::new();
+        }
+        let Some(registry) = cx.try_global::<Workspaces>() else {
+            return Vec::new();
+        };
+        registry
+            .0
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .filter(|workspace| workspace.entity_id() != self.entity_id)
+            .flat_map(|workspace| workspace.read(cx).busy(CloseTarget::Window, cx))
             .collect()
     }
 
@@ -717,7 +924,10 @@ impl Workspace {
                     self.close_pane(ix, id, window, cx);
                 }
             }
-            CloseTarget::Window => window.remove_window(),
+            CloseTarget::Window => {
+                session::remove(self.entity_id, cx);
+                window.remove_window();
+            }
             CloseTarget::Quit => cx.quit(),
         }
     }
@@ -2089,11 +2299,17 @@ impl Workspace {
         if tab.zoomed || tab.panes.len() == 1 {
             return Some(tab.view().clone().into_any_element());
         }
-        Some(self.render_pane_node(tab, &tab.layout, cx))
+        Some(self.render_pane_node(tab, &tab.layout, Vec::new(), cx))
     }
 
-    fn render_pane_node(&self, tab: &TabEntry, node: &PaneTree<EntityId>, cx: &App) -> AnyElement {
-        let tokens = cx.tokens();
+    fn render_pane_node(
+        &self,
+        tab: &TabEntry,
+        node: &PaneTree<EntityId>,
+        path: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tokens = cx.tokens().clone();
         match node {
             PaneTree::Leaf(id) => {
                 let Some(pane) = tab.pane(*id) else {
@@ -2113,34 +2329,130 @@ impl Workspace {
                     })
                     .into_any_element()
             }
-            PaneTree::Split { axis, children } => {
-                let mut container = div().flex().size_full();
+            PaneTree::Split {
+                axis,
+                children,
+                sizes,
+            } => {
+                let axis = *axis;
+                let tab_id = tab.id;
+                let mut container = div().flex().size_full().on_drag_move(cx.listener({
+                    let path = path.clone();
+                    move |this, event: &DragMoveEvent<DividerDrag>, _, cx| {
+                        let drag = event.drag(cx);
+                        if drag.tab != tab_id || drag.path != path {
+                            return;
+                        }
+                        let divider = drag.divider;
+                        let (offset, length) = match axis {
+                            Axis::Row => (
+                                event.event.position.x - event.bounds.origin.x,
+                                event.bounds.size.width,
+                            ),
+                            Axis::Column => (
+                                event.event.position.y - event.bounds.origin.y,
+                                event.bounds.size.height,
+                            ),
+                        };
+                        if length <= px(0.) {
+                            return;
+                        }
+                        let min = MIN_PANE_SIZE / length;
+                        if let Some(tab) = this.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+                            tab.layout.resize(&path, divider, offset / length, min);
+                            cx.notify();
+                        }
+                    }
+                }));
                 container = match axis {
                     Axis::Row => container.flex_row(),
                     Axis::Column => container.flex_col(),
                 };
-                for (ix, child) in children.iter().enumerate() {
+                for (ix, (child, size)) in children.iter().zip(sizes).enumerate() {
                     if ix > 0 {
-                        let divider = div().flex_none().bg(tokens.ui.border_strong);
-                        container = container.child(match axis {
-                            Axis::Row => divider.w(px(1.)).h_full(),
-                            Axis::Column => divider.h(px(1.)).w_full(),
-                        });
+                        container =
+                            container.child(self.render_divider(tab_id, &path, ix, axis, cx));
                     }
+                    let mut child_path = path.clone();
+                    child_path.push(ix);
                     container = container.child(
                         div()
-                            .flex_1()
+                            .flex_basis(relative(*size))
                             .min_w_0()
                             .min_h_0()
                             .overflow_hidden()
-                            .child(self.render_pane_node(tab, child, cx)),
+                            .child(self.render_pane_node(tab, child, child_path, cx)),
                     );
                 }
                 container.into_any_element()
             }
         }
     }
+
+    /// Línea de un píxel entre paneles, con una zona más ancha para agarrarla y arrastrarla.
+    fn render_divider(
+        &self,
+        tab: usize,
+        path: &[usize],
+        divider: usize,
+        axis: Axis,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let drag = DividerDrag {
+            tab,
+            path: path.to_vec(),
+            divider,
+        };
+        let id = SharedString::from(format!("divider-{tab}-{path:?}-{divider}"));
+        let handle = div()
+            .id(id)
+            .absolute()
+            .occlude()
+            .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()));
+        let handle = match axis {
+            Axis::Row => handle
+                .top_0()
+                .bottom_0()
+                .left(px(-3.))
+                .w(px(7.))
+                .cursor(CursorStyle::ResizeLeftRight),
+            Axis::Column => handle
+                .left_0()
+                .right_0()
+                .top(px(-3.))
+                .h(px(7.))
+                .cursor(CursorStyle::ResizeUpDown),
+        };
+        let line = div()
+            .relative()
+            .flex_none()
+            .bg(cx.tokens().ui.border_strong);
+        let line = match axis {
+            Axis::Row => line.w(px(1.)).h_full(),
+            Axis::Column => line.h(px(1.)).w_full(),
+        };
+        // `deferred` la pinta encima de los paneles, para que el panel de la derecha (o de
+        // abajo) no le tape la mitad de la zona.
+        line.child(deferred(handle)).into_any_element()
+    }
 }
+
+/// Lo que viaja mientras se arrastra un divisor; también es la vista (vacía) del arrastre.
+#[derive(Clone)]
+struct DividerDrag {
+    tab: usize,
+    path: Vec<usize>,
+    divider: usize,
+}
+
+impl Render for DividerDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+/// Ningún panel se achica por debajo de esto al arrastrar.
+const MIN_PANE_SIZE: Pixels = px(80.);
 
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -2149,7 +2461,12 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Cualquier cambio que se ve (pestañas, paneles, carpetas, la ventana) pasa por acá.
+        if !self.tabs.is_empty() {
+            let snapshot = self.snapshot(window, cx);
+            session::update(self.entity_id, snapshot, cx);
+        }
         v_flex()
             .relative()
             .size_full()
@@ -2159,6 +2476,9 @@ impl Render for Workspace {
             .font_family(UI_FONT_FAMILY)
             .text_size(UI_FONT_SIZE)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &NewWindow, w, cx| this.new_window(w, cx)))
+            .on_action(|_: &Minimize, window, _| window.minimize_window())
+            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(cx.listener(|this, _: &ReopenTab, w, cx| this.reopen_tab(w, cx)))
             .on_action(
                 cx.listener(|this, _: &CloseTab, window, cx| this.request_close_active(window, cx)),

@@ -8,13 +8,15 @@ cargo run
 
 Requiere Rust 1.99 (fijado en `rust-toolchain.toml`). Los shaders de Metal se compilan al iniciar (`runtime_shaders`), así que no hace falta el Metal Toolchain de Xcode. Para builds de release conviene instalarlo (`xcodebuild -downloadComponent MetalToolchain`) y quitar esa feature.
 
-La app abre en la última carpeta que usaste (se guarda en `~/Library/Application Support/terminalapp/last_cwd`) y cada pestaña nueva abre en la carpeta de la pestaña activa. La shell se lanza directa como shell de login (`$SHELL -l`), sin pasar por `/usr/bin/login`, así que no aparece el "Last login: …".
+Al abrir, la app vuelve a las ventanas, pestañas y paneles de la vez anterior (ver "Sesión"); la primera vez, o sin sesión guardada, abre en la última carpeta que usaste (se guarda en `~/Library/Application Support/terminalapp/last_cwd`). Cada pestaña nueva abre en la carpeta de la pestaña activa. La shell se lanza directa como shell de login (`$SHELL -l`), sin pasar por `/usr/bin/login`, así que no aparece el "Last login: …".
 
 ## Atajos
 
 | Atajo | Acción |
 | --- | --- |
+| ⌘N | Nueva ventana (en la carpeta del panel activo) |
 | ⌘T | Nueva pestaña |
+| ⌘M | Minimizar la ventana |
 | ⌘W | Cerrar el panel (o la pestaña si tiene uno solo) |
 | Clic central en la pestaña | Cerrar la pestaña |
 | ⌘D / ⌘⇧D | Dividir el panel a la derecha / hacia abajo |
@@ -40,9 +42,15 @@ La app abre en la última carpeta que usaste (se guarda en `~/Library/Applicatio
 
 ## Paneles
 
-⌘D divide el panel activo a la derecha y ⌘⇧D hacia abajo; el nuevo abre en la misma carpeta y queda con el foco. Dividir varias veces en el mismo sentido reparte el espacio en partes iguales en vez de anidar. Un clic en un panel le da el foco, y los demás se ven atenuados. ⌘⌥ con las flechas va al panel de ese lado, y ⌘[ / ⌘] recorren los paneles en orden de lectura. ⌘⇧⏎ maximiza el panel activo dentro de la pestaña y lo restaura.
+⌘D divide el panel activo a la derecha y ⌘⇧D hacia abajo; el nuevo abre en la misma carpeta y queda con el foco. Dividir parte el panel a la mitad; dividir varias veces en el mismo sentido agrega paneles uno al lado del otro en vez de anidarlos. El divisor entre paneles se arrastra para cambiar los tamaños (ningún panel baja de 80 px), y al cerrar un panel su espacio pasa al vecino. Un clic en un panel le da el foco, y los demás se ven atenuados. ⌘⌥ con las flechas va al panel de ese lado, y ⌘[ / ⌘] recorren los paneles en orden de lectura. ⌘⇧⏎ maximiza el panel activo dentro de la pestaña y lo restaura.
 
-⌘W cierra el panel activo (con la confirmación si tiene algo corriendo) y el foco pasa al anterior; con un solo panel cierra la pestaña. La × de la pestaña la cierra con todos sus paneles. El título de la pestaña y la barra de estado muestran el panel activo. Por ahora los paneles de una división tienen todos el mismo tamaño.
+⌘W cierra el panel activo (con la confirmación si tiene algo corriendo) y el foco pasa al anterior; con un solo panel cierra la pestaña. La × de la pestaña la cierra con todos sus paneles. El título de la pestaña y la barra de estado muestran el panel activo.
+
+## Ventanas y sesión
+
+⌘N abre otra ventana, corrida un poco respecto de la actual y en la carpeta del panel activo. ⌘Q pide confirmación si hay algo corriendo en cualquier ventana. Además de Shell, la barra de menús tiene Edición (copiar, pegar, buscar, copiar la salida del comando, limpiar) y Ventana (minimizar, zoom, pestañas y paneles).
+
+La app guarda en `session.json` las ventanas (con su posición), sus pestañas y la distribución de los paneles con la carpeta de cada uno, y al relanzarla los abre igual. No restaura procesos, el contenido de la pantalla ni las sesiones SSH. Salir con ⌘Q conserva todo; cerrar una ventana a mano la descarta, y si era la última, la próxima vez se empieza de cero. Para no restaurar nada, `"restore_session": false` en la configuración.
 
 ## Teclado
 
@@ -58,7 +66,7 @@ Cuando la shell termina con `exit` o ⌃D, la pestaña se cierra. Si la mata una
 
 ## Avisos, zoom y recuperación de pestañas
 
-Cuando un comando dura al menos 10 segundos y termina en una pestaña inactiva o con la ventana en segundo plano, la app marca la pestaña y muestra un aviso con el comando, su resultado y duración. El aviso se cierra con su botón; son avisos dentro de la app, sin notificaciones del sistema. Requiere la integración de zsh.
+Cuando un comando dura al menos 10 segundos y termina en una pestaña inactiva o con la ventana en segundo plano, la app marca la pestaña y muestra un aviso con el comando, su resultado y duración. El aviso se cierra con su botón. Si la app está en segundo plano, además aparece una notificación de macOS con el resultado (✓ o ✕), el comando y la duración; `"notifications": false` en la configuración la apaga. Requiere la integración de zsh.
 
 El zoom cambia el texto de todas las pestañas, ajusta el tamaño de las celdas y se guarda entre ejecuciones. El rango es de 8 a 32 puntos y ⌘0 restaura 13,5 puntos.
 
@@ -105,13 +113,17 @@ Los editores de terminal (vim, nvim, helix, nano, micro, kak) se abren en una pe
 {
   "font_family": "JetBrainsMono Nerd Font",
   "editor": "zed",
-  "scrollback": 10000
+  "scrollback": 10000,
+  "restore_session": true,
+  "notifications": true
 }
 ```
 
 - `font_family`: la fuente de la terminal. Con Geist Mono (la de siempre), los íconos de starship o p10k salen de "Symbols Nerd Font" si la tienes instalada.
 - `editor`: `zed`, `code`, `cursor`, `windsurf`, `subl`, `idea`, `nvim`, `hx`… o una plantilla con `{file}`, `{line}` y `{column}`, como `"myeditor --goto {file}:{line}"`.
 - `scrollback`: líneas que guarda cada pestaña nueva (hasta 100.000).
+- `restore_session`: abrir las ventanas, pestañas y paneles de la vez anterior (sí por defecto).
+- `notifications`: notificación de macOS cuando un comando largo termina con la app en segundo plano (sí por defecto).
 
 El archivo se relee al volver a la ventana. Una clave mal escrita o un JSON inválido muestran un aviso y se usan los valores por defecto.
 
@@ -186,7 +198,9 @@ Con otras shells la terminal funciona igual, sin estas funciones.
 ## Estructura
 
 - `src/workspace.rs`: ventana, barra de pestañas, paneles, barra de estado con el selector de ramas, acciones.
-- `src/panes.rs`: árbol de paneles de una pestaña (dividir, cerrar, vecino en cada dirección).
+- `src/panes.rs`: árbol de paneles de una pestaña (dividir, cerrar, redimensionar, vecino en cada dirección).
+- `src/session.rs`: guarda y restaura ventanas, pestañas y paneles.
+- `src/notify.rs`: notificaciones de macOS (con `osascript`).
 - `src/terminal.rs`: PTY + `alacritty_terminal`, eventos hacia gpui.
 - `src/terminal_view.rs`: pinta la grilla con el text system de gpui, cursor, IME.
 - `src/shell.rs`: instalación del script de zsh, detección de OSC en el PTY, historial.

@@ -16,13 +16,20 @@ pub struct Config {
     pub editor: Option<String>,
     /// Líneas de scrollback de cada pestaña nueva.
     pub scrollback: Option<usize>,
+    /// Abrir las ventanas, pestañas y paneles de la vez anterior (sí, si no se indica).
+    pub restore_session: Option<bool>,
+    /// Notificación de macOS cuando un comando largo termina con la app en segundo plano (sí,
+    /// si no se indica).
+    pub notifications: Option<bool>,
 }
 
 /// Lo que se escribe al abrir la configuración por primera vez.
 const TEMPLATE: &str = r#"{
   "font_family": null,
   "editor": null,
-  "scrollback": 10000
+  "scrollback": 10000,
+  "restore_session": true,
+  "notifications": true
 }
 "#;
 

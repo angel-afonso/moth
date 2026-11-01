@@ -13,9 +13,11 @@ mod keys;
 mod links;
 mod log;
 mod mouse;
+mod notify;
 mod palette;
 mod panes;
 mod picker;
+mod session;
 mod shell;
 mod ssh;
 mod state;
@@ -26,12 +28,9 @@ mod theme;
 mod tokens;
 mod workspace;
 
-use gpui::{
-    App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions,
-    point, px, size,
-};
+use gpui::{App, Menu, MenuItem};
 
-use crate::{assets::Assets, workspace::Workspace};
+use crate::assets::Assets;
 
 fn main() {
     gpui_platform::application()
@@ -43,47 +42,69 @@ fn main() {
             config::init(cx);
             theme::init(cx);
             workspace::init(cx);
-            cx.set_menus([
-                Menu {
-                    name: "terminalapp".into(),
-                    items: vec![MenuItem::action("Salir de terminalapp", workspace::Quit)],
-                    disabled: false,
-                },
-                Menu {
-                    name: "Shell".into(),
-                    items: vec![
-                        MenuItem::action("Nueva pestaña", workspace::NewTab),
-                        MenuItem::action("Dividir a la derecha", workspace::SplitRight),
-                        MenuItem::action("Dividir hacia abajo", workspace::SplitDown),
-                        MenuItem::separator(),
-                        MenuItem::action("Cerrar pestaña", workspace::CloseTab),
-                    ],
-                    disabled: false,
-                },
-            ]);
+            cx.set_menus(menus());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
             })
             .detach();
-
-            let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("terminalapp".into()),
-                        appears_transparent: true,
-                        // Centrados en la barra de pestañas de 40 px.
-                        traffic_light_position: Some(point(px(14.), px(14.))),
-                    }),
-                    window_min_size: Some(size(px(480.), px(280.))),
-                    ..Default::default()
-                },
-                |window, cx| cx.new(|cx| Workspace::new(window, cx)),
-            )
-            .expect("no se pudo abrir la ventana");
+            workspace::open_initial_windows(cx);
             cx.activate(true);
         });
+}
+
+fn menus() -> Vec<Menu> {
+    use crate::{terminal_view as view, workspace as ws};
+    vec![
+        Menu {
+            name: "terminalapp".into(),
+            items: vec![
+                MenuItem::action("Abrir configuración", ws::OpenConfig),
+                MenuItem::separator(),
+                MenuItem::action("Salir de terminalapp", ws::Quit),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "Shell".into(),
+            items: vec![
+                MenuItem::action("Nueva ventana", ws::NewWindow),
+                MenuItem::action("Nueva pestaña", ws::NewTab),
+                MenuItem::action("Reabrir pestaña cerrada", ws::ReopenTab),
+                MenuItem::separator(),
+                MenuItem::action("Dividir a la derecha", ws::SplitRight),
+                MenuItem::action("Dividir hacia abajo", ws::SplitDown),
+                MenuItem::separator(),
+                MenuItem::action("Cerrar", ws::CloseTab),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "Edición".into(),
+            items: vec![
+                MenuItem::action("Copiar", view::Copy),
+                MenuItem::action("Pegar", view::Paste),
+                MenuItem::action("Copiar la salida del comando", view::CopyCommandOutput),
+                MenuItem::separator(),
+                MenuItem::action("Buscar…", view::FindOutput),
+                MenuItem::action("Limpiar pantalla", ws::ClearScreen),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "Ventana".into(),
+            items: vec![
+                MenuItem::action("Minimizar", ws::Minimize),
+                MenuItem::action("Zoom", ws::ZoomWindow),
+                MenuItem::separator(),
+                MenuItem::action("Pestaña siguiente", ws::NextTab),
+                MenuItem::action("Pestaña anterior", ws::PreviousTab),
+                MenuItem::action("Panel siguiente", ws::NextPane),
+                MenuItem::action("Panel anterior", ws::PreviousPane),
+                MenuItem::action("Maximizar o restaurar el panel", ws::TogglePaneZoom),
+            ],
+            disabled: false,
+        },
+    ]
 }
