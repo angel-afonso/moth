@@ -1,5 +1,7 @@
 # Moth
 
+<img src="assets/branding/moth.png" alt="Moth app icon" width="128" height="128">
+
 A terminal for macOS, Linux and Windows built with [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) and the components from Zed's `ui` crate. It uses the alacritty emulator (the same fork Zed uses).
 
 The name comes from the moth the Harvard Mark II team found stuck in a relay in 1947 and taped into the logbook as the "first actual case of bug being found".
@@ -274,7 +276,7 @@ Releases aren't notarized: without Apple's secrets the macOS app gets an ad-hoc 
 
 Each release also publishes `latest.json`, which the in-app updater reads from the latest release, and a minisign signature (`.minisig`) for every archive it installs (`.github/scripts/update-manifest.sh`). The workflow builds the app with `MOTH_REPOSITORY` set to the repository, which is where it then looks for updates. The app only installs archives signed by the key whose public half is `assets/update.pub`, and the workflow checks its signatures against that file. The secret half is the **`UPDATE_SIGNING_KEY`** repository secret (the passwordless minisign secret key file's contents); a release fails without it. Keep a backup of it: without it, no update can be signed for the copies already installed. To replace the key, generate a passwordless pair (`minisign -G -W`), put the public key in `assets/update.pub` and the secret in the repository secret; copies installed before the change will need one manual download.
 
-The icon is drawn by `assets/branding/icon.swift` (macOS); after changing it, regenerate every format (`moth.icns`, `moth.ico`, `moth.png`, `moth-256.png`) with `swift assets/branding/icon.swift assets/branding/moth.icns`.
+The icon artwork is `assets/branding/moth-terminal-v4.png`. The macOS script `assets/branding/icon.swift` resizes it into every platform format; after changing the artwork, regenerate every format (`moth.icns`, `moth.ico`, `moth.png`, `moth-256.png`) with `swift assets/branding/icon.swift assets/branding/moth.icns`.
 
 ## Project structure
 
