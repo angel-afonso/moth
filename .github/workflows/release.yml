@@ -98,7 +98,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # The repository the app looks for updates in (`update::manifest_url`).
       - name: Build
+        env:
+          MOTH_REPOSITORY: ${{ github.repository }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Keep the binary
@@ -314,8 +317,11 @@ jobs:
           workspaces: ${{ env.WORKSPACE }}
           key: ${{ matrix.target }}
 
+      # The repository the app looks for updates in (`update::manifest_url`).
       - name: Build
         working-directory: ${{ env.WORKSPACE }}
+        env:
+          MOTH_REPOSITORY: ${{ github.repository }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       # .cargo/config.toml links the C runtime into moth.exe, so it starts on PCs without the
@@ -440,10 +446,56 @@ jobs:
             ${{ env.WORKSPACE }}/dist/*.zip
           if-no-files-found: error
 
+  # Signs the archives the in-app updater installs and writes latest.json, which the app
+  # reads from the latest release to find new versions.
+  update-manifest:
+    name: Update manifest
+    needs: [version, macos-universal, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: moth-*
+          path: dist
+          merge-multiple: true
+
+      - name: Sign and write latest.json
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          if [[ -z "$UPDATE_SIGNING_KEY" ]]; then
+            if [[ -n "$TAG" ]]; then
+              echo "::error::UPDATE_SIGNING_KEY is not set; a release without signed updates would leave the updater nothing to install."
+              exit 1
+            fi
+            echo "::warning::UPDATE_SIGNING_KEY is not set; no latest.json for this run."
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          tag="${TAG:-${GITHUB_SHA::7}}"
+          key="$RUNNER_TEMP/update.key"
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+          chmod 600 "$key"
+          UPDATE_SIGNING_KEY_PATH="$key" .github/scripts/update-manifest.sh dist "$VERSION" "$tag" "$GITHUB_REPOSITORY"
+          rm "$key"
+          mkdir update
+          mv dist/latest.json dist/*.minisig update/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moth-update
+          path: update/
+          if-no-files-found: ignore
+
   release:
     name: GitHub release
     if: needs.version.outputs.tag != ''
-    needs: [version, macos-universal, package]
+    needs: [version, macos-universal, package, update-manifest]
     runs-on: ubuntu-latest
     permissions:
       contents: write
