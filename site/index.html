@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moth — a terminal that reads your shell</title>
+<meta name="description" content="Moth is a native terminal for macOS, Linux and Windows, built on Zed's gpui. It turns your shell's output into commands you can jump to, copy and search.">
+<meta name="theme-color" content="#0C0D10">
+<link rel="icon" type="image/png" href="media/moth-icon.png">
+<link rel="preload" href="fonts/Geist-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="media/hero-session.jpg" as="image" fetchpriority="high">
+<link rel="stylesheet" href="style.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+
+<svg width="0" height="0" class="defs" aria-hidden="true" focusable="false">
+  <defs>
+    <!-- The two wings of the icon's prompt chevron and its cursor, traced from assets/branding/moth-terminal-v4.png -->
+    <symbol id="wing-up" viewBox="0 0 830 660"><path d="M12 18 L506 298 Q512 306 500 314 L290 314 L88 196 Q70 186 60 160 Z"/></symbol>
+    <symbol id="wing-down" viewBox="0 0 830 660"><path d="M12 642 L506 362 Q512 354 500 346 L290 346 L88 464 Q70 474 60 500 Z"/></symbol>
+    <symbol id="chev" viewBox="0 0 830 660"><use href="#wing-up"/><use href="#wing-down"/></symbol>
+  </defs>
+</svg>
+
+<header class="bar wrap">
+  <a class="wordmark" href="#top" aria-label="Moth, back to the top">
+    <svg class="wordmark__mark" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/><rect x="482" y="418" width="330" height="80" rx="10" class="cursor-fill"/></svg>
+    <span>Moth</span>
+  </a>
+  <nav class="bar__nav" aria-label="Sections">
+    <a class="link" href="#how">How it works</a>
+    <a class="link" href="#keys">Keys</a>
+    <a class="link" href="#name">The name</a>
+    <a class="link" href="https://github.com/angel-afonso/moth">GitHub</a>
+  </nav>
+  <a class="button button--small" href="#download">Download</a>
+</header>
+
+<main id="top">
+
+  <!-- Hero: the mark at poster size on the card, the real app on a cream stage beside it -->
+  <section class="hero wrap" data-scene="hero" aria-labelledby="hero-title">
+    <div class="hero__card">
+      <svg class="hero__mark" viewBox="0 0 830 660" aria-hidden="true">
+        <g class="hero__wing hero__wing--up"><use href="#wing-up"/></g>
+        <g class="hero__wing hero__wing--down"><use href="#wing-down"/></g>
+        <rect class="hero__cursor cursor-fill" x="482" y="418" width="330" height="80" rx="10"/>
+      </svg>
+      <div class="hero__copy">
+        <h1 id="hero-title" class="display lines">
+          <span class="line"><span data-line style="--i:0">A terminal that</span></span>
+          <span class="line"><span data-line style="--i:1">reads your shell</span></span>
+        </h1>
+        <p class="lead" data-load style="--d:380ms">Moth is a native terminal for macOS, Linux and Windows, built on Zed’s gpui. It turns your shell’s output into commands you can jump to, copy and search.</p>
+        <div class="hero__actions" data-load style="--d:460ms">
+          <a class="button" href="#download">Download Moth</a>
+          <span class="hero__version">v0.1.0 · free, GPL-3.0</span>
+        </div>
+        <ul class="hero__links" data-load style="--d:540ms">
+          <li><a class="link" href="https://github.com/angel-afonso/moth">Source on GitHub</a></li>
+          <li><a class="link" href="#source">Build with cargo</a></li>
+          <li><a class="link" href="https://github.com/angel-afonso/moth/releases">Release notes</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <figure class="hero__stage cut" data-open>
+      <div class="hero__shots" data-crossfade>
+        <img class="is-on" src="media/hero-session.jpg" width="1535" height="1639" alt="Moth in the Graphite theme: a git status, a diff stat, a failed cargo run marked with a red bar, a git log graph, and a half-typed git push with the rest suggested in gray" fetchpriority="high" data-caption="The session: a failed run gets a red bar, the rest of git push waits in gray">
+        <img src="media/hero-palette.jpg" width="1535" height="1639" alt="The command palette open over the session, listing New Tab, Search History, Switch Branch and split actions with their shortcuts" loading="lazy" data-caption="⌘K opens the command palette: actions, tabs and recent folders">
+        <img src="media/hero-history.jpg" width="1535" height="1639" alt="History search for cgt, fuzzy matching cargo test links, cargo test blocks and cargo clippy with the matched letters highlighted" loading="lazy" data-caption="⌘R searches history with fuzzy matching">
+        <img src="media/hero-light.jpg" width="1535" height="1639" alt="The same session in the Graphite Light theme" loading="lazy" data-caption="The same session in Graphite Light, recoloured in place">
+      </div>
+      <figcaption class="hero__caption" aria-live="polite">The session: a failed run gets a red bar, the rest of git push waits in gray</figcaption>
+    </figure>
+  </section>
+
+  <!-- How it works: four real states of one window, scrubbed by the scroll or the slider -->
+  <section class="stages" id="how" data-scene="stages" aria-labelledby="stage-title">
+    <div class="stages__stage">
+      <div class="stages__words">
+        <h2 id="stage-title" class="stages__clause" aria-live="polite">First, it reads your line</h2>
+        <p class="stages__text">As you type, the command, its subcommand, flags, strings and paths take the theme’s colours, an unknown command gets a red squiggle, and the rest of your last matching command waits in gray. → accepts it.</p>
+      </div>
+      <div class="stages__picture">
+        <div class="stages__frame cut">
+          <img class="is-on" style="--x:0%;--y:58%;--z:1.8" src="media/stage-type.jpg" width="2000" height="1288" alt="A half-typed git push --force-with-lease with the command in blue and the flag in orange" loading="lazy">
+          <img style="--x:0%;--y:55%;--z:1.4" src="media/stage-complete.jpg" width="2000" height="1288" alt="Suggestions for cargo cl: clean and clippy with their descriptions, a history entry, and a side panel documenting cargo clean" loading="lazy">
+          <img style="--x:0%;--y:40%;--z:1.5" src="media/stage-jump.jpg" width="2000" height="1288" alt="The git log block selected with a blue bar and a lighter background, between a git commit block and a failed cargo run block" loading="lazy">
+          <img style="--x:50%;--y:50%;--z:1" src="media/stage-find.jpg" width="2000" height="1288" alt="The find bar searching for highlight, with the match in git switch -c find-highlight highlighted" loading="lazy">
+        </div>
+      </div>
+      <div class="stages__control">
+        <label class="sr-only" for="stage-range">Stage</label>
+        <div class="range-wrap">
+          <span class="range-fill" aria-hidden="true"></span>
+          <input id="stage-range" class="range" type="range" min="0" max="3" step="1" value="0" aria-valuetext="Type">
+        </div>
+        <ol class="stages__names">
+          <li class="is-on">Type</li>
+          <li>Complete <span class="key">⌃Space</span></li>
+          <li>Jump <span class="key">⌘↑</span></li>
+          <li>Find <span class="key">⌘F</span></li>
+        </ol>
+      </div>
+    </div>
+    <template id="stage-copy">
+      <div data-title="First, it reads your line" data-name="Type">As you type, the command, its subcommand, flags, strings and paths take the theme’s colours, an unknown command gets a red squiggle, and the rest of your last matching command waits in gray. → accepts it.</div>
+      <div data-title="Then it finishes the line" data-name="Complete">⌃Space lists what fits at the cursor: subcommands and flags of common tools with their descriptions, git branches, package.json scripts, ssh hosts, paths and history. Tab stays the shell’s.</div>
+      <div data-title="Each run becomes a block" data-name="Jump">With the zsh integration the output is split into blocks. ⌘↑ and ⌘↓ step through them, ⌘⇧C copies only the output, and failed runs keep a red bar.</div>
+      <div data-title="Last, you find it again" data-name="Find">⌘F searches the screen and the scrollback, wrapped lines included. Lowercase ignores case; one capital letter makes the search exact.</div>
+    </template>
+  </section>
+
+  <!-- The live thing: a Moth window at its real size, highlighted with Moth's rules -->
+  <section class="prompt wrap" id="try" data-theme="dark" aria-labelledby="prompt-title">
+    <div class="prompt__head">
+      <h2 id="prompt-title" class="head" data-reveal>Type in <span data-theme-word>Graphite</span></h2>
+      <p class="prompt__text" data-reveal style="--i:1">The prompt in this window follows the rules of Moth’s highlighter. Type a command: → takes the gray suggestion from your history, ⏎ files it as a block.</p>
+      <div class="segmented" role="radiogroup" aria-label="Theme" data-reveal style="--i:2">
+        <button type="button" role="radio" aria-checked="true" data-set-theme="dark">Graphite</button>
+        <button type="button" role="radio" aria-checked="false" data-set-theme="light">Graphite Light</button>
+      </div>
+    </div>
+    <div class="term" data-ui data-reveal style="--i:1">
+      <div class="term__tabs" aria-hidden="true">
+        <span class="term__lights"><i></i><i></i><i></i></span>
+        <span class="term__tab is-on">moth <small>⌘1</small></span>
+        <span class="term__tab">api <small>⌘2</small></span>
+        <span class="term__plus">+</span>
+        <span class="term__cmds">Commands <small>⌘K</small></span>
+      </div>
+      <div class="term__body" data-scrollback>
+        <div class="term__block" aria-hidden="true">
+          <code class="term__meta"><span class="m-path">~/code/moth</span><span class="t-sub">main</span><span class="m-dim">19:37</span></code>
+          <code class="term__cmd"><svg class="term__chev" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg><span class="t-cmd">git</span> <span class="t-sub">status</span> <span class="t-flag">-sb</span></code>
+          <code class="term__out"><span class="t-str">## main...origin/main</span>
+ <span class="t-op">M</span> src/links.rs
+ <span class="t-op">M</span> src/terminal_view.rs</code>
+        </div>
+        <div class="term__block is-failed" aria-hidden="true">
+          <code class="term__meta"><span class="m-path">~/code/moth</span><span class="t-sub">main</span><span class="m-ok"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 L6.5 12 L13 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>64ms</span><span class="m-dim">19:37</span></code>
+          <code class="term__cmd"><svg class="term__chev" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg><span class="t-cmd">cargo</span> <span class="t-sub">run</span> <span class="t-flag">--example</span> demo</code>
+          <code class="term__out"><span class="t-err-plain">error</span>: no example target named `demo` in default-run packages</code>
+        </div>
+        <div class="term__live">
+          <code class="term__meta" aria-hidden="true"><span class="m-path">~/code/moth</span><span class="t-sub">main</span><span class="m-err">exit 101 · 719ms</span><span class="m-dim">19:37</span></code>
+          <div class="term__field">
+            <svg class="term__chev" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>
+            <div class="prompt__input">
+              <pre class="prompt__paint" aria-hidden="true"><code data-paint><span class="t-cmd">git</span> <span class="t-sub">pus</span><span class="t-ghost">h -u origin find-highlight</span></code></pre>
+              <label class="sr-only" for="prompt-input">Command line</label>
+              <input id="prompt-input" class="prompt__real" type="text" value="git pus" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" aria-describedby="prompt-help">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term__status" aria-hidden="true">
+        <span><i class="term__dot"></i>zsh</span><span>~/code/moth</span><span class="t-sub">main ~2</span>
+        <span class="term__right"><span class="m-err">exit 101</span><span>2 tabs</span><span>v0.1.0</span></span>
+      </div>
+    </div>
+    <p id="prompt-help" class="sr-only">Right arrow or End accepts the suggestion. Enter files the line as a block.</p>
+  </section>
+
+  <!-- Settings: sentences with switches that write config.json -->
+  <section class="bands" id="settings" aria-labelledby="bands-title">
+    <div class="bands__head wrap">
+      <h2 id="bands-title" class="head" data-reveal>One file of settings</h2>
+      <p data-reveal style="--i:1">Everything below is a key in <code>config.json</code>, set to its default. Flip one and <code>config.json</code> changes with it. Moth rereads it when the window regains focus.</p>
+    </div>
+    <div class="bands__body">
+      <ul class="bands__list" role="list">
+        <li class="band" style="--band:#82AAFF" data-key="restore_session" data-default="true">
+          <p class="band__sentence">Reopen every window where you left it</p>
+          <p class="band__more">Windows, tabs and split panes return in their folders after ⌘Q. Processes and SSH sessions do not.</p>
+          <button class="switch" type="button" role="switch" aria-checked="true" aria-label="Reopen every window where you left it"></button>
+        </li>
+        <li class="band" style="--band:#7EE0A1" data-key="notifications" data-default="true">
+          <p class="band__sentence">Tell me when a long command ends</p>
+          <p class="band__more">A run of 10 seconds or more that ends in the background posts whether it passed, the command and how long it took.</p>
+          <button class="switch" type="button" role="switch" aria-checked="true" aria-label="Tell me when a long command ends"></button>
+        </li>
+        <li class="band" style="--band:#F5C97A" data-key="check_updates" data-default="true">
+          <p class="band__sentence">Look for signed updates every six hours</p>
+          <p class="band__more">An update installs only when its SHA-256 and its minisign signature match the release’s latest.json.</p>
+          <button class="switch" type="button" role="switch" aria-checked="true" aria-label="Look for signed updates every six hours"></button>
+        </li>
+        <li class="band" style="--band:#6FD3D0" data-key="tab_completion" data-default="false" data-on="popup" data-off="shell">
+          <p class="band__sentence">Let Tab open Moth’s suggestions</p>
+          <p class="band__more">Tab opens the popup instead of zsh’s completion. ⌃Space keeps working either way.</p>
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-label="Let Tab open Moth’s suggestions"></button>
+        </li>
+      </ul>
+      <figure class="config" data-ui>
+        <figcaption class="config__name">~/Library/Application Support/moth/config.json</figcaption>
+        <pre><code data-config>{}</code></pre>
+      </figure>
+    </div>
+  </section>
+
+  <!-- SSH: the real production banner -->
+  <section class="ssh wrap" aria-labelledby="ssh-title">
+    <div class="ssh__words">
+      <h2 id="ssh-title" class="head" data-lines>Production looks like production</h2>
+      <p data-reveal style="--i:1">Run <code>ssh</code> and Moth resolves the host with <code>ssh -G</code>, so your <code>~/.ssh/config</code> applies. A host that matches <code>*prod*</code> gets a red chip on its tab, a banner and a border, and pasting several lines asks first. If the connection drops, ⌘⇧R brings it back.</p>
+      <pre class="code" data-reveal style="--i:2"><code><span class="c-k">"hosts"</span>: [
+  { <span class="c-k">"match"</span>: <span class="c-s">"prod-*"</span>, <span class="c-k">"label"</span>: <span class="c-s">"PROD"</span>, <span class="c-k">"color"</span>: <span class="c-s">"red"</span>, <span class="c-k">"production"</span>: <span class="c-n">true</span> },
+  { <span class="c-k">"match"</span>: <span class="c-s">"*.staging.internal"</span>, <span class="c-k">"label"</span>: <span class="c-s">"STG"</span>, <span class="c-k">"color"</span>: <span class="c-s">"cyan"</span> }
+]</code></pre>
+    </div>
+    <figure class="ssh__picture cut shutter" data-reveal>
+      <img src="media/ssh-production.jpg" width="2000" height="1288" alt="An ssh session to prod-api: a PROD chip on the tab, a PRODUCTION banner reading matches *prod* with paste protection on, and a red border around the terminal" loading="lazy">
+    </figure>
+  </section>
+
+  <!-- Panes: a window that opens to the whole screen -->
+  <section class="panes" aria-labelledby="panes-title" data-scene="opening">
+    <div class="panes__head wrap">
+      <h2 id="panes-title" class="head" data-lines>Split it, and it comes back</h2>
+      <p data-reveal style="--i:1">⌘D splits right, ⌘⇧D splits down, and dragging a divider resizes. ⌘⇧⏎ maximizes one pane. Quit with ⌘Q and the windows, tabs, panes and their folders open the same way next time.</p>
+    </div>
+    <div class="panes__runway">
+      <div class="panes__stage">
+        <img src="media/panes.jpg" width="2000" height="1288" alt="One tab split three ways: vim editing src/links.rs on the left, a git log graph top right and a git diff stat bottom right" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <!-- Keys: a specimen sheet of shortcuts, with real crops between them -->
+  <section class="keys" id="keys" aria-labelledby="keys-title" data-os="mac">
+    <div class="keys__grid">
+      <div class="tile tile--title tile--wide">
+        <h2 id="keys-title" class="tile__big">Keys</h2>
+        <div class="segmented segmented--small" role="radiogroup" aria-label="Platform">
+          <button type="button" role="radio" aria-checked="true" data-set-os="mac">macOS</button>
+          <button type="button" role="radio" aria-checked="false" data-set-os="pc">Linux, Windows</button>
+        </div>
+      </div>
+      <div class="tile t1"><span class="tile__big" data-mac="⌘K" data-pc="Ctrl⇧K">⌘K</span><span class="tile__cap">Command palette</span></div>
+      <div class="tile t2"><span class="tile__big" data-mac="⌘R" data-pc="Ctrl⇧R">⌘R</span><span class="tile__cap">History search</span></div>
+      <figure class="tile tile--pic"><img src="media/hero-palette.jpg" width="1535" height="1639" alt="The command palette" loading="lazy" style="object-position:50% 12%"><figcaption class="sr-only">The command palette</figcaption></figure>
+      <figure class="tile tile--video">
+        <video src="media/moth-in-use.mp4" poster="media/moth-in-use-poster.jpg" muted loop playsinline preload="none" width="1920" height="1236" aria-label="Twenty-two seconds of Moth: git status, a failed cargo run, the gray suggestion for git push, jumping between blocks, splitting the pane from the palette, git log and history search" data-autoplay></video>
+        <figcaption class="sr-only">Twenty-two seconds of Moth, unedited</figcaption>
+      </figure>
+      <div class="tile t3"><span class="tile__big" data-mac="⌘D" data-pc="Ctrl⇧D">⌘D</span><span class="tile__cap">Split right</span></div>
+      <div class="tile t4"><span class="tile__big" data-mac="⌘⇧D" data-pc="Ctrl⇧⌥D">⌘⇧D</span><span class="tile__cap">Split down</span></div>
+      <div class="tile t1"><span class="tile__big" data-mac="⌘↑" data-pc="Ctrl⇧↑">⌘↑</span><span class="tile__cap">Previous command</span></div>
+      <div class="tile t2"><span class="tile__big" data-mac="⌘⇧C" data-pc="Ctrl⇧⌥C">⌘⇧C</span><span class="tile__cap">Copy the output</span></div>
+      <div class="tile t4"><span class="tile__big" data-mac="⌃Space" data-pc="Ctrl Space">⌃Space</span><span class="tile__cap">Suggestions</span></div>
+      <div class="tile t3"><span class="tile__big" data-mac="⌘F" data-pc="Ctrl⇧F">⌘F</span><span class="tile__cap">Find in output</span></div>
+      <figure class="tile tile--pic"><img src="media/theme-picker.jpg" width="1535" height="1639" alt="The theme picker previewing Graphite" loading="lazy" style="object-position:50% 8%"><figcaption class="sr-only">The theme picker previewing Graphite</figcaption></figure>
+      <div class="tile t1"><span class="tile__big" data-mac="⌘⇧T" data-pc="Ctrl⇧⌥T">⌘⇧T</span><span class="tile__cap">Reopen closed tab</span></div>
+      <div class="tile t2 tile--wide-only"><span class="tile__big" data-mac="⌘⇧R" data-pc="Ctrl⇧⌥R">⌘⇧R</span><span class="tile__cap">Reconnect SSH</span></div>
+          </div>
+  </section>
+
+  <!-- The name: the 1947 logbook, zoomed into relay 70 as the page scrolls -->
+  <section class="logbook" id="name" data-scene="logbook" aria-labelledby="name-title">
+    <div class="logbook__stage">
+      <div class="logbook__picture">
+        <img src="media/logbook-1947.jpg" width="1920" height="1519" alt="A page of the Harvard Mark II logbook, 9 September 1947: at 15:45 a moth is taped beside the entry Relay #70 Panel F, (moth) in relay, with the line First actual case of bug being found" loading="lazy">
+      </div>
+      <div class="logbook__words">
+        <h2 id="name-title" class="head">Named for the first bug</h2>
+        <p class="logbook__clock" aria-hidden="true" data-clock>15:25</p>
+        <ol class="logbook__lines">
+          <li class="is-on" data-time="15:25">9 September 1947. At 15:25 the Harvard Mark II starts a multiply and adder test.</li>
+          <li data-time="15:45">At 15:45 the team finds a moth caught in relay 70, panel F.</li>
+          <li data-time="15:45">They tape it into the log: “First actual case of bug being found.”</li>
+          <li data-time="now">Moth is a terminal for finding the next one.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download -->
+  <section class="download wrap" id="download" aria-labelledby="download-title">
+    <div class="download__intro">
+      <h2 id="download-title" class="head" data-lines>Download</h2>
+      <p data-rise style="--i:1">Every release ships for three platforms, with <code>SHA256SUMS</code> beside the files. Once installed, Moth updates itself from signed releases.</p>
+      <div class="download__source" id="source" data-rise style="--i:2">
+        <h3>From source</h3>
+        <p>Rust 1.99, pinned in <code>rust-toolchain.toml</code>. On Linux, install the X11, Wayland and font headers first.</p>
+        <pre class="code"><code>git clone https://github.com/angel-afonso/moth
+cd moth && cargo run</code></pre>
+      </div>
+    </div>
+    <ul class="platforms" role="list">
+      <li class="platform" data-platform="mac">
+        <div class="platform__row">
+          <div class="platform__row">
+          <div class="platform__row">
+          <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>macOS</h3>
+          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">Moth.app for macOS</a>
+        </div>
+        <p>One universal app for Apple Silicon and Intel, as a <code>.dmg</code> or a <code>.zip</code>. Releases aren’t notarized yet, so allow it once in Privacy &amp; Security.</p>
+      </li>
+      <li class="platform" data-platform="win">
+        <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>Windows</h3>
+          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">moth.exe for Windows</a>
+        </div>
+        <p>An x86_64 <code>.zip</code> with <code>moth.exe</code>. Unzip it anywhere and run it; it needs no runtime. SmartScreen may ask once.</p>
+      </li>
+      <li class="platform" data-platform="linux">
+        <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>Linux</h3>
+          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">moth for Linux</a>
+        </div>
+        <p>An x86_64 <code>.tar.gz</code> for glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36. <code>./install.sh</code> adds it to the menu. Needs Vulkan.</p>
+      </li>
+    </ul>
+  </section>
+
+  <!-- One word is the button -->
+  <a class="cta" href="https://github.com/angel-afonso/moth/releases/latest">
+    <span class="cta__note">The latest release on GitHub, with SHA256SUMS. After that, Moth keeps itself current.</span>
+    <svg class="cta__arrow" viewBox="0 0 48 48" aria-hidden="true"><path d="M12 36 L34 14 M16 13 H35 V32" fill="none" stroke="currentColor" stroke-width="4"/></svg>
+    <span class="cta__word">Download</span>
+  </a>
+</main>
+
+<footer class="footer wrap">
+  <svg class="footer__mark" viewBox="0 0 2000 420" role="img" aria-label="Moth">
+    <use href="#chev" x="0" y="0" width="530" height="420"/>
+    <rect class="cursor-fill footer__cursor" x="312" y="268" width="210" height="52" rx="8"/>
+    <g class="footer__letters">
+      <rect x="600" y="40" width="330" height="380"/><rect x="938" y="100" width="300" height="320"/><rect x="1246" y="70" width="300" height="350"/><rect x="1554" y="20" width="446" height="400"/>
+      <text x="765" y="390" text-anchor="middle">M</text><text x="1088" y="390" text-anchor="middle">o</text><text x="1396" y="390" text-anchor="middle">t</text><text x="1777" y="390" text-anchor="middle">h</text>
+    </g>
+  </svg>
+  <div class="footer__cols">
+    <div><h3>Moth</h3><ul><li><a class="link" href="#download">Download</a></li><li><a class="link" href="https://github.com/angel-afonso/moth/releases">Releases</a></li><li><a class="link" href="https://github.com/angel-afonso/moth/blob/main/CHANGELOG.md">Changelog</a></li></ul></div>
+    <div><h3>Source</h3><ul><li><a class="link" href="https://github.com/angel-afonso/moth">GitHub</a></li><li><a class="link" href="https://github.com/angel-afonso/moth#readme">README</a></li><li><a class="link" href="https://github.com/angel-afonso/moth/issues">Issues</a></li></ul></div>
+    <div><h3>Built on</h3><ul><li><a class="link" href="https://github.com/zed-industries/zed/tree/main/crates/gpui">gpui</a></li><li><a class="link" href="https://github.com/zed-industries/zed">Zed’s ui crate</a></li><li><a class="link" href="https://github.com/alacritty/alacritty">alacritty_terminal</a></li></ul></div>
+    <div><h3>Licences</h3><ul><li>Moth: GPL-3.0-or-later</li><li>Geist and Geist Mono: OFL</li><li>Icons from the Zed repository</li></ul></div><!-- taste-skill-ignore: licence names -->
+  </div>
+  <div class="footer__last">
+    <p class="small">© 2026 Ángel Afonso. Logbook photograph: “First Computer Bug, 1947”, courtesy of the Naval Surface Warfare Center, Dahlgren, VA, public domain, <a class="link" href="https://commons.wikimedia.org/wiki/File:First_Computer_Bug,_1947.jpg">via Wikimedia Commons</a>.</p>
+    <a class="button button--small" href="#top">Back to the top</a>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>
