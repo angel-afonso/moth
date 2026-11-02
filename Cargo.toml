@@ -2,6 +2,11 @@
 name = "moth"
 version = "0.2.0"
 edition = "2024"
+description = "A terminal for macOS, Linux and Windows that reads your shell, built with gpui and Zed's UI"
+homepage = "https://angel-afonso.github.io/moth/"
+repository = "https://github.com/angel-afonso/moth"
+keywords = ["terminal", "terminal-emulator", "gpui", "shell"]
+categories = ["command-line-utilities"]
 publish = false
 # Zed's `ui` crate is GPL-3.0-or-later; linking it makes the binary inherit that license.
 license = "GPL-3.0-or-later"
