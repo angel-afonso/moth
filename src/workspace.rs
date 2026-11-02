@@ -116,6 +116,8 @@ pub fn init(cx: &mut App) {
                 terminal_view::ShowCompletions,
                 Some("Terminal"),
             ),
+            shortcuts::bind("cmd-i", terminal_view::AskAgent, Some("Terminal")),
+            shortcuts::bind("cmd-shift-i", terminal_view::FixWithAgent, Some("Terminal")),
             // The last binding for each action is the one shown in menus and buttons.
             shortcuts::bind("ctrl-tab", NextTab, None),
             shortcuts::bind("ctrl-shift-tab", PreviousTab, None),
@@ -1674,6 +1676,20 @@ impl Workspace {
                 PickerAction::Dispatch(Box::new(terminal_view::ShowCompletions)),
             )
             .shortcut(terminal_view::ShowCompletions),
+            PickerItem::new(
+                "Actions",
+                "Ask Agent for a Command…",
+                PickerAction::Dispatch(Box::new(terminal_view::AskAgent)),
+            )
+            .icon(IconName::Sparkle)
+            .shortcut(terminal_view::AskAgent),
+            PickerItem::new(
+                "Actions",
+                "Fix Last Command with Agent",
+                PickerAction::Dispatch(Box::new(terminal_view::FixWithAgent)),
+            )
+            .icon(IconName::Sparkle)
+            .shortcut(terminal_view::FixWithAgent),
             PickerItem::new(
                 "Actions",
                 "Copy Last Command Output",

@@ -1,7 +1,7 @@
-//! Characters that must fill the whole cell: blocks (U+2580–259F) and box-drawing lines
-//! (U+2500–257F). From a font, the glyph only covers the letter height and leaves gaps
-//! between rows (and some don't even exist in Geist Mono), so they're drawn as rectangles
-//! on the cell geometry, like Zed, kitty and Ghostty do.
+//! Characters that must fill the whole cell: blocks (U+2580–259F), sextants (U+1FB00–1FB3B)
+//! and box-drawing lines (U+2500–257F). From a font, the glyph only covers the letter height
+//! and leaves gaps between rows (and some don't even exist in Geist Mono), so they're drawn as
+//! rectangles on the cell geometry, like Zed, kitty and Ghostty do.
 
 /// Rectangle relative to the cell origin, in pixels, with its opacity.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,8 +29,31 @@ pub fn custom_glyph(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     match c as u32 {
         0x2580..=0x259F => block(c, w, h),
         0x2500..=0x257F => box_drawing(c, w, h, stroke),
+        0x1FB00..=0x1FB3B => Some(sextant(c as u32 - 0x1FB00, w, h)),
         _ => None,
     }
+}
+
+/// A 2×3 grid of blocks, used for QR codes (Expo's) and pictures drawn in text. Each character
+/// is one of the 64 patterns, numbered by its blocks (bit 0 the upper left, bit 1 the upper
+/// right, and so on down) in order, minus four that exist elsewhere: none (a space), the left
+/// and right columns (▌ ▐) and all (█).
+fn sextant(index: u32, w: f32, h: f32) -> Vec<Rect> {
+    let mut pattern = index + 1;
+    for skipped in [0b010101, 0b101010] {
+        if pattern >= skipped {
+            pattern += 1;
+        }
+    }
+    let xs = [0., w / 2., w];
+    let ys = [0., h / 3., h * 2. / 3., h];
+    (0..6)
+        .filter(|bit| pattern & (1 << bit) != 0)
+        .map(|bit| {
+            let (column, row) = ((bit % 2) as usize, (bit / 2) as usize);
+            rect(xs[column], ys[row], xs[column + 1], ys[row + 1])
+        })
+        .collect()
 }
 
 fn block(c: char, w: f32, h: f32) -> Option<Vec<Rect>> {
@@ -227,6 +250,26 @@ mod tests {
         assert!(!covers(&q, W - 1., H - 1.));
         let q = custom_glyph('▝', W, H, 1.).unwrap();
         assert!(covers(&q, W - 1., 1.) && !covers(&q, 1., 1.));
+    }
+
+    #[test]
+    fn sextants_fill_thirds_of_the_cell() {
+        // 🬀 = upper left only.
+        let first = custom_glyph('\u{1FB00}', W, H, 1.).unwrap();
+        assert_eq!(first, vec![rect(0., 0., W / 2., H / 3.)]);
+        // 🬓 = middle and lower left, just before ▌'s pattern is skipped.
+        let before = custom_glyph('\u{1FB13}', W, H, 1.).unwrap();
+        assert!(covers(&before, 1., H / 2.) && covers(&before, 1., H - 1.));
+        assert!(!covers(&before, 1., 1.) && !covers(&before, W - 1., H - 1.));
+        // 🬔 = the pattern after ▌: upper right, middle left and lower left.
+        let after = custom_glyph('\u{1FB14}', W, H, 1.).unwrap();
+        assert!(covers(&after, W - 1., 1.) && covers(&after, 1., H - 1.));
+        assert!(!covers(&after, 1., 1.));
+        // 🬻 = everything but the upper left.
+        let last = custom_glyph('\u{1FB3B}', W, H, 1.).unwrap();
+        assert_eq!(last.len(), 5);
+        assert!(!covers(&last, 1., 1.) && covers(&last, W - 1., H - 1.));
+        assert!(custom_glyph('\u{1FB3C}', W, H, 1.).is_none());
     }
 
     #[test]

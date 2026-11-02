@@ -160,6 +160,23 @@ impl CommandResolver {
     /// Commands that start with `prefix`: shell builtins, aliases and functions, and
     /// PATH executables.
     pub fn names_with_prefix(&mut self, prefix: &str) -> Vec<String> {
+        let mut found: Vec<String> = self
+            .all_names()
+            .into_iter()
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        found.truncate(200);
+        found
+    }
+
+    /// The command closest to `word`, a name the shell didn't find (`gti` → `git`).
+    pub fn closest(&mut self, word: &str) -> Option<String> {
+        let names = self.all_names();
+        crate::fixes::closest(word, names.iter().map(String::as_str))
+    }
+
+    /// Builtins, aliases, functions and PATH executables, sorted, without `_` helpers.
+    fn all_names(&mut self) -> Vec<String> {
         let path = &self.path;
         let executables = self.executables.get_or_insert_with(|| {
             let mut names: Vec<String> = path
@@ -183,11 +200,10 @@ impl CommandResolver {
             .map(|b| b.to_string())
             .chain(self.names.iter().cloned())
             .chain(executables.iter().cloned())
-            .filter(|name| name.starts_with(prefix) && !name.starts_with('_'))
+            .filter(|name| !name.starts_with('_'))
             .collect();
         found.sort();
         found.dedup();
-        found.truncate(200);
         found
     }
 

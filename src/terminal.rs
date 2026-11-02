@@ -15,6 +15,7 @@ use alacritty_terminal::{
     event::{Event as AlacEvent, EventListener, WindowSize},
     event_loop::{EventLoop, EventLoopSender, Msg},
     grid::{Dimensions, Scroll},
+    index::Line,
     sync::FairMutex,
     term::{Config, Term, TermMode},
     tty,
@@ -27,7 +28,8 @@ use futures::{
 use gpui::{App, ClipboardItem, Context, EventEmitter, Pixels, Task, px};
 
 use crate::{
-    completions,
+    blocks, completions,
+    fixes::{self, Failure, Fix},
     git::{self, GitStatus},
     highlight::{self, CommandResolver, Token},
     hosts::{self, HostIdentity},
@@ -127,6 +129,14 @@ pub struct ShellState {
     pub disconnected: Option<Disconnected>,
     /// The shell's PATH, to find the editor even when the app is launched from Finder.
     pub path_env: Option<String>,
+    /// The last command, if it failed, with its output and a fix found on the machine.
+    /// Cleared when the next command starts.
+    pub failure: Option<LastFailure>,
+}
+
+pub struct LastFailure {
+    pub failure: Failure,
+    pub fix: Option<Fix>,
 }
 
 pub struct RemoteSession {
@@ -170,6 +180,9 @@ pub struct Terminal {
     title: Option<String>,
     shell: ShellState,
     pending_command: Option<String>,
+    /// A command that just failed, read from the grid once the next prompt is drawn.
+    pending_failure: Option<Failure>,
+    capture_failure: Option<Task<()>>,
     resolver: CommandResolver,
     git_refresh: Option<Task<()>>,
     ssh_resolve: Option<Task<()>>,
@@ -286,6 +299,8 @@ impl TerminalBuilder {
             title: None,
             shell: ShellState::default(),
             pending_command: None,
+            pending_failure: None,
+            capture_failure: None,
             resolver: CommandResolver::from_env(),
             git_refresh: None,
             ssh_resolve: None,
@@ -306,16 +321,30 @@ impl Terminal {
         &self.shell
     }
 
-    /// What's missing to complete the current line with the most recent history entry.
-    /// Only when the cursor is at the end of the line.
+    /// What's missing to complete the current line: the fix for the command that just failed,
+    /// while the line is still a start of it, or else the most recent history entry. Only when
+    /// the cursor is at the end of the line.
     pub fn suggestion(&self, cx: &App) -> Option<String> {
         let line = self.shell.line.as_ref()?;
         if self.shell.running.is_some() || line.cursor != line.buffer.chars().count() {
             return None;
         }
+        if let Some(rest) = self.fix_suggestion() {
+            return Some(rest);
+        }
         shell::history(cx)?
             .suggest(&line.buffer)
             .filter(|rest| !rest.contains('\n'))
+            .map(str::to_string)
+    }
+
+    /// The rest of the fix for the last command, while what's typed is the start of it.
+    pub fn fix_suggestion(&self) -> Option<String> {
+        let line = self.shell.line.as_ref()?;
+        let fix = self.shell.failure.as_ref()?.fix.as_ref()?;
+        fix.command
+            .strip_prefix(line.buffer.as_str())
+            .filter(|rest| !rest.is_empty())
             .map(str::to_string)
     }
 
@@ -361,6 +390,9 @@ impl Terminal {
             }
             ShellEvent::CommandStart => {
                 self.shell.line = None;
+                self.shell.failure = None;
+                self.pending_failure = None;
+                self.capture_failure = None;
                 let text = self.pending_command.take().unwrap_or_default();
                 // A new command leaves the dropped session behind.
                 self.shell.disconnected = None;
@@ -382,6 +414,13 @@ impl Terminal {
                         exit_code,
                         duration: running.started.elapsed(),
                     });
+                    if exit_code.is_some_and(|code| code != 0) && self.shell.remote.is_none() {
+                        self.pending_failure = Some(Failure {
+                            command: running.text.clone(),
+                            exit_code,
+                            output: String::new(),
+                        });
+                    }
                     if let Some(remote) = self.shell.remote.take() {
                         self.ssh_resolve = None;
                         // 255 is ssh's exit code when the connection fails or drops.
@@ -400,6 +439,9 @@ impl Terminal {
             }
             ShellEvent::Line { cursor, buffer } => {
                 self.shell.line = Some(EditLine { buffer, cursor });
+                if let Some(failure) = self.pending_failure.take() {
+                    self.capture_failure(failure, cx);
+                }
                 if let Some(command) = self.startup_command.take() {
                     self.insert_command(&command, true, cx);
                 }
@@ -438,6 +480,77 @@ impl Terminal {
             }
             ShellEvent::Names(names) => self.resolver.set_names(&names),
         }
+    }
+
+    /// Reads the failed command's output from the grid and looks for a fix. The PTY scanner
+    /// reports the new prompt before alacritty has drawn it, so this waits a moment.
+    fn capture_failure(&mut self, mut failure: Failure, cx: &mut Context<Self>) {
+        self.capture_failure = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            this.update(cx, |this, cx| {
+                failure.output = this.last_output();
+                let fix = this.find_fix(&failure);
+                this.shell.failure = Some(LastFailure { failure, fix });
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// The output of the last command that ran, from the last few hundred rows.
+    fn last_output(&self) -> String {
+        let term = self.term.lock();
+        let cursor = term.grid().cursor.point.line;
+        let top = Line((cursor.0 - 400).max(term.topmost_line().0));
+        blocks::blocks_from(&*term, top)
+            .into_iter()
+            .rfind(|block| block.input < cursor)
+            .map(|block| blocks::output_text(&*term, &block))
+            .unwrap_or_default()
+    }
+
+    fn find_fix(&mut self, failure: &Failure) -> Option<Fix> {
+        if !failure.worth_fixing() {
+            return None;
+        }
+        let cwd = self.shell.cwd.clone();
+        let branches = self
+            .shell
+            .git
+            .as_ref()
+            .map(|git| git.branches.clone())
+            .unwrap_or_default();
+        let resolver = std::cell::RefCell::new(std::mem::take(&mut self.resolver));
+        let closest_command = |word: &str| {
+            let mut resolver = resolver.borrow_mut();
+            // A command that exists failed for another reason (a missing subcommand's binary).
+            if resolver.is_command(word, cwd.as_deref()) {
+                return None;
+            }
+            resolver.closest(word)
+        };
+        let list_dirs = |dir: &std::path::Path| {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        };
+        let fix = fixes::suggest(
+            failure,
+            &fixes::Context {
+                cwd: cwd.as_deref(),
+                closest_command: &closest_command,
+                branches: &branches,
+                list_dirs: &list_dirs,
+            },
+        );
+        self.resolver = resolver.into_inner();
+        fix
     }
 
     fn refresh_git(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {

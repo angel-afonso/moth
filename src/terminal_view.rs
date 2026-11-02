@@ -30,11 +30,13 @@ use ui::{
 };
 
 use crate::{
+    agent,
+    agent_panel::{AgentPanel, AgentPanelEvent, AgentTask},
     blocks, completions,
     components::{Kbd, KindBadge, SuggestionKind},
     glyphs,
     highlight::{Token, TokenKind},
-    keys, links, mouse, palette,
+    keys, links, mouse, palette, shortcuts,
     terminal::{EditLine, Listener, TermSize, Terminal},
     theme::{MONO_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, font},
     tokens::{SyntaxColors, TokensExt, metrics, tint},
@@ -54,7 +56,9 @@ actions!(
         PreviousCommand,
         NextCommand,
         CopyCommandOutput,
-        ShowCompletions
+        ShowCompletions,
+        AskAgent,
+        FixWithAgent
     ]
 );
 
@@ -134,6 +138,8 @@ pub struct TerminalView {
     reopen_completion_on: Option<String>,
     /// Command block selected with ⌘↑/⌘↓ (its input row): highlighted; ⌘⇧C copies its output.
     selected_block: Option<blocks::Anchor>,
+    /// The agent's panel (⌘I, ⌘⇧I), at the prompt.
+    agent_panel: Option<(Entity<AgentPanel>, Subscription)>,
     _observe: Subscription,
 }
 
@@ -215,6 +221,7 @@ impl TerminalView {
             completion: None,
             reopen_completion_on: None,
             selected_block: None,
+            agent_panel: None,
             _observe: observe,
         }
     }
@@ -593,6 +600,9 @@ impl TerminalView {
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
+        if self.agent_panel.take().is_some() {
+            cx.notify();
+        }
         let shift = event.modifiers.shift;
         if self.reports_mouse(shift, cx) {
             self.reported_press = self.send_mouse(
@@ -897,6 +907,136 @@ impl TerminalView {
     fn cancel_paste(&mut self, cx: &mut Context<Self>) {
         self.pending_paste = None;
         cx.notify();
+    }
+
+    fn open_agent(&mut self, task: AgentTask, window: &mut Window, cx: &mut Context<Self>) {
+        self.completion = None;
+        let terminal = self.terminal.clone();
+        let panel = cx.new(|cx| AgentPanel::new(task, terminal, window, cx));
+        let subscription = cx.subscribe_in(&panel, window, |this, _, event, window, cx| {
+            if let AgentPanelEvent::Insert { command, run } = event {
+                this.terminal
+                    .update(cx, |t, cx| t.insert_command(command, *run, cx));
+            }
+            this.agent_panel = None;
+            this.focus_handle.focus(window, cx);
+            cx.notify();
+        });
+        self.agent_panel = Some((panel, subscription));
+        cx.notify();
+    }
+
+    /// Where overlays at the prompt go: the row of the cursor, and whether there's more room
+    /// above it than below.
+    fn prompt_anchor(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> Option<(Pixels, Pixels, bool, GridGeometry)> {
+        let geometry = self.geometry.get()?;
+        let cursor = self.terminal.read(cx).term.lock().grid().cursor.point;
+        let row_top = geometry.origin.y
+            + geometry.line_height * (cursor.line.0 + geometry.display_offset) as f32;
+        let x = geometry.origin.x + geometry.cell_width * cursor.column.0 as f32;
+        let above = row_top > window.viewport_size().height / 2.;
+        Some((x, row_top, above, geometry))
+    }
+
+    fn render_agent_panel(&self, window: &Window, cx: &App) -> Option<gpui::AnyElement> {
+        let (panel, _) = self.agent_panel.as_ref()?;
+        let (_, row_top, above, geometry) = self.prompt_anchor(window, cx)?;
+        let x = geometry.origin.x - px(10.);
+        let (position, corner) = if above {
+            (point(x, row_top - px(6.)), gpui::Anchor::BottomLeft)
+        } else {
+            (
+                point(x, row_top + geometry.line_height + px(6.)),
+                gpui::Anchor::TopLeft,
+            )
+        };
+        Some(
+            deferred(
+                anchored()
+                    .position(position)
+                    .anchor(corner)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(panel.clone()),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    /// A note after the gray fix (→ accepts it, and why it's suggested), or, with nothing
+    /// typed after a failure and no fix found here, the shortcut that asks the agent.
+    fn render_fix_hint(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.completion.is_some() || self.agent_panel.is_some() || self.search.is_some() {
+            return None;
+        }
+        let terminal = self.terminal.read(cx);
+        let failure = terminal.shell().failure.as_ref()?;
+        if !terminal.at_prompt() {
+            return None;
+        }
+        let line = terminal.shell().line.as_ref()?;
+        let (key, label, ghost) = match terminal.fix_suggestion() {
+            Some(rest) => {
+                let reason = failure
+                    .fix
+                    .as_ref()
+                    .map_or(String::new(), |f| f.reason.clone());
+                (
+                    "→".to_string(),
+                    format!("fix · {reason}"),
+                    rest.chars().count(),
+                )
+            }
+            None if line.buffer.is_empty() && failure.failure.worth_fixing() => {
+                let search_path = terminal
+                    .shell()
+                    .path_env
+                    .clone()
+                    .or_else(|| std::env::var("PATH").ok())
+                    .unwrap_or_default();
+                let agent::Resolution::Found(agent) = agent::find(&search_path, cx) else {
+                    return None;
+                };
+                (
+                    shortcuts::label("cmd-shift-i"),
+                    format!("fix with {}", agent.name),
+                    0,
+                )
+            }
+            None => return None,
+        };
+        let (x, row_top, _, geometry) = self.prompt_anchor(window, cx)?;
+        let ui = cx.tokens().ui.clone();
+        let x = x + geometry.cell_width * (ghost + 2) as f32;
+        let y = row_top + (geometry.line_height - px(18.)) / 2.;
+        Some(
+            deferred(
+                anchored()
+                    .position(point(x, y))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        h_flex()
+                            .h(px(18.))
+                            .gap(px(5.))
+                            .px(px(5.))
+                            .rounded(px(5.))
+                            .bg(ui.surface)
+                            .border_1()
+                            .border_color(ui.border)
+                            .child(Kbd::new(key))
+                            .child(
+                                Label::new(label)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Placeholder),
+                            ),
+                    ),
+            )
+            .into_any_element(),
+        )
     }
 
     /// Tab: opens the popup. With a single candidate it completes directly; with none it returns
@@ -1455,6 +1595,8 @@ impl Render for TerminalView {
         self.sync_completion(cx);
         let completion_menu = self.render_completion_menu(window, cx);
         let completion_ghost = self.completion_ghost();
+        let agent_panel = self.render_agent_panel(window, cx);
+        let fix_hint = self.render_fix_hint(window, cx);
         let selected_block = self.selected_block;
         let paste_guard = self.render_paste_guard(cx);
         let geometry = self.geometry.clone();
@@ -1555,6 +1697,12 @@ impl Render for TerminalView {
                 if !this.open_completions(cx) {
                     cx.propagate();
                 }
+            }))
+            .on_action(cx.listener(|this, _: &AskAgent, window, cx| {
+                this.open_agent(AgentTask::Ask, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FixWithAgent, window, cx| {
+                this.open_agent(AgentTask::Fix, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Some(1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Some(-1.), cx)))
@@ -1657,6 +1805,8 @@ impl Render for TerminalView {
             .children(self.render_exit_banner(cx))
             .children(paste_guard)
             .children(completion_menu)
+            .children(fix_hint)
+            .children(agent_panel)
     }
 }
 

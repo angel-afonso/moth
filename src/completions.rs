@@ -161,7 +161,7 @@ fn segment_start(text: &str) -> usize {
     start
 }
 
-fn escape(name: &str) -> String {
+pub fn escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
         if c.is_whitespace() || "'\"\\$`!&;|()<>*?[]#~".contains(c) {

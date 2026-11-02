@@ -1,9 +1,12 @@
+mod agent;
+mod agent_panel;
 mod assets;
 mod blocks;
 mod completions;
 mod components;
 mod config;
 mod editor;
+mod fixes;
 mod fuzzy;
 mod git;
 mod glyphs;
@@ -18,6 +21,7 @@ mod palette;
 mod panes;
 mod picker;
 mod process;
+mod redact;
 mod session;
 mod shell;
 mod shortcuts;
@@ -94,6 +98,9 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Copy", view::Copy),
                 MenuItem::action("Paste", view::Paste),
                 MenuItem::action("Copy Command Output", view::CopyCommandOutput),
+                MenuItem::separator(),
+                MenuItem::action("Ask Agent…", view::AskAgent),
+                MenuItem::action("Fix Last Command with Agent", view::FixWithAgent),
                 MenuItem::separator(),
                 MenuItem::action("Find…", view::FindOutput),
                 MenuItem::action("Clear Screen", ws::ClearScreen),

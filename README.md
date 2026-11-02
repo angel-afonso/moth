@@ -67,7 +67,9 @@ The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own bel
 | ⌘C | Copy the selection (with no selection, the visible screen) |
 | Tab | Shell completion, as usual (`Doc` → `Documents/`) |
 | ⌃Space | App suggestions (↑↓ choose, Tab complete, ⏎ run, esc close) |
-| → / End | Accept the history suggestion |
+| → / End | Accept the gray suggestion (the fix for a failed command, or history) |
+| ⌘I | Ask the agent for a command |
+| ⌘⇧I | Ask the agent to fix the last command |
 | ⌥← / ⌥→ · ⌥⌦ | Previous / next word · delete the next word (at the prompt) |
 | ⌘← / ⌘→ · ⌘⌫ | Start / end of line · delete the line (at the prompt) |
 
@@ -131,6 +133,42 @@ Dragging selects, double-click selects a word, triple-click a line and Shift+cli
 
 Tab at the prompt is the shell's completion, so navigating folders with `Doc` + Tab works like in any terminal. The app's suggestions are separate so they don't get in the way of that habit: the history suggestion appears in gray and is accepted with → or End, and ⌃Space ("Show Suggestions") opens a popup with what can be typed at the cursor: commands (PATH, aliases, functions, builtins), subcommands and flags of common tools with their descriptions, git branches, `package.json` scripts, hosts from `~/.ssh/config`, paths and history. The rest of the selected candidate is shown in gray on the line, and a side panel shows its documentation (usage and flags). If there's only one candidate it's completed right away, and after completing a folder the popup reopens with its contents. With nothing to suggest, ⌃Space goes to the shell as usual. With `"tab_completion": "popup"` in the settings, Tab opens the popup as it used to. The specs live in [`assets/completions/specs.json`](assets/completions/specs.json) and can be extended.
 
+## Fixes and the agent
+
+When a command fails, Moth looks for a fix on the machine, without sending anything anywhere, and shows it in gray at the next prompt, with a note saying where it comes from. → or End accepts it, as with the history suggestion; it's typed on the prompt, not run. It finds:
+
+- the command the tool itself printed (`git push` without an upstream → `git push --set-upstream origin main`);
+- the word the tool says you meant (`git stauts` → `git status`, `cargo biuld` → `cargo build`, `npm isntall` → `npm install`);
+- a command name that's a typo of one on the PATH or an alias (`gti` → `git`), or a script in the current folder run without `./`;
+- a folder or branch that's a typo of one that exists (`cd Documnets`, `git checkout mian`).
+
+Commands interrupted with ⌃C (or another signal), and `grep`, `diff` and `test` returning 1 ("no match"), aren't treated as failures. This needs the zsh integration, which says what ran and how it ended.
+
+For anything else there's the agent, any coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP): Claude Code, Codex, Gemini CLI… With nothing fixed locally, the empty prompt after a failure shows ⌘⇧I ("Fix Last Command with Agent"), which sends the command, its exit code and the end of its output and asks for a corrected command. ⌘I ("Ask Agent for a Command…") opens a field to describe what you want in plain words ("find files over 100 MB modified this week"); whatever was typed at the prompt starts in it. The answer streams into a panel at the prompt: ⏎ puts the command on the prompt to review and ⌘⏎ runs it. Nothing runs on its own, and esc closes the panel.
+
+What the agent gets is kept to a minimum and checked for secrets first:
+
+- Only the failed command, its exit code and its last 60 lines (6 KB) of output; for ⌘I, the request, the names of the files in the current folder (not their contents) and the previous command. Plus the folder (with your home folder as `~`), the git branch, the shell and the OS. Never history, environment variables or files.
+- Secrets are replaced with `[REDACTED]` before sending: private keys, tokens with a known format (GitHub, GitLab, AWS, OpenAI, Anthropic, Stripe, Slack, Google, npm, JWTs…), values named like secrets (`DB_PASSWORD=…`, `"api_key": …`, `--token …`), passwords in URLs (`https://user:…@host`), `Authorization` and `Cookie` headers, `curl -u user:…`, `mysql -p…`, and long random-looking strings. The panel says how many were removed, and "What was sent" shows the context exactly as the agent received it.
+- The output of commands that print secrets (`env`, `printenv`, `cat .env`, key files, `~/.aws` and `~/.ssh`, `gh auth token`, `kubectl get secret`, password managers…) isn't sent at all, only the command.
+- On production hosts (see SSH sessions) the agent is off.
+- The agent gets no file system or terminal from Moth, every permission it asks for (to run a tool, edit a file) is refused, and its sessions run in an empty folder (`agent` in the settings folder). Each request is a new session, so nothing from one carries over to the next.
+
+The agent is launched when first needed and stopped after 10 minutes without requests. To choose it, set `agent` in the settings:
+
+```json
+{ "agent": "claude" }
+```
+
+- `"claude"` and `"codex"` run the agent's ACP adapter ([claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp), [codex-acp](https://github.com/agentclientprotocol/codex-acp)) with `npx`, at a version Moth pins: there's nothing to install but Node.js. The first request downloads it, which takes a few seconds; npm keeps it for the next ones.
+- `"gemini"` runs Gemini CLI (`gemini --acp`), which speaks ACP itself.
+- An object runs any other agent: `{ "command": "my-agent", "args": ["--acp"], "env": {} }`.
+- `false` turns it off.
+
+Without `agent`, Moth uses an adapter installed by hand (`claude-agent-acp`, `claude-code-acp`, `codex-acp`) if there's one on the shell's PATH, or else the agent of the first of `claude`, `codex` and `gemini` it finds there.
+
+The agent signs in its own way, with the login of its CLI (`claude`, `codex login`, `gemini`), so Moth never sees API keys. If it isn't logged in, the panel says which command to run.
+
 ## Links
 
 URLs in the output (`http`, `https`, `ftp`, `file`, `mailto`), including ones wrapped across two rows, and OSC 8 hyperlinks (`ls --hyperlink`, compilers) are underlined on hover and open in the default browser with a click. They open when the button is released over the same link, and a click that only activates the window opens nothing. On the line you're typing, a click still moves the cursor. For safety, other schemes are never opened, even when they arrive via OSC 8.
@@ -165,6 +203,7 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `notifications`: a desktop notification when a long command finishes while the app is in the background (on by default).
 - `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
 - `check_updates`: look for new releases automatically (on by default; see [Updates](#updates)).
+- `agent`: the ACP agent for ⌘I and ⌘⇧I: `"claude"`, `"codex"`, `"gemini"`, `{"command": …, "args": […], "env": {…}}` for another one, or `false` to turn it off; unset, the first one found on the PATH (see [Fixes and the agent](#fixes-and-the-agent)).
 
 The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
 
@@ -303,6 +342,10 @@ The icon artwork is `assets/branding/moth-terminal-v4.png`. The macOS script `as
 - `src/glyphs.rs`: block elements (`▀▄█▐▛▜`…) and box-drawing lines (`─│╭╮`…) drawn as cell-filling rectangles, so logos like Claude Code's and TUI borders don't show gaps.
 - `src/blocks.rs`: command blocks: invisible marks in the grid, each command's output and result.
 - `src/completions.rs`: completion engine (parses the line, picks the source, ranks and applies).
+- `src/fixes.rs`: fixes for a failed command found on the machine (the tool's own suggestion, typos of commands, folders and branches).
+- `src/agent.rs`: the ACP client: finds and launches the agent, builds the prompts, reads the answer.
+- `src/agent_panel.rs`: the agent's panel at the prompt (⌘I, ⌘⇧I).
+- `src/redact.rs`: takes secrets out of what's sent to the agent.
 - `src/mouse.rs`: mouse reporting to programs that request it (SGR and X10).
 - `src/links.rs`: URLs and paths with line and column in the output, allowed schemes.
 - `src/editor.rs`: opens files in the editor (detection, per-editor position arguments, terminal editors).

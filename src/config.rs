@@ -2,7 +2,7 @@
 //! Support/moth` on macOS, `%APPDATA%\moth` on Windows, `~/.config/moth` on Linux).
 //! Everything is optional; the file is reloaded when the window regains focus if it changed.
 
-use std::{path::PathBuf, time::SystemTime};
+use std::{collections::BTreeMap, path::PathBuf, time::SystemTime};
 
 use gpui::{App, Global};
 use serde::Deserialize;
@@ -31,6 +31,36 @@ pub struct Config {
     /// Look for a new release at startup and every few hours, download it in the background
     /// and offer the restart (yes by default; release builds only).
     pub check_updates: Option<bool>,
+    /// The ACP agent that suggests commands: `"claude"`, `"codex"` or `"gemini"`, an object with
+    /// the command to run, or `false` to turn it off; unset, the first one found on the shell's
+    /// PATH (see `agent::resolve`).
+    pub agent: Option<AgentSetting>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum AgentSetting {
+    Enabled(bool),
+    Kind(AgentKind),
+    Command(AgentCommandConfig),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    Claude,
+    Codex,
+    Gemini,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCommandConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -49,7 +79,8 @@ const TEMPLATE: &str = r#"{
   "restore_session": true,
   "notifications": true,
   "tab_completion": "shell",
-  "check_updates": true
+  "check_updates": true,
+  "agent": null
 }
 "#;
 
@@ -156,5 +187,23 @@ mod tests {
             Some(TabCompletion::Popup)
         );
         assert!(parse(r#"{"tab_completion": "menu"}"#).is_err());
+        assert_eq!(
+            parse(r#"{"agent": false}"#).unwrap().agent,
+            Some(AgentSetting::Enabled(false))
+        );
+        assert_eq!(
+            parse(r#"{"agent": "codex"}"#).unwrap().agent,
+            Some(AgentSetting::Kind(AgentKind::Codex))
+        );
+        assert!(parse(r#"{"agent": "copilot"}"#).is_err());
+        let Some(AgentSetting::Command(agent)) =
+            parse(r#"{"agent": {"command": "gemini", "args": ["--acp"]}}"#)
+                .unwrap()
+                .agent
+        else {
+            panic!("expected a command");
+        };
+        assert_eq!(agent.args, ["--acp"]);
+        assert!(parse(r#"{"agent": {"comand": "gemini"}}"#).is_err());
     }
 }

@@ -38,6 +38,10 @@ minisign-verify = "0.2"
 semver = "1"
 sha2 = "0.10"
 thiserror = "2"
+# The agent (src/agent.rs): an Agent Client Protocol client that launches the agent as a
+# subprocess. `regex` finds the secrets taken out of what's sent to it (src/redact.rs).
+agent-client-protocol = { version = "3.5", features = ["process"] }
+regex = "1"
 # The same image crate gpui uses, for the window icon on Linux (only PNG decoding).
 image = { version = "0.25", default-features = false, features = ["png"] }
 
