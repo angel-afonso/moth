@@ -462,12 +462,71 @@ addEventListener('resize', request);
   }, { threshold: 0.35 }).observe(video);
 })();
 
-/* ---------- download: the visitor's platform first ---------- */
+/* ---------- download: the visitor's platform, chosen for them, easy to change ---------- */
 (() => {
+  const root = document.querySelector('[data-download]');
+  if (!root) return;
+  const releases = 'https://github.com/angel-afonso/moth/releases';
+  // The files of the release this page was written against; replaced by the latest release when GitHub answers.
+  let version = 'v0.2.0';
+  const files = {
+    mac: { name: 'macOS', main: 'moth-v0.2.0-universal-apple-darwin.dmg', size: 21306671, alt: 'moth-v0.2.0-universal-apple-darwin.zip', altLabel: 'Also as a .zip',
+      note: 'One app for Apple Silicon and Intel. Releases aren’t notarized yet, so the first time, allow Moth in System Settings → Privacy & Security.' },
+    win: { name: 'Windows', main: 'moth-v0.2.0-x86_64-pc-windows-msvc.zip', size: 8192077,
+      note: 'For x86_64. Unzip it anywhere and run moth.exe; it needs nothing else installed. SmartScreen may ask once.' },
+    linux: { name: 'Linux', main: 'moth-v0.2.0-x86_64-unknown-linux-gnu.tar.gz', size: 14787945,
+      note: 'For x86_64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36). ./install.sh adds it to the menu. Needs Vulkan.' },
+  };
+  const suffix = { mac: 'universal-apple-darwin.dmg', win: 'x86_64-pc-windows-msvc.zip', linux: 'x86_64-unknown-linux-gnu.tar.gz' };
   const ua = navigator.userAgent;
-  const mine = /Windows/.test(ua) ? 'win' : /Mac/.test(ua) ? 'mac' : /Linux|X11/.test(ua) ? 'linux' : null;
-  const card = mine && document.querySelector(`.platform[data-platform="${mine}"]`);
-  if (card) { card.classList.add('is-yours'); card.parentElement.prepend(card); }
+  const phone = /iPhone|iPad|Android/.test(ua);
+  let picked = /Windows/.test(ua) ? 'win' : /Linux|X11|CrOS/.test(ua) && !/Android/.test(ua) ? 'linux' : 'mac';
+
+  const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
+  const url = (name) => `${releases}/download/${version}/${name}`;
+  const buttons = [...root.querySelectorAll('[data-pick]')];
+  const show = () => {
+    const f = files[picked];
+    document.querySelectorAll('[data-file]').forEach((a) => { a.href = url(f.main); });
+    document.querySelectorAll('[data-os-name]').forEach((el) => { el.textContent = f.name; });
+    document.querySelectorAll('[data-version]').forEach((el) => { el.textContent = version; });
+    root.querySelector('[data-file-name]').textContent = f.main;
+    root.querySelector('[data-file-size]').textContent = mb(f.size);
+    root.querySelector('[data-note]').textContent = f.note;
+    const alt = root.querySelector('[data-alt]');
+    alt.hidden = !f.alt;
+    alt.nextElementSibling.hidden = !f.alt;
+    if (f.alt) { alt.href = url(f.alt); alt.textContent = f.altLabel; }
+    buttons.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.pick === picked)));
+  };
+  buttons.forEach((b, n) => {
+    b.addEventListener('click', () => { picked = b.dataset.pick; show(); });
+    b.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const next = buttons[(n + (e.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length];
+      next.focus(); next.click();
+    });
+  });
+  root.querySelector('[data-phone]').hidden = !phone;
+  show();
+
+  fetch('https://api.github.com/repos/angel-afonso/moth/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((release) => {
+      const assets = release.assets || [];
+      const find = (end) => assets.find((a) => a.name.endsWith(end));
+      for (const [key, end] of Object.entries(suffix)) {
+        const a = find(end);
+        if (!a) return;
+        files[key].main = a.name;
+        files[key].size = a.size;
+      }
+      const zip = find('universal-apple-darwin.zip');
+      if (zip) files.mac.alt = zip.name;
+      version = release.tag_name;
+      show();
+    })
+    .catch(() => {});
 })();
 
 request();

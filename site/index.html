@@ -55,7 +55,7 @@
         <p class="lead" data-load style="--d:380ms">Moth is a native terminal for macOS, Linux and Windows, built on Zed’s gpui. It turns your shell’s output into commands you can jump to, copy and search.</p>
         <div class="hero__actions" data-load style="--d:460ms">
           <a class="button" href="#download">Download Moth</a>
-          <span class="hero__version">v0.1.0 · free, GPL-3.0</span>
+          <span class="hero__version"><span data-version>v0.2.0</span> · free, GPL-3.0</span>
         </div>
         <ul class="hero__links" data-load style="--d:540ms">
           <li><a class="link" href="https://github.com/angel-afonso/moth">Source on GitHub</a></li>
@@ -276,49 +276,32 @@
     </div>
   </section>
 
-  <!-- Download -->
-  <section class="download wrap" id="download" aria-labelledby="download-title">
-    <div class="download__intro">
+  <!-- Download: one button, the visitor's platform already chosen -->
+  <section class="download wrap" id="download" aria-labelledby="download-title" data-download>
+    <div class="download__main">
       <h2 id="download-title" class="head" data-lines>Download</h2>
-      <p data-rise style="--i:1">Every release ships for three platforms, with <code>SHA256SUMS</code> beside the files. Once installed, Moth updates itself from signed releases.</p>
-      <div class="download__source" id="source" data-rise style="--i:2">
-        <h3>From source</h3>
-        <p>Rust 1.99, pinned in <code>rust-toolchain.toml</code>. On Linux, install the X11, Wayland and font headers first.</p>
-        <pre class="code"><code>git clone https://github.com/angel-afonso/moth
-cd moth && cargo run</code></pre>
+      <div class="segmented download__picker" role="radiogroup" aria-label="Platform" data-reveal style="--i:1">
+        <button type="button" role="radio" aria-checked="true" data-pick="mac">macOS</button>
+        <button type="button" role="radio" aria-checked="false" data-pick="win">Windows</button>
+        <button type="button" role="radio" aria-checked="false" data-pick="linux">Linux</button>
       </div>
+      <div class="download__go" data-rise style="--i:2">
+        <a class="button button--big" href="https://github.com/angel-afonso/moth/releases/download/v0.2.0/moth-v0.2.0-universal-apple-darwin.dmg" data-file><span>Download for <span data-os-name>macOS</span></span></a>
+        <p class="download__file"><span data-file-name>moth-v0.2.0-universal-apple-darwin.dmg</span> · <span data-file-size>20.3 MB</span></p>
+      </div>
+      <p class="download__note" data-note data-rise style="--i:3">One app for Apple Silicon and Intel. Releases aren’t notarized yet, so the first time, allow Moth in System Settings → Privacy &amp; Security.</p>
+      <p class="download__more" data-rise style="--i:4"><a class="link-plain" href="https://github.com/angel-afonso/moth/releases/download/v0.2.0/moth-v0.2.0-universal-apple-darwin.zip" data-alt>Also as a .zip</a> <span class="download__sep">·</span> <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">All files and SHA256SUMS</a></p>
+      <p class="download__phone" data-phone hidden>Moth runs on your computer. Open this page there, or pick the system above.</p>
     </div>
-    <ul class="platforms" role="list">
-      <li class="platform" data-platform="mac">
-        <div class="platform__row">
-          <div class="platform__row">
-          <div class="platform__row">
-          <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>macOS</h3>
-          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">Moth.app for macOS</a>
-        </div>
-        <p>One universal app for Apple Silicon and Intel, as a <code>.dmg</code> or a <code>.zip</code>. Releases aren’t notarized yet, so allow it once in Privacy &amp; Security.</p>
-      </li>
-      <li class="platform" data-platform="win">
-        <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>Windows</h3>
-          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">moth.exe for Windows</a>
-        </div>
-        <p>An x86_64 <code>.zip</code> with <code>moth.exe</code>. Unzip it anywhere and run it; it needs no runtime. SmartScreen may ask once.</p>
-      </li>
-      <li class="platform" data-platform="linux">
-        <h3><svg class="bullet" viewBox="0 0 830 660" aria-hidden="true"><use href="#chev"/></svg>Linux</h3>
-          <a class="link-plain" href="https://github.com/angel-afonso/moth/releases/latest">moth for Linux</a>
-        </div>
-        <p>An x86_64 <code>.tar.gz</code> for glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36. <code>./install.sh</code> adds it to the menu. Needs Vulkan.</p>
-      </li>
-    </ul>
+    <div class="download__source" id="source" data-rise style="--i:2">
+      <h3>From source</h3>
+      <p>Rust 1.99, pinned in <code>rust-toolchain.toml</code>. On Linux, install the X11, Wayland and font headers first.</p>
+      <pre class="code"><code>git clone https://github.com/angel-afonso/moth
+cd moth && cargo run</code></pre>
+      <p>Installed from a download, Moth updates itself from signed releases.</p>
+    </div>
   </section>
 
-  <!-- One word is the button -->
-  <a class="cta" href="https://github.com/angel-afonso/moth/releases/latest">
-    <span class="cta__note">The latest release on GitHub, with SHA256SUMS. After that, Moth keeps itself current.</span>
-    <svg class="cta__arrow" viewBox="0 0 48 48" aria-hidden="true"><path d="M12 36 L34 14 M16 13 H35 V32" fill="none" stroke="currentColor" stroke-width="4"/></svg>
-    <span class="cta__word">Download</span>
-  </a>
 </main>
 
 <footer class="footer wrap">
