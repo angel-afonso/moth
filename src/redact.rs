@@ -284,16 +284,25 @@ mod tests {
 
     #[test]
     fn known_token_formats_go_wherever_they_are() {
+        // Fakes in each service's format, split so the source never holds a whole token and
+        // secret scanners don't take them for real ones.
         let cases = [
-            "AKIAIOSFODNN7EXAMPLE",
-            "ghp_0123456789abcdefghijABCDEFGHIJklmnop",
-            "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEFG",
-            "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345",
-            "sk_live_51H8abcdefghijklmnop",
-            "xoxb-1234567890-abcdefghij",
-            "AIzaSyA1234567890abcdefghijklmnopqrstuv",
-            "npm_abcdefghijklmnopqrstuvwxyz0123456789",
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+            concat!("AKIA", "IOSFODNN7EXAMPLE"),
+            concat!("ghp_", "0123456789abcdefghijABCDEFGHIJklmnop"),
+            concat!(
+                "github_pat_",
+                "11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEFG"
+            ),
+            concat!("sk-ant-", "api03-abcdefghijklmnopqrstuvwxyz012345"),
+            concat!("sk_live_", "51H8abcdefghijklmnop"),
+            concat!("xoxb-", "1234567890-abcdefghij"),
+            concat!("AIza", "SyA1234567890abcdefghijklmnopqrstuv"),
+            concat!("npm_", "abcdefghijklmnopqrstuvwxyz0123456789"),
+            concat!(
+                "eyJhbGciOiJIUzI1NiJ9.",
+                "eyJzdWIiOiIxMjM0NTY3ODkwIn0.",
+                "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+            ),
         ];
         for secret in cases {
             let redacted = redact(&format!("error: bad key {secret} (401)"));
@@ -304,11 +313,15 @@ mod tests {
 
     #[test]
     fn private_keys_are_dropped_whole() {
-        let text = "before\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\nAAAA\n-----END OPENSSH PRIVATE KEY-----\nafter";
+        let text = concat!(
+            "before\n-----BEGIN OPENSSH ",
+            "PRIVATE KEY-----\nb3BlbnNzaC1rZXk\nAAAA\n-----END OPENSSH ",
+            "PRIVATE KEY-----\nafter"
+        );
         assert_eq!(clean(text), "before\n[REDACTED PRIVATE KEY]\nafter");
         // Cut off by the output limit: everything from the header on.
         assert_eq!(
-            clean("x\n-----BEGIN RSA PRIVATE KEY-----\nMIIE"),
+            clean(concat!("x\n-----BEGIN RSA ", "PRIVATE KEY-----\nMIIE")),
             "x\n[REDACTED PRIVATE KEY]"
         );
     }
@@ -368,7 +381,10 @@ mod tests {
 
     #[test]
     fn random_strings_go_but_hashes_paths_and_words_stay() {
-        let redacted = redact("key Zx8kQ2mP9vL4nR7tW1yB6cF3hJ5sD0gA was rejected");
+        let redacted = redact(concat!(
+            "key Zx8kQ2mP9vL4n",
+            "R7tW1yB6cF3hJ5sD0gA was rejected"
+        ));
         assert_eq!(redacted.text, "key [REDACTED] was rejected");
         let kept = [
             "commit 9fceb02d0ae598e95dc970b74767f19372d61af8",
@@ -393,7 +409,10 @@ mod tests {
 
     #[test]
     fn redacting_twice_changes_nothing() {
-        let once = clean("TOKEN=abc https://u:p@h ghp_0123456789abcdefghijABCDEFGHIJklmnop");
+        let once = clean(concat!(
+            "TOKEN=abc https://u:p@h ghp_",
+            "0123456789abcdefghijABCDEFGHIJklmnop"
+        ));
         assert_eq!(redact(&once).count, 0);
     }
 

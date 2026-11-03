@@ -27,14 +27,16 @@ pub fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// The extensions Windows runs without being told, from `PATHEXT`.
+/// The extensions Windows runs without being told, from `PATHEXT`. Lowercase, as programs are
+/// named (`git.exe`): `PATHEXT` says `.EXE`, and a path built with it would still find the file
+/// but not be its name.
 #[cfg(windows)]
 fn windows_extensions() -> Vec<String> {
     std::env::var("PATHEXT")
         .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
         .split(';')
         .filter_map(|ext| ext.strip_prefix('.'))
-        .map(str::to_string)
+        .map(str::to_ascii_lowercase)
         .collect()
 }
 

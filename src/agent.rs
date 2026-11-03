@@ -264,6 +264,8 @@ async fn run(command: AgentCommand, search_path: String, mut requests: Unbounded
     if !command.env.contains_key("PATH") {
         config = config.env("PATH", search_path);
     }
+    // The request being answered, told why if the connection fails during it.
+    let current = std::sync::Mutex::new(None::<UnboundedSender<Update>>);
     let result = Client
         .builder()
         .name("moth")
@@ -289,11 +291,13 @@ async fn run(command: AgentCommand, search_path: String, mut requests: Unbounded
                     .await?;
                 while let Some(request) = requests.next().await {
                     let updates = request.updates.clone();
+                    *current.lock().unwrap() = Some(updates.clone());
                     if let Err(err) = prompt(&connection, request).await {
                         updates
                             .unbounded_send(Update::Failed(explain(&command.name, message(&err))))
                             .ok();
                     }
+                    *current.lock().unwrap() = None;
                 }
                 Ok(())
             },
@@ -302,6 +306,10 @@ async fn run(command: AgentCommand, search_path: String, mut requests: Unbounded
     if let Err(err) = result {
         crate::log::error(format!("agent {}: {err}", command.program.display()));
         // Whatever was waiting won't get an answer from this process.
+        let failed = Update::Failed(explain(&command.name, message(&err)));
+        if let Some(updates) = current.lock().unwrap().take() {
+            updates.unbounded_send(failed).ok();
+        }
         requests.close();
         while let Ok(request) = requests.try_recv() {
             request
@@ -330,13 +338,22 @@ async fn prompt(
             session.send_prompt(prompt)?;
             let session_id = session.session_id().clone();
             let to_agent = session.connection().clone();
+            let mut cancelled = false;
             loop {
-                let next = Box::pin(session.read_update());
-                let update = match future::select(next, &mut cancel).await {
-                    Either::Left((update, _)) => update?,
-                    Either::Right(_) => {
-                        to_agent.send_notification(CancelNotification::new(session_id))?;
-                        return Ok(());
+                let update = if cancelled {
+                    session.read_update().await?
+                } else {
+                    let next = Box::pin(session.read_update());
+                    match future::select(next, &mut cancel).await {
+                        Either::Left((update, _)) => update?,
+                        Either::Right(_) => {
+                            // The agent still ends the turn, with `cancelled`, and the session
+                            // has to be there to take it: without it the connection fails.
+                            to_agent
+                                .send_notification(CancelNotification::new(session_id.clone()))?;
+                            cancelled = true;
+                            continue;
+                        }
                     }
                 };
                 match update {
@@ -734,7 +751,11 @@ mod tests {
         let failure = Failure {
             command: "curl -H 'Authorization: Bearer abc123' https://api.example.com".into(),
             exit_code: Some(22),
-            output: "curl: (22) The requested URL returned error: 401\nX-Token: ghp_0123456789abcdefghijABCDEFGHIJklmnop".into(),
+            output: concat!(
+                "curl: (22) The requested URL returned error: 401\nX-Token: ghp_",
+                "0123456789abcdefghijABCDEFGHIJklmnop"
+            )
+            .into(),
         };
         let prompt = fix_prompt(&environment(), &failure);
         assert!(!prompt.text.contains("abc123"));
@@ -774,7 +795,10 @@ mod tests {
     fn ask_prompts_redact_what_the_user_typed() {
         let prompt = ask_prompt(
             &environment(),
-            "log in with token sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345",
+            concat!(
+                "log in with token sk-ant-",
+                "api03-abcdefghijklmnopqrstuvwxyz012345"
+            ),
             &["Cargo.toml".into(), "src".into()],
             None,
         );
@@ -872,5 +896,78 @@ mod tests {
         );
         assert_eq!(explain("Codex", "Rate limited".into()), "Rate limited");
         assert_eq!(explain("my-agent", "Not logged in".into()), "Not logged in");
+    }
+
+    /// An ACP agent that takes a second to answer each prompt, or ends the turn as `cancelled`
+    /// if `session/cancel` comes first.
+    #[cfg(unix)]
+    const SLOW_AGENT: &str = r#"#!/usr/bin/env python3
+# A slow ACP agent: each prompt waits up to 1 s for session/cancel, then answers.
+import json, sys, select
+def send(msg):
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+n = 0
+while True:
+    line = sys.stdin.readline()
+    if not line: sys.exit(0)
+    msg = json.loads(line); method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":msg["id"],"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}})
+    elif method == "session/new":
+        n += 1
+        send({"jsonrpc":"2.0","id":msg["id"],"result":{"sessionId":"s%d" % n}})
+    elif method == "session/prompt":
+        sid = msg["params"]["sessionId"]; cancelled = False
+        ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+        if ready:
+            other = json.loads(sys.stdin.readline())
+            cancelled = other.get("method") == "session/cancel"
+        if not cancelled:
+            send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":sid,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"```sh\nls -d */\n```"}}}})
+        send({"jsonrpc":"2.0","id":msg["id"],"result":{"stopReason":"cancelled" if cancelled else "end_turn"}})
+"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_request_leaves_the_agent_working() {
+        use std::os::unix::fs::PermissionsExt as _;
+        if crate::process::which("python3", &std::env::var("PATH").unwrap()).is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("moth-slow-agent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("slow-agent");
+        std::fs::write(&program, SLOW_AGENT).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command = AgentCommand {
+            program,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            name: "Slow".into(),
+        };
+        let worker = Worker::start(command, std::env::var("PATH").unwrap()).unwrap();
+        let request = |prompt: &str| {
+            let (updates_tx, updates) = unbounded();
+            let (cancel_tx, cancel) = oneshot::channel();
+            let request = Request {
+                prompt: prompt.into(),
+                cwd: dir.clone(),
+                updates: updates_tx,
+                cancel,
+            };
+            worker.requests.unbounded_send(request).unwrap();
+            (updates, cancel_tx)
+        };
+        // Closing the panel while the agent works, then asking again.
+        let (_, first) = request("first");
+        thread::sleep(Duration::from_millis(300));
+        drop(first);
+        let (second, _second) = request("second");
+        let updates: Vec<Update> = futures::executor::block_on(second.collect());
+        assert_eq!(
+            updates,
+            [Update::Text("```sh\nls -d */\n```".into()), Update::Done]
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

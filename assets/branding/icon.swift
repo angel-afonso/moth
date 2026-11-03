@@ -4,7 +4,7 @@
 import AppKit
 
 let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    .appendingPathComponent("moth-terminal-v4.png")
+    .appendingPathComponent("moth-terminal-transparent.png")
 guard let artwork = NSImage(contentsOf: source) else {
     fatalError("Cannot load icon artwork at \(source.path)")
 }

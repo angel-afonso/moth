@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo --version)",
+      "Bash(rustc --version)",
+      "Bash(xcode-select -p)",
+      "Read(//Users/angel/.cargo/registry/src/**)"
+    ]
+  }
+}

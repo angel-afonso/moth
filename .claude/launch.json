@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "const h=require('http'),f=require('fs'),p=require('path');const R='/Volumes/EXTERNAL_DISK/work/personal/terminalapp/site';const T={'.html':'text/html','.css':'text/css','.js':'text/javascript','.jpg':'image/jpeg','.png':'image/png','.mp4':'video/mp4','.ttf':'font/ttf','.json':'application/json'};h.createServer((q,s)=>{let u=decodeURIComponent(q.url.split('?')[0]);if(u.endsWith('/'))u+='index.html';const fp=p.join(R,u);if(!fp.startsWith(R))return s.writeHead(403).end();f.stat(fp,(e,st)=>{if(e)return s.writeHead(404).end('not found');const rg=q.headers.range;if(rg){const[a,b]=rg.replace('bytes=','').split('-');const st0=+a,en=b?+b:st.size-1;s.writeHead(206,{'Content-Type':T[p.extname(fp)]||'application/octet-stream','Content-Range':`bytes ${st0}-${en}/${st.size}`,'Accept-Ranges':'bytes','Content-Length':en-st0+1});return f.createReadStream(fp,{start:st0,end:en}).pipe(s)}s.writeHead(200,{'Content-Type':T[p.extname(fp)]||'application/octet-stream','Content-Length':st.size,'Accept-Ranges':'bytes'});f.createReadStream(fp).pipe(s)})}).listen(process.env.PORT||4317)"],
+      "port": 4317
+    }
+  ]
+}
