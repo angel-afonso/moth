@@ -1,6 +1,6 @@
 [package]
 name = "moth"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "A terminal for macOS, Linux and Windows that reads your shell, built with gpui and Zed's UI"
 homepage = "https://angel-afonso.github.io/moth/"
