@@ -35,6 +35,40 @@ pub struct Config {
     /// the command to run, or `false` to turn it off; unset, the first one found on the shell's
     /// PATH (see `agent::resolve`).
     pub agent: Option<AgentSetting>,
+    /// The agent's model and its settings (see `AgentOptions`); unset, the quickest ones.
+    pub agent_options: AgentOptions,
+}
+
+/// How the agent answers. By default its lightest model, without reasoning where the agent
+/// allows it and at its lowest effort otherwise, so the answer comes in a second or two.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct AgentOptions {
+    /// A model the agent offers, by its id or its name (`"sonnet"`, `"6 Luna"`), or `"auto"`
+    /// (default) for the lightest.
+    pub model: Option<String>,
+    /// Let the model reason before answering (no by default). Off, Claude runs without
+    /// thinking; agents that can't turn it off use their lowest effort.
+    pub reasoning: Option<bool>,
+    /// A reasoning effort the model offers (`"low"`, `"medium"`…), or `"auto"` (default) for
+    /// the lowest.
+    pub effort: Option<String>,
+    /// Any other option the agent announces, by its id: `"fast": "on"`.
+    #[serde(flatten)]
+    pub other: BTreeMap<String, AgentOptionValue>,
+}
+
+impl AgentOptions {
+    pub fn reasoning(&self) -> bool {
+        self.reasoning.unwrap_or(false)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum AgentOptionValue {
+    Bool(bool),
+    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -80,7 +114,8 @@ const TEMPLATE: &str = r#"{
   "notifications": true,
   "tab_completion": "shell",
   "check_updates": true,
-  "agent": null
+  "agent": null,
+  "agent_options": { "model": "auto", "reasoning": false, "effort": "auto" }
 }
 "#;
 
@@ -205,5 +240,23 @@ mod tests {
         };
         assert_eq!(agent.args, ["--acp"]);
         assert!(parse(r#"{"agent": {"comand": "gemini"}}"#).is_err());
+
+        assert!(!config.agent_options.reasoning());
+        let options = parse(
+            r#"{"agent_options": {"model": "sonnet", "reasoning": true, "effort": "medium", "fast": "on", "verbose": false}}"#,
+        )
+        .unwrap()
+        .agent_options;
+        assert_eq!(options.model.as_deref(), Some("sonnet"));
+        assert!(options.reasoning());
+        assert_eq!(options.effort.as_deref(), Some("medium"));
+        assert_eq!(
+            options.other.get("fast"),
+            Some(&AgentOptionValue::Text("on".into()))
+        );
+        assert_eq!(
+            options.other.get("verbose"),
+            Some(&AgentOptionValue::Bool(false))
+        );
     }
 }

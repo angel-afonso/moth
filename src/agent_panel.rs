@@ -1,7 +1,8 @@
 //! The agent's panel at the prompt: ⌘I asks for a command in plain words, ⌘⇧I asks for a fix
-//! for the command that just failed. The answer streams in, ⏎ puts the command on the prompt
-//! and ⌘⏎ runs it; nothing runs without one of those. The footer says how many secrets were
-//! taken out, and "What was sent" shows the context exactly as the agent got it.
+//! for the command that just failed. The header says first that the answer comes from AI, and
+//! which model gives it. The answer streams in, ⏎ puts the command on the prompt and ⌘⏎ runs
+//! it; nothing runs without one of those. The footer says how many secrets were taken out, and
+//! "What was sent" shows the context exactly as the agent got it.
 
 use futures::StreamExt as _;
 use gpui::{
@@ -61,6 +62,10 @@ pub struct AgentPanel {
     state: State,
     /// The answer as it arrives.
     reply: String,
+    /// The model answering, as the agent names it ("Haiku 5.5 · low effort").
+    model: Option<String>,
+    /// Options from the settings that couldn't be set.
+    warnings: Vec<String>,
     sent: Option<Prompt>,
     show_sent: bool,
     _pending: Option<Task<()>>,
@@ -136,6 +141,8 @@ impl AgentPanel {
             failure,
             state: State::Editing,
             reply: String::new(),
+            model: None,
+            warnings: Vec::new(),
             sent: None,
             show_sent: false,
             _pending: None,
@@ -171,13 +178,17 @@ impl AgentPanel {
         let mut pending = agent::ask(&command, &search_path, prompt.text.clone(), cx);
         self.sent = Some(prompt);
         self.reply.clear();
+        self.model = None;
+        self.warnings.clear();
         self.state = State::Waiting;
         self._pending = Some(cx.spawn(async move |this, cx| {
             // `pending` lives in this task: closing the panel drops it and cancels the turn.
             while let Some(update) = pending.updates.next().await {
-                let finished = !matches!(update, Update::Text(_));
+                let finished = matches!(update, Update::Done | Update::Failed(_));
                 let alive = this.update(cx, |this, cx| {
                     match update {
+                        Update::Model(model) => this.model = Some(model),
+                        Update::Warning(warning) => this.warnings.push(warning),
                         Update::Text(text) => this.reply.push_str(&text),
                         Update::Done => {
                             this.state = State::Answered(agent::parse_reply(&this.reply))
@@ -284,6 +295,19 @@ impl Focusable for AgentPanel {
     }
 }
 
+/// "AI", before anything else in the header: what's below comes from a model, not from Moth.
+pub fn ai_badge(accent: gpui::Hsla) -> impl IntoElement {
+    div()
+        .flex_none()
+        .px(px(5.))
+        .rounded(px(4.))
+        .bg(tint(accent, 0.16))
+        .text_color(accent)
+        .text_size(px(10.))
+        .font_weight(gpui::FontWeight::BOLD)
+        .child("AI")
+}
+
 /// The shell's PATH (the app's own when it hasn't said), where the agent is looked for.
 fn search_path(terminal: &Entity<Terminal>, cx: &App) -> String {
     terminal
@@ -365,6 +389,7 @@ impl Render for AgentPanel {
 
         let header = h_flex()
             .gap(px(8.))
+            .child(ai_badge(accent))
             .child(
                 Icon::new(self.icon())
                     .size(IconSize::Small)
@@ -375,8 +400,39 @@ impl Render for AgentPanel {
                     .size(LabelSize::Small)
                     .weight(gpui::FontWeight::SEMIBOLD),
             )
+            .when_some(self.model.clone(), |el, model| {
+                el.child(
+                    div().min_w_0().child(
+                        Label::new(model)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Placeholder)
+                            .truncate(),
+                    ),
+                )
+            })
             .child(div().flex_1())
             .child(hint("esc".into(), "close"));
+
+        let warnings = (!self.warnings.is_empty()).then(|| {
+            v_flex()
+                .gap(px(2.))
+                .children(self.warnings.iter().map(|warning| {
+                    h_flex()
+                        .gap(px(6.))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                Label::new(format!("agent_options: {warning}"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                }))
+        });
 
         let failed_command = (self.task == AgentTask::Fix)
             .then(|| self.failure.clone())
@@ -597,6 +653,7 @@ impl Render for AgentPanel {
             .rounded(px(10.))
             .shadow_lg()
             .child(header)
+            .children(warnings)
             .children(failed_command)
             .children(input)
             .children(ask_hint)

@@ -146,6 +146,19 @@ Commands interrupted with ⌃C (or another signal), and `grep`, `diff` and `test
 
 For anything else there's the agent, any coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP): Claude Code, Codex, Gemini CLI… With nothing fixed locally, the empty prompt after a failure shows ⌘⇧I ("Fix Last Command with Agent"), which sends the command, its exit code and the end of its output and asks for a corrected command. ⌘I ("Ask Agent for a Command…") opens a field to describe what you want in plain words ("find files over 100 MB modified this week"); whatever was typed at the prompt starts in it. The answer streams into a panel at the prompt: ⏎ puts the command on the prompt to review and ⌘⏎ runs it. Nothing runs on its own, and esc closes the panel.
 
+The panel opens with an **AI** label, so it's clear from the start that what follows comes from a model, followed by the model answering and how. To answer in a second or two, each request runs on the agent's lightest model without reasoning: Haiku with thinking off for Claude; for Codex, whose models always reason a little, the Luna model at its lowest effort. Moth picks them from the options the agent announces (ACP session config options), by what their names and descriptions say, so new models are picked up without an update. An agent that announces none keeps its own model. `agent_options` in the settings chooses them instead:
+
+```json
+{ "agent_options": { "model": "sonnet", "reasoning": true, "effort": "medium" } }
+```
+
+- `model`: a model the agent offers, by its id or its name (`"sonnet"`, `"6 Luna"`), or `"auto"` (the default) for the lightest.
+- `reasoning`: `false` (the default) answers without reasoning where the agent allows it (Claude) and at the lowest effort elsewhere; `true` lets the model reason.
+- `effort`: a reasoning effort the model offers (`"low"`, `"medium"`, `"high"`…), or `"auto"` (the default) for the lowest.
+- Any other option the agent announces, by its id, like Codex's `"fast-mode": "on"`. The permission mode can't be set: the agent stays without tools.
+
+What the agent doesn't offer is left as it was, and the panel says why.
+
 What the agent gets is kept to a minimum and checked for secrets first:
 
 - Only the failed command, its exit code and its last 60 lines (6 KB) of output; for ⌘I, the request, the names of the files in the current folder (not their contents) and the previous command. Plus the folder (with your home folder as `~`), the git branch, the shell and the OS. Never history, environment variables or files.
@@ -204,6 +217,7 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
 - `check_updates`: look for new releases automatically (on by default; see [Updates](#updates)).
 - `agent`: the ACP agent for ⌘I and ⌘⇧I: `"claude"`, `"codex"`, `"gemini"`, `{"command": …, "args": […], "env": {…}}` for another one, or `false` to turn it off; unset, the first one found on the PATH (see [Fixes and the agent](#fixes-and-the-agent)).
+- `agent_options`: the agent's model, `reasoning` (`false` by default), `effort` and any other option it announces; unset, the lightest model without reasoning (see [Fixes and the agent](#fixes-and-the-agent)).
 
 The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
 

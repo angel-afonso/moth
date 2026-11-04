@@ -979,7 +979,7 @@ impl TerminalView {
             return None;
         }
         let line = terminal.shell().line.as_ref()?;
-        let (key, label, ghost) = match terminal.fix_suggestion() {
+        let (key, label, ghost, ai) = match terminal.fix_suggestion() {
             Some(rest) => {
                 let reason = failure
                     .fix
@@ -989,6 +989,7 @@ impl TerminalView {
                     "→".to_string(),
                     format!("fix · {reason}"),
                     rest.chars().count(),
+                    false,
                 )
             }
             None if line.buffer.is_empty() && failure.failure.worth_fixing() => {
@@ -1005,6 +1006,7 @@ impl TerminalView {
                     shortcuts::label("cmd-shift-i"),
                     format!("fix with {}", agent.name),
                     0,
+                    true,
                 )
             }
             None => return None,
@@ -1027,6 +1029,7 @@ impl TerminalView {
                             .bg(ui.surface)
                             .border_1()
                             .border_color(ui.border)
+                            .when(ai, |el| el.child(crate::agent_panel::ai_badge(ui.accent)))
                             .child(Kbd::new(key))
                             .child(
                                 Label::new(label)
