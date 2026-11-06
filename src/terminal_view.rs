@@ -1863,6 +1863,79 @@ impl GridLayout {
 
 /// Left-margin bar for failed commands, plus background and accent bar for the
 /// command block selected with ⌘↑/⌘↓. Only looks at visible rows and those below.
+/// Where each visible row is drawn when it holds only a picture made of blocks or sextants
+/// (a QR code, three rows or more): its top, from the grid's origin, and its height. These
+/// pictures are made for cells twice as tall as wide and ours are taller, which stretches
+/// them, so their rows are drawn shorter from the picture's top down and a QR code stays
+/// square. The text around keeps its place in the grid. `None` for every other row.
+fn picture_rows<T>(
+    term: &Term<T>,
+    lines: usize,
+    display_offset: i32,
+    cell_width: f32,
+    line_height: f32,
+) -> Vec<Option<(f32, f32)>> {
+    const MIN_ROWS: i32 = 3;
+    // Rows above the screen count too, so a picture half scrolled out doesn't move.
+    const MAX_ROWS: i32 = 200;
+    let grid = term.grid();
+    let first = -(grid.history_size() as i32);
+    let last = grid.screen_lines() as i32 - 1;
+    let mut memo = HashMap::new();
+    let mut grain = |line: i32| -> Option<glyphs::Grain> {
+        if !(first..=last).contains(&line) {
+            return None;
+        }
+        *memo.entry(line).or_insert_with(|| {
+            let row = &grid[Line(line)];
+            let mut finest = None;
+            for column in 0..grid.columns() {
+                let c = row[alacritty_terminal::index::Column(column)].c;
+                if c != ' ' {
+                    finest = finest.max(Some(glyphs::grain(c)?));
+                }
+            }
+            finest
+        })
+    };
+
+    let mut rows = vec![None; lines];
+    let mut visible = 0;
+    while visible < lines {
+        let line = visible as i32 - display_offset;
+        let Some(mut finest) = grain(line) else {
+            visible += 1;
+            continue;
+        };
+        let mut top = line;
+        while line - top < MAX_ROWS
+            && let Some(above) = grain(top - 1)
+        {
+            finest = finest.max(above);
+            top -= 1;
+        }
+        let mut bottom = line;
+        while bottom - line < MAX_ROWS
+            && let Some(below) = grain(bottom + 1)
+        {
+            finest = finest.max(below);
+            bottom += 1;
+        }
+        let height = glyphs::picture_row_height(cell_width, line_height, finest);
+        if bottom - top + 1 >= MIN_ROWS && height < line_height {
+            let top_y = (top + display_offset) as f32 * line_height;
+            for row in line..=bottom {
+                let at = (row + display_offset) as usize;
+                if at < lines {
+                    rows[at] = Some((top_y + (row - top) as f32 * height, height));
+                }
+            }
+        }
+        visible = (bottom + display_offset + 1).max(visible as i32 + 1) as usize;
+    }
+    rows
+}
+
 fn block_decorations(
     term: &Term<Listener>,
     selected: Option<blocks::Anchor>,
@@ -2064,6 +2137,24 @@ fn layout_grid(
     let scale = window.scale_factor();
     let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
     let stroke = (f32::from(cell_width) * 0.12 * scale).round().max(1.) / scale;
+    let pictures = picture_rows(
+        &term,
+        lines,
+        display_offset,
+        f32::from(cell_width),
+        f32::from(line_height),
+    );
+    // A cell's own rectangle, or the shorter one of its picture row.
+    let cell_box = |line: usize, column: usize, width: usize| {
+        let at = cell_origin(line, column);
+        let width = cell_width * width as f32;
+        match pictures.get(line).copied().flatten() {
+            Some((top, height)) => {
+                Bounds::new(point(at.x, origin.y + px(top)), size(width, px(height)))
+            }
+            None => Bounds::new(at, size(width, line_height)),
+        }
+    };
     let mut shaped = Vec::new();
     let mut current: Option<Segment> = None;
     let flush = |segment: Option<Segment>, shaped: &mut Vec<(Point<Pixels>, ShapedLine)>| {
@@ -2100,13 +2191,7 @@ fn layout_grid(
             fg = transparent_black();
         }
         if !default_bg {
-            backgrounds.push(fill(
-                Bounds::new(
-                    cell_origin(line, column),
-                    size(cell_width * width as f32, line_height),
-                ),
-                bg,
-            ));
+            backgrounds.push(fill(cell_box(line, column, width), bg));
         }
         // The ⌘F match in yellow, so it isn't confused with the selection.
         let highlight = if search_match
@@ -2148,14 +2233,15 @@ fn layout_grid(
             style.underline = Some((style.fg, false));
         }
 
+        let glyph_box = cell_box(line, column, width);
         if let Some(rects) = glyphs::custom_glyph(
             cell.c,
-            f32::from(cell_width) * width as f32,
-            f32::from(line_height),
+            f32::from(glyph_box.size.width),
+            f32::from(glyph_box.size.height),
             stroke,
         ) {
             flush(current.take(), &mut shaped);
-            let at = cell_origin(line, column);
+            let at = glyph_box.origin;
             for r in rects {
                 let top_left = point(snap(at.x + px(r.x0)), snap(at.y + px(r.y0)));
                 let bottom_right = point(snap(at.x + px(r.x1)), snap(at.y + px(r.y1)));
@@ -2680,6 +2766,46 @@ mod tests {
             alacritty_terminal::vte::ansi::Processor::new();
         parser.advance(&mut term, text.as_bytes());
         term
+    }
+
+    #[test]
+    fn pictures_drawn_with_blocks_keep_their_proportions() {
+        // What Expo prints: half blocks, then text; a box and a bar don't count.
+        let term = search_term(
+            "› Scan\r\n▄▄▄▄\r\n█▀ █\r\n█▄▀█\r\n▀▀▀▀\r\nMetro\r\n╭──╮\r\n│  │\r\n╰──╯\r\n▂▄█▆\r\n▀▀",
+            10,
+            12,
+        );
+        let rows = super::picture_rows(&term, 12, 0, 8., 22.);
+        // Rows 16 px tall (a half block, 8×8) from where the picture starts.
+        assert_eq!(rows[0], None);
+        assert_eq!(rows[1], Some((22., 16.)));
+        assert_eq!(rows[2], Some((38., 16.)));
+        assert_eq!(rows[4], Some((70., 16.)));
+        assert!(rows[5..].iter().all(Option::is_none));
+
+        // Scrolled two rows down, the picture stays where it was in the text.
+        let mut term = search_term(&"\r\n".repeat(20), 10, 6);
+        let mut parser: alacritty_terminal::vte::ansi::Processor =
+            alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut term, "a\r\n🬀🬀\r\n🬀🬀\r\n🬀🬀\r\n🬀🬀\r\nb\r\n".as_bytes());
+        let rows = super::picture_rows(&term, 6, 0, 8., 22.);
+        let scrolled = super::picture_rows(&term, 6, 2, 8., 22.);
+        // Sextants: 12 px rows, so a sextant is 4×4.
+        assert_eq!(rows[0].map(|(_, h)| h), Some(12.));
+        assert_eq!(rows[1].unwrap().0 - rows[0].unwrap().0, 12.);
+        // "a" and the row above it come into view and the picture moves down two rows.
+        assert_eq!(scrolled[..2], [None, None]);
+        assert_eq!(scrolled[2].unwrap().0 - rows[0].unwrap().0, 2. * 22.);
+        assert_eq!(scrolled[3].unwrap().0 - scrolled[2].unwrap().0, 12.);
+
+        // Scrolled so the picture's first two rows are above the screen: it doesn't move.
+        let mut term = search_term(&"\r\n".repeat(20), 10, 3);
+        parser.advance(&mut term, "🬀🬀\r\n🬀🬀\r\n🬀🬀\r\n🬀🬀\r\nb\r\n".as_bytes());
+        let rows = super::picture_rows(&term, 3, 1, 8., 22.);
+        // Screen line 0 is the picture's third row (line -2), drawn 24 px below its top,
+        // which is 2 rows (44 px) above the screen.
+        assert_eq!(rows[0], Some((-44. + 24., 12.)));
     }
 
     #[test]

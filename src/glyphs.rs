@@ -34,6 +34,36 @@ pub fn custom_glyph(c: char, w: f32, h: f32, stroke: f32) -> Option<Vec<Rect>> {
     }
 }
 
+/// How finely a character splits the cell's height when it's a pixel of a picture drawn in
+/// text, like a QR code: whole (█ ▌ ▐), in halves (▀ ▄ and the quadrants) or in thirds (the
+/// sextants). Other blocks (eighths, shades) belong to bars and charts, not pictures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Grain {
+    Whole,
+    Halves,
+    Thirds,
+}
+
+pub fn grain(c: char) -> Option<Grain> {
+    match c as u32 {
+        0x2588 | 0x258C | 0x2590 => Some(Grain::Whole),
+        0x2580 | 0x2584 | 0x2596..=0x259F => Some(Grain::Halves),
+        0x1FB00..=0x1FB3B => Some(Grain::Thirds),
+        _ => None,
+    }
+}
+
+/// Height of a row of a picture made of `grain` pixels in a `w`-wide cell: what the pictures
+/// are made for, a cell twice as tall as it is wide, and with sextants square pixels, so a QR
+/// code is square in either. Never taller than the row really is (`h`).
+pub fn picture_row_height(w: f32, h: f32, grain: Grain) -> f32 {
+    let height = match grain {
+        Grain::Thirds => w * 1.5,
+        Grain::Whole | Grain::Halves => w * 2.,
+    };
+    height.min(h)
+}
+
 /// A 2×3 grid of blocks, used for QR codes (Expo's) and pictures drawn in text. Each character
 /// is one of the 64 patterns, numbered by its blocks (bit 0 the upper left, bit 1 the upper
 /// right, and so on down) in order, minus four that exist elsewhere: none (a space), the left
@@ -282,6 +312,23 @@ mod tests {
         let heavy = custom_glyph('━', W, H, 1.).unwrap();
         assert_eq!(heavy[0].y1 - heavy[0].y0, 2.);
         assert_eq!(custom_glyph('═', W, H, 1.).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn picture_pixels_come_out_square() {
+        assert_eq!(grain('█'), Some(Grain::Whole));
+        assert_eq!(grain('▀'), Some(Grain::Halves));
+        assert_eq!(grain('▟'), Some(Grain::Halves));
+        assert_eq!(grain('\u{1FB3B}'), Some(Grain::Thirds));
+        assert_eq!(grain('▂'), None);
+        assert_eq!(grain('░'), None);
+        assert_eq!(grain('│'), None);
+        // A half block is a column wide and half a row tall.
+        assert_eq!(picture_row_height(W, H, Grain::Halves) / 2., W);
+        // A sextant is half a column wide and a third of a row tall.
+        assert_eq!(picture_row_height(W, H, Grain::Thirds) / 3., W / 2.);
+        // Rows already short enough stay as they are.
+        assert_eq!(picture_row_height(W, 12., Grain::Halves), 12.);
     }
 
     #[test]
