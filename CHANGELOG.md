@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/angel-afonso/moth/compare/v0.3.0...v0.4.0) - 2026-11-08
+
+### Added
+
+- recover tabs when their volume comes back, and harden the shell integration
+- *(agent)* label answers as AI and answer without reasoning
+
+### Fixed
+
+- *(links)* open file:// URLs with a drive letter on Windows
+- *(agent)* keep requests alive until the agent answers
+- *(update)* install the Linux binary, not the folder that holds it
+- *(terminal)* keep the proportions of pictures drawn with blocks
+
 ## [0.3.0](https://github.com/angel-afonso/moth/compare/v0.2.0...v0.3.0) - 2026-11-03
 
 ### Added
