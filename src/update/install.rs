@@ -125,16 +125,26 @@ fn extract(archive: &Path, dir: &Path) -> Result<(), Error> {
     run(&mut command, "unpack the update")
 }
 
-/// `name` at the top of `dir` or one folder down (the archives wrap the app
-/// in a `moth-<version>-<target>` folder).
+/// `name` at the top of `dir` or one folder down (the archives wrap the app in a folder:
+/// `moth-<version>-<target>/Moth.app` on macOS, `moth/moth` on Linux, `Moth/moth.exe` on
+/// Windows). A `.app` must be a folder and anything else a file, so Linux's `moth` folder is
+/// never taken for the `moth` binary inside it.
 fn find(dir: &Path, name: &str) -> Result<PathBuf, Error> {
+    let bundle = name.ends_with(".app");
+    let is_payload = |path: &Path| {
+        if bundle {
+            path.is_dir()
+        } else {
+            path.is_file()
+        }
+    };
     let direct = dir.join(name);
-    if direct.exists() {
+    if is_payload(&direct) {
         return Ok(direct);
     }
     for entry in std::fs::read_dir(dir)? {
         let candidate = entry?.path().join(name);
-        if candidate.exists() {
+        if is_payload(&candidate) {
             return Ok(candidate);
         }
     }
@@ -306,6 +316,15 @@ mod tests {
     }
 
     #[test]
+    fn takes_the_binary_not_the_folder_of_the_same_name() {
+        let dir = tempdir::Dir::new();
+        std::fs::create_dir_all(dir.path().join("moth")).unwrap();
+        let app = dir.path().join("moth/moth");
+        std::fs::write(&app, "").unwrap();
+        assert_eq!(find(dir.path(), "moth").unwrap(), app);
+    }
+
+    #[test]
     fn reads_the_team_identifier() {
         let signed = "Executable=/Applications/Moth.app/Contents/MacOS/moth\n\
                       Authority=Developer ID Application: Someone (C6GRS8VQVL)\n\
@@ -318,11 +337,18 @@ mod tests {
         assert_eq!(parse_team_identifier("Signature=adhoc\n"), None);
     }
 
-    /// An archive like the release's, made with the same tools: the app in a
-    /// `moth-<version>-<target>` folder next to a README.
+    /// An archive like the release's, made with the same tools: the app in the folder the
+    /// release workflow wraps it in, next to a README.
     fn release_archive(dir: &Path, name: &str, contents: &str) -> PathBuf {
         let source = dir.join("source");
-        let folder = source.join("moth-v0.3.0-test");
+        let wrapper = if name.ends_with(".app") {
+            "moth-v0.3.0-test"
+        } else if cfg!(windows) {
+            "Moth"
+        } else {
+            "moth"
+        };
+        let folder = source.join(wrapper);
         if name.ends_with(".app") {
             std::fs::create_dir_all(folder.join(name).join("Contents")).unwrap();
             std::fs::write(folder.join(name).join("Contents/version"), contents).unwrap();
@@ -345,7 +371,7 @@ mod tests {
                 .arg(dir.join("archive.zip"))
                 .arg("-C")
                 .arg(&source)
-                .arg("moth-v0.3.0-test");
+                .arg(wrapper);
             command
         };
         run(&mut command, "pack the test archive").unwrap();
