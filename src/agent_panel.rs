@@ -4,7 +4,6 @@
 //! it; nothing runs without one of those. The footer says how many secrets were taken out, and
 //! "What was sent" shows the context exactly as the agent got it.
 
-use futures::StreamExt as _;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton,
     Subscription, Task, Window, div, prelude::*, px,
@@ -183,7 +182,7 @@ impl AgentPanel {
         self.state = State::Waiting;
         self._pending = Some(cx.spawn(async move |this, cx| {
             // `pending` lives in this task: closing the panel drops it and cancels the turn.
-            while let Some(update) = pending.updates.next().await {
+            while let Some(update) = pending.next().await {
                 let finished = matches!(update, Update::Done | Update::Failed(_));
                 let alive = this.update(cx, |this, cx| {
                     match update {
@@ -191,7 +190,16 @@ impl AgentPanel {
                         Update::Warning(warning) => this.warnings.push(warning),
                         Update::Text(text) => this.reply.push_str(&text),
                         Update::Done => {
-                            this.state = State::Answered(agent::parse_reply(&this.reply))
+                            let reply = agent::parse_reply(&this.reply);
+                            this.state = if reply.command.is_none() && reply.explanation.is_empty()
+                            {
+                                State::Failed(format!(
+                                    "{} ended without an answer.",
+                                    this.agent_name()
+                                ))
+                            } else {
+                                State::Answered(reply)
+                            }
                         }
                         Update::Failed(why) => this.state = State::Failed(why),
                     }
