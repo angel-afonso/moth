@@ -1,11 +1,15 @@
 //! Open windows, tabs and panes, so they come back the same way when the app is relaunched.
 //! Folders and layout are saved, not processes or what was on screen.
 //!
-//! Each window registers its part in a global store and the file is rewritten whenever
-//! something changes. Closing a window by hand removes it from the store; quitting with ⌘Q
+//! Each window registers its part in a global store and the file is rewritten shortly after
+//! something changes (and on quit). Closing a window by hand removes it from the store; quitting with ⌘Q
 //! doesn't, so everything that was open comes back next time.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
 
 use gpui::{App, EntityId, Global};
 use serde::{Deserialize, Serialize};
@@ -55,13 +59,17 @@ fn clean(session: Session) -> Session {
     let windows = session
         .windows
         .into_iter()
-        .filter(|window| !window.tabs.is_empty())
-        .map(|mut window| {
-            for tab in &mut window.tabs {
-                tab.layout = tab.layout.clone().normalized();
-            }
-            window.active = window.active.min(window.tabs.len() - 1);
-            window
+        .filter_map(|mut window| {
+            window.tabs = std::mem::take(&mut window.tabs)
+                .into_iter()
+                .filter_map(|mut tab| {
+                    tab.layout = tab.layout.normalized()?;
+                    Some(tab)
+                })
+                .collect();
+            let last = window.tabs.len().checked_sub(1)?;
+            window.active = window.active.min(last);
+            Some(window)
         })
         .collect();
     Session { windows }
@@ -107,23 +115,74 @@ fn write(cx: &mut App) {
         return;
     }
     store.written = Some(session.clone());
+    // Moving or resizing a window changes the session on every frame: the file is written
+    // once things settle, with whatever is latest by then.
+    let mut pending = lock(&PENDING);
+    pending.session = Some(session);
+    if pending.scheduled {
+        return;
+    }
+    pending.scheduled = true;
+    drop(pending);
+    let executor = cx.background_executor().clone();
     cx.background_executor()
         .spawn(async move {
-            if let Err(err) = save(&session) {
-                crate::log::error(format!("couldn't save the session: {err}"));
-            }
+            executor.timer(SAVE_DELAY).await;
+            save_pending(true);
         })
         .detach();
 }
 
+/// The session waiting to be written, and whether a write is on its way.
+struct Pending {
+    session: Option<Session>,
+    scheduled: bool,
+}
+
+static PENDING: Mutex<Pending> = Mutex::new(Pending {
+    session: None,
+    scheduled: false,
+});
+
+/// Held while the file is written, so writes never overlap.
+static WRITING: Mutex<()> = Mutex::new(());
+
+const SAVE_DELAY: Duration = Duration::from_millis(300);
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Writes the session waiting to be written, if there is one. `scheduled`: called by the
+/// write `write` scheduled, which is then done.
+fn save_pending(scheduled: bool) {
+    let _writing = lock(&WRITING);
+    let session = {
+        let mut pending = lock(&PENDING);
+        if scheduled {
+            pending.scheduled = false;
+        }
+        pending.session.take()
+    };
+    if let Some(session) = session
+        && let Err(err) = save(&session)
+    {
+        crate::log::error(format!("couldn't save the session: {err}"));
+    }
+}
+
+/// Writes what's still waiting before the app quits.
+pub fn init(cx: &mut App) {
+    cx.on_app_quit(|_| {
+        save_pending(false);
+        async {}
+    })
+    .detach();
+}
+
 fn save(session: &Session) -> anyhow::Result<()> {
     let path = path().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(session)?)?;
-    std::fs::rename(tmp, path)?;
+    crate::state::write_atomic(&path, &serde_json::to_vec_pretty(session)?)?;
     Ok(())
 }
 

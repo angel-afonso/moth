@@ -107,12 +107,46 @@ pub fn recent_dirs() -> Vec<PathBuf> {
 
 /// Saves `cwd` as the last folder and moves it to the front of the recent ones.
 pub fn record_dir(cwd: &Path) {
+    // Each pane records its folder from the background pool, several at once on startup:
+    // one at a time, or a read-modify-write of the recent folders loses another's.
+    static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _recording = RECORDING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(dir) = state_dir() {
         let result = write_last_cwd(&dir, cwd).and_then(|()| write_recent(&dir, cwd));
         if let Err(err) = result {
             crate::log::error(format!("couldn't save the current folder: {err}"));
         }
     }
+}
+
+/// Replaces `path` with `bytes` so that it's never left half-written: they go to a temp
+/// file of their own (two writers never share one), flushed to disk, and renamed over it.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("no parent folder"))?;
+    std::fs::create_dir_all(dir)?;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Name of the theme picked last time.
@@ -125,8 +159,7 @@ pub fn save_theme(name: &str) {
     let Some(dir) = state_dir() else {
         return;
     };
-    let result =
-        std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("theme"), name));
+    let result = write_atomic(&dir.join("theme"), name.as_bytes());
     if let Err(err) = result {
         crate::log::error(format!("couldn't save the theme: {err}"));
     }
@@ -147,9 +180,7 @@ fn write_recent(dir: &Path, cwd: &Path) -> std::io::Result<()> {
     dirs.insert(0, cwd.to_path_buf());
     dirs.truncate(MAX_RECENT_DIRS);
     let text: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
-    let tmp = dir.join("recent_dirs.tmp");
-    std::fs::write(&tmp, text.join("\n"))?;
-    std::fs::rename(tmp, dir.join("recent_dirs"))
+    write_atomic(&dir.join("recent_dirs"), text.join("\n").as_bytes())
 }
 
 fn read_last_cwd(dir: &Path) -> Option<PathBuf> {
@@ -159,11 +190,7 @@ fn read_last_cwd(dir: &Path) -> Option<PathBuf> {
 }
 
 fn write_last_cwd(dir: &Path, cwd: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    // Write to a temp file and rename it, so the file is never left half-written.
-    let tmp = dir.join("last_cwd.tmp");
-    std::fs::write(&tmp, cwd.as_os_str().as_encoded_bytes())?;
-    std::fs::rename(tmp, dir.join("last_cwd"))
+    write_atomic(&dir.join("last_cwd"), cwd.as_os_str().as_encoded_bytes())
 }
 
 /// Terminal text size, validated before use.
@@ -177,8 +204,7 @@ pub fn saved_font_size() -> f32 {
 
 pub fn save_font_size(size: f32) {
     if let Some(dir) = state_dir()
-        && let Err(err) = std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(dir.join("font_size"), size.to_string()))
+        && let Err(err) = write_atomic(&dir.join("font_size"), size.to_string().as_bytes())
     {
         crate::log::error(format!("couldn't save the text size: {err}"));
     }
@@ -201,8 +227,7 @@ pub fn save_option_as_meta(enabled: bool) {
         return;
     };
     let value = if enabled { "1" } else { "0" };
-    let result = std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(dir.join("option_as_meta"), value));
+    let result = write_atomic(&dir.join("option_as_meta"), value.as_bytes());
     if let Err(err) = result {
         crate::log::error(format!("couldn't save Option as Meta: {err}"));
     }
@@ -229,10 +254,7 @@ pub fn save_closed_dirs(dirs: &[PathBuf]) {
         return;
     };
     let result = (|| -> anyhow::Result<()> {
-        std::fs::create_dir_all(&dir)?;
-        let tmp = dir.join("closed_tabs.tmp");
-        std::fs::write(&tmp, serde_json::to_vec(dirs)?)?;
-        std::fs::rename(tmp, dir.join("closed_tabs.json"))?;
+        write_atomic(&dir.join("closed_tabs.json"), &serde_json::to_vec(dirs)?)?;
         Ok(())
     })();
     if let Err(err) = result {

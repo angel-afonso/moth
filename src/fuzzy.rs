@@ -8,6 +8,22 @@ pub struct Match {
     pub positions: Vec<usize>,
 }
 
+/// Whether the (lowercase) characters of `query` appear in order in `text`, compared as
+/// `fuzzy_match` compares them.
+fn contains_in_order(query: &[char], text: &str) -> bool {
+    let mut wanted = query.iter();
+    let mut next = wanted.next();
+    for c in text.chars() {
+        let Some(&want) = next else {
+            break;
+        };
+        if c.to_lowercase().next().unwrap_or(c) == want {
+            next = wanted.next();
+        }
+    }
+    next.is_none()
+}
+
 /// `None` if the characters of `query` don't appear in order within `text`.
 /// Ignores case and whitespace in the query.
 pub fn fuzzy_match(query: &str, text: &str) -> Option<Match> {
@@ -21,6 +37,11 @@ pub fn fuzzy_match(query: &str, text: &str) -> Option<Match> {
             score: 0,
             positions: Vec::new(),
         });
+    }
+    // Most texts don't match at all (a search through a long history): turn them down
+    // before allocating anything for them.
+    if !contains_in_order(&query, text) {
+        return None;
     }
 
     let chars: Vec<(usize, char)> = text.char_indices().collect();

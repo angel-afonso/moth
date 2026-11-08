@@ -4,24 +4,51 @@
 #   OSC 7             current directory
 #   OSC 7777;...      custom: E command run, L line being edited, F editing finished,
 #                     H history file, P PATH, N alias/function/builtin names
+# Each one goes as OSC 7777;<token>;<sequence>, with the token the app passes in MOTH_TOKEN:
+# the app ignores sequences without it, so output that prints them can't pose as the shell.
 #
 # If the prompt is the macOS default, it's replaced with one in the app's style (a header
 # with folder, branch and previous command result; `❯` below it). With your own theme
 # (starship, p10k…) or MOTH_PROMPT=0 in your .zshrc, it's left alone.
 [[ -n "$_MOTH_LOADED" ]] && return
 typeset -g _MOTH_LOADED=1 _moth_running= _moth_first=1 _moth_own_prompt= _moth_started= _moth_prev_err=0
-unset MOTH_SHELL_INTEGRATION
+typeset -gH _moth_token=$MOTH_TOKEN
+unset MOTH_SHELL_INTEGRATION MOTH_TOKEN
 zmodload zsh/parameter 2>/dev/null
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook add-zle-hook-widget
 
-_moth_osc() { builtin printf '\e]%s\a' "$1" }
+_moth_osc() { builtin printf '\e]7777;%s;%s\a' "$_moth_token" "$1" }
 
 # Replace control characters so they don't terminate the OSC sequence.
 _moth_clean() { REPLY=${1//[$'\x00'-$'\x1f'$'\x7f']/ } }
 
+# The folder's volume was unmounted and mounted again (or the folder deleted and made again):
+# the shell still sits in the old, dead folder, where `ls` fails, so it goes back in through
+# the path. Fails if there's nothing to recover.
+_moth_recover_cwd() {
+  [[ -d $PWD && ! . -ef $PWD ]] || return 1
+  builtin cd -q -- "$PWD" 2>/dev/null
+}
+
+_moth_report_cwd() {
+  local p=${PWD//\%/%25}
+  p=${p// /%20}
+  _moth_osc "7;file://${HOST:-localhost}$p"
+}
+
+# The app sends SIGUSR1 when the folder is back while the shell waits at the prompt, so it
+# recovers without a keystroke.
+_moth_usr1() {
+  _moth_recover_cwd || return 0
+  _moth_report_cwd
+  zle && zle reset-prompt
+  return 0
+}
+
 _moth_precmd() {
   local ret=$? ran=$_moth_running
+  _moth_recover_cwd
   _moth_prev_err=0
   [[ -n "$ran" ]] && (( ret != 0 )) && _moth_prev_err=1
   if [[ -n "$_moth_running" ]]; then
@@ -41,10 +68,12 @@ _moth_precmd() {
     _moth_osc "7777;H;${HISTFILE:-$HOME/.zsh_history}"
     _moth_osc "7777;P;$PATH"
     _moth_osc "7777;N;${(k)aliases} ${(k)galiases} ${(k)functions} ${(k)builtins} ${(k)reswords}"
+    # Unless your .zshrc already handles USR1.
+    if (( ! ${+functions[TRAPUSR1]} )) && [[ -z ${(M)${(f)"$(trap)"}:#* USR1} ]]; then
+      TRAPUSR1() { _moth_usr1 }
+    fi
   fi
-  local p=${PWD//\%/%25}
-  p=${p// /%20}
-  _moth_osc "7;file://${HOST:-localhost}$p"
+  _moth_report_cwd
   [[ -n "$_moth_own_prompt" ]] && _moth_build_prompt "$ret" "$ran"
   _moth_osc "133;A"
   # Set the prompt-end mark now and again at the end of precmd, in case a theme
@@ -100,10 +129,10 @@ _moth_build_prompt() {
 # there if PS1 isn't rebuilt). The app uses it to delimit command blocks, so it carries the
 # number of rows the prompt takes up and whether the previous command failed.
 _moth_mark_prompt() {
-  local base=${PS1%"%{"$'\e]133;B'*}
+  local base=${PS1%"%{"$'\e]7777;'*}
   local expanded=${(%)base}
   local newlines=${expanded//[^$'\n']/}
-  PS1="${base}%{"$'\e]133;B;rows='"$(( ${#newlines} + 1 ));prev_err=$_moth_prev_err"$'\a'"%}"
+  PS1="${base}%{"$'\e]7777;'"$_moth_token;133;B;rows=$(( ${#newlines} + 1 ));prev_err=$_moth_prev_err"$'\a'"%}"
 }
 
 _moth_preexec() {

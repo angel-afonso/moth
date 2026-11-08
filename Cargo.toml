@@ -45,6 +45,10 @@ regex = "1"
 # The same image crate gpui uses, for the window icon on Linux (only PNG decoding).
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# To wake the shell with a signal when its folder's volume comes back (src/terminal.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # Signs test archives with throwaway keys; the app itself only verifies.
 minisign = "0.8"

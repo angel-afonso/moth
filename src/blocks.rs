@@ -89,16 +89,25 @@ pub fn blocks_from<T>(term: &Term<T>, top: Line) -> Vec<Block> {
 }
 
 /// Like `blocks_from`, but stops at the first mark after `bottom`: enough to know whether the
-/// last visible block failed, without scanning everything below it.
+/// last visible block failed, without scanning everything below it. It looks at most
+/// [`LOOKAHEAD`] rows past `bottom`, since it runs every frame: scrolled back into a long
+/// output, the next prompt can be the whole scrollback away (the last block then shows as
+/// not failed until its end comes closer).
 pub fn visible_blocks<T>(term: &Term<T>, top: Line, bottom: Line) -> Vec<Block> {
     blocks_in(term, top, Some(bottom))
 }
+
+/// How far past the screen `visible_blocks` looks for the next prompt.
+const LOOKAHEAD: i32 = 1000;
 
 fn blocks_in<T>(term: &Term<T>, top: Line, stop_after: Option<Line>) -> Vec<Block> {
     let grid = term.grid();
     let columns = term.columns();
     let mut marks: Vec<(Line, PromptMark)> = Vec::new();
     for line in (top.0..=term.bottommost_line().0).map(Line) {
+        if stop_after.is_some_and(|stop| line.0 > stop.0.saturating_add(LOOKAHEAD)) {
+            break;
+        }
         let row = &grid[line];
         let mark =
             (0..columns).find_map(|column| PromptMark::decode(row[Column(column)].zerowidth()?));

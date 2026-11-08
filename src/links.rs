@@ -27,28 +27,40 @@ fn is_url_char(c: char) -> bool {
 /// URLs in `text`, as byte ranges. Recognizes `scheme://…` and `mailto:…`, and trims trailing
 /// punctuation that usually ends a sentence (`.`, `,`, an unmatched `)`…).
 pub fn find_urls(text: &str) -> Vec<Range<usize>> {
+    // ASCII lowercasing keeps every byte where it was, so offsets in `lower` are offsets in
+    // `text`.
+    let lower = text.to_ascii_lowercase();
+    let markers: Vec<String> = ALLOWED_SCHEMES
+        .iter()
+        .map(|scheme| {
+            if *scheme == "mailto" {
+                "mailto:".to_string()
+            } else {
+                format!("{scheme}://")
+            }
+        })
+        .collect();
+    // Where each marker next appears; searched again only once the search has passed it, so
+    // the text is scanned about once per scheme however many URLs it has.
+    let mut next: Vec<Option<usize>> = markers.iter().map(|m| lower.find(m.as_str())).collect();
     let mut urls = Vec::new();
     let mut search_from = 0;
     while search_from < text.len() {
-        let rest = &text[search_from..];
-        let Some(found) = ALLOWED_SCHEMES
+        for (marker, next) in markers.iter().zip(&mut next) {
+            if next.is_some_and(|at| at < search_from) {
+                *next = lower[search_from..]
+                    .find(marker.as_str())
+                    .map(|i| search_from + i);
+            }
+        }
+        let Some((start, marker_len)) = markers
             .iter()
-            .filter_map(|scheme| {
-                let marker = if *scheme == "mailto" {
-                    "mailto:".to_string()
-                } else {
-                    format!("{scheme}://")
-                };
-                rest.to_ascii_lowercase()
-                    .find(&marker)
-                    .map(|i| (i, marker.len()))
-            })
-            .min_by_key(|(i, _)| *i)
+            .zip(&next)
+            .filter_map(|(marker, at)| at.map(|at| (at, marker.len())))
+            .min_by_key(|(at, _)| *at)
         else {
             break;
         };
-        let (offset, marker_len) = found;
-        let start = search_from + offset;
         // The scheme can't be the tail of another word (`xhttp://`).
         let preceded_by_word = text[..start]
             .chars()
@@ -89,6 +101,61 @@ fn trim_trailing(url: &str) -> usize {
             return end;
         }
     }
+}
+
+/// Whether opening `path` with the system's default app could run it instead of showing it:
+/// a folder (an app bundle is one), an executable file, or a type that's a program or a
+/// script on some platform.
+pub fn may_run(path: &Path) -> bool {
+    const RUNNABLE: &[&str] = &[
+        "app",
+        "command",
+        "tool",
+        "terminal",
+        "workflow",
+        "scpt",
+        "applescript",
+        "pkg",
+        "mpkg",
+        "exe",
+        "bat",
+        "cmd",
+        "com",
+        "msi",
+        "ps1",
+        "vbs",
+        "vbe",
+        "js",
+        "jse",
+        "wsf",
+        "wsh",
+        "scr",
+        "lnk",
+        "url",
+        "hta",
+        "cpl",
+        "desktop",
+        "appimage",
+        "sh",
+        "run",
+        "jar",
+    ];
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return true;
+    };
+    if metadata.is_dir() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 != 0 {
+            return true;
+        }
+    }
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| RUNNABLE.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// A file to open in the editor, with its position if the output includes one.
@@ -251,6 +318,27 @@ pub fn resolve_path(path: &str, cwd: &Path, home: Option<&Path>) -> Option<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn programs_and_folders_may_run() {
+        let dir = std::env::temp_dir().join(format!("moth-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("notes.txt");
+        let script = dir.join("setup.COMMAND");
+        std::fs::write(&notes, "").unwrap();
+        std::fs::write(&script, "").unwrap();
+        assert!(!super::may_run(&notes));
+        assert!(super::may_run(&script));
+        assert!(super::may_run(&dir));
+        assert!(super::may_run(&dir.join("missing")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&notes, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(super::may_run(&notes));
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
 
     fn paths(text: &str) -> Vec<(&str, Option<u32>, Option<u32>)> {
         find_paths(text)

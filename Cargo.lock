@@ -3519,6 +3519,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "libc",
  "log",
  "menu",
  "minisign",

@@ -51,6 +51,7 @@ fn main() {
             state::migrate_legacy_dir();
             config::init(cx);
             theme::init(cx);
+            session::init(cx);
             workspace::init(cx);
             updates::init(cx);
             cx.set_menus(menus());
