@@ -28,6 +28,11 @@ fn url_target(url: String, cwd: Option<&Path>) -> Option<LinkTarget> {
         Some(authority) => &authority[authority.find('/')?..],
         None => rest.starts_with('/').then_some(rest)?,
     };
+    // On Windows the drive comes after that slash (`file:///C:/Users/…`).
+    let path = match path.as_bytes() {
+        [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
+        _ => path,
+    };
     let path = PathBuf::from(path);
     if path.is_file() {
         Some(LinkTarget::File(links::FileLink {
@@ -195,14 +200,19 @@ mod tests {
         let cwd = Some(dir.as_path());
         let file = dir.join(format!("moth-link-{}", std::process::id()));
         std::fs::write(&file, "").unwrap();
-        let url = format!("FILE://host{}", file.display());
+        // As a program writes it: forward slashes, and the path after `file://host/`.
+        let as_url = |path: &std::path::Path| {
+            let path = path.display().to_string().replace('\\', "/");
+            format!("/{}", path.trim_start_matches('/'))
+        };
+        let url = format!("FILE://host{}", as_url(&file));
         assert!(matches!(
             url_target(url.clone(), cwd),
             Some(LinkTarget::File(_))
         ));
         // Over SSH, a server path.
         assert_eq!(url_target(url, None), None);
-        let folder = format!("file://{}", dir.display());
+        let folder = format!("file://{}", as_url(&dir));
         assert!(matches!(
             url_target(folder, cwd),
             Some(LinkTarget::Reveal(_))
