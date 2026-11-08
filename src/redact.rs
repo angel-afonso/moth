@@ -60,9 +60,9 @@ static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&formats.join("|")).unwrap()
 });
 
-/// `https://user:password@host`: the user stays.
+/// `https://user:password@host`: the user stays. The user can be empty (`redis://:pass@host`).
 static URL_PASSWORD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]+:)([^\s@/]+)(@)").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@]*:)([^\s@/]+)(@)").unwrap());
 
 /// `Authorization: Bearer abc`, `-H 'X-Api-Key: abc'`: the header name and scheme stay.
 static AUTH_HEADER: LazyLock<Regex> = LazyLock::new(|| {
@@ -99,9 +99,10 @@ static INLINE_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Candidates for "a long random string": letters, digits and the base64/url-safe symbols.
+/// Candidates for "a long random string": letters, digits and the base64/url-safe symbols
+/// (`/` included: AWS secret keys and plain base64 have it).
 static OPAQUE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z0-9+_\-]{32,}={0,2}").unwrap());
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/_\-]{32,}={0,2}").unwrap());
 
 pub fn redact(text: &str) -> Redacted {
     let mut count = 0;
@@ -190,6 +191,15 @@ fn already_redacted(value: &str) -> bool {
 /// checksums) and identifiers made of words don't count.
 fn looks_random(text: &str) -> bool {
     let core = text.trim_end_matches('=');
+    // With `/` it may be a path: those have a lowercase word between slashes (`src`, `lib`),
+    // which a random string rarely does.
+    if core.contains('/')
+        && core
+            .split('/')
+            .any(|piece| piece.len() >= 3 && piece.chars().all(|c| c.is_ascii_lowercase()))
+    {
+        return false;
+    }
     if core.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
         return false;
     }
@@ -277,6 +287,16 @@ pub fn sensitive_command(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_empty_users_and_base64_with_slashes_but_not_paths() {
+        let r = redact("redis://:hunter2secret@cache:6379");
+        assert_eq!(r.text, "redis://:[REDACTED]@cache:6379");
+        let r = redact("key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY here");
+        assert_eq!(r.text, "key [REDACTED] here");
+        let path = "see /Users/Dev2/src/components/Button2/IndexV3Helper9.tsx";
+        assert_eq!(redact(path).text, path);
+    }
 
     fn clean(text: &str) -> String {
         redact(text).text

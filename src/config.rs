@@ -35,6 +35,40 @@ pub struct Config {
     /// the command to run, or `false` to turn it off; unset, the first one found on the shell's
     /// PATH (see `agent::resolve`).
     pub agent: Option<AgentSetting>,
+    /// The agent's model and its settings (see `AgentOptions`); unset, the quickest ones.
+    pub agent_options: AgentOptions,
+}
+
+/// How the agent answers. By default its lightest model, without reasoning where the agent
+/// allows it and at its lowest effort otherwise, so the answer comes in a second or two.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct AgentOptions {
+    /// A model the agent offers, by its id or its name (`"sonnet"`, `"6 Luna"`), or `"auto"`
+    /// (default) for the lightest.
+    pub model: Option<String>,
+    /// Let the model reason before answering (no by default). Off, Claude runs without
+    /// thinking; agents that can't turn it off use their lowest effort.
+    pub reasoning: Option<bool>,
+    /// A reasoning effort the model offers (`"low"`, `"medium"`…), or `"auto"` (default) for
+    /// the lowest.
+    pub effort: Option<String>,
+    /// Any other option the agent announces, by its id: `"fast": "on"`.
+    #[serde(flatten)]
+    pub other: BTreeMap<String, AgentOptionValue>,
+}
+
+impl AgentOptions {
+    pub fn reasoning(&self) -> bool {
+        self.reasoning.unwrap_or(false)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum AgentOptionValue {
+    Bool(bool),
+    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -80,7 +114,8 @@ const TEMPLATE: &str = r#"{
   "notifications": true,
   "tab_completion": "shell",
   "check_updates": true,
-  "agent": null
+  "agent": null,
+  "agent_options": { "model": "auto", "reasoning": false, "effort": "auto" }
 }
 "#;
 
@@ -91,6 +126,8 @@ struct Loaded {
     config: Config,
     modified: Option<SystemTime>,
     error: Option<String>,
+    /// The file isn't a JSON object, so nothing in it could be used.
+    unreadable: bool,
 }
 
 impl Global for Loaded {}
@@ -112,13 +149,18 @@ pub fn error(cx: &App) -> Option<&str> {
     cx.global::<Loaded>().error.as_deref()
 }
 
-/// Reloads the file if it changed since last time; returns whether it changed.
+/// Reloads the file if it changed since last time; returns whether it changed. A file that
+/// isn't JSON at all (most likely half-edited) keeps the settings in use.
 pub fn reload_if_changed(cx: &mut App) -> bool {
     let modified = path().and_then(|path| std::fs::metadata(path).ok()?.modified().ok());
     if cx.global::<Loaded>().modified == modified {
         return false;
     }
-    cx.set_global(read());
+    let mut loaded = read();
+    if loaded.unreadable {
+        loaded.config = cx.global::<Loaded>().config.clone();
+    }
+    cx.set_global(loaded);
     true
 }
 
@@ -147,26 +189,50 @@ fn read() -> Loaded {
             ..Loaded::default()
         };
     };
-    match parse(&text) {
-        Ok(config) => Loaded {
-            config,
-            modified,
-            error: None,
-        },
-        Err(err) => {
-            let error = format!("invalid config.json: {err}");
-            crate::log::error(&error);
-            Loaded {
-                config: Config::default(),
-                modified,
-                error: Some(error),
-            }
-        }
+    let (config, problems, unreadable) = match parse_lenient(&text) {
+        Ok((config, problems)) => (config, problems, false),
+        Err(err) => (Config::default(), vec![err.to_string()], true),
+    };
+    let error = (!problems.is_empty()).then(|| {
+        let error = format!("invalid config.json: {}", problems.join("; "));
+        crate::log::error(&error);
+        error
+    });
+    Loaded {
+        config,
+        modified,
+        error,
+        unreadable,
     }
 }
 
+#[cfg(test)]
 fn parse(text: &str) -> serde_json::Result<Config> {
     serde_json::from_str(text)
+}
+
+/// The settings in `text`, leaving out (and describing) each one that's unknown or invalid,
+/// so a typo or a key from a newer version doesn't reset the rest (`"agent": false` included).
+/// An error only if `text` isn't a JSON object.
+fn parse_lenient(text: &str) -> serde_json::Result<(Config, Vec<String>)> {
+    let object: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)?;
+    let mut valid = serde_json::Map::new();
+    let mut problems = Vec::new();
+    for (key, value) in object {
+        let single =
+            serde_json::Value::Object(serde_json::Map::from_iter([(key.clone(), value.clone())]));
+        match serde_json::from_value::<Config>(single) {
+            Ok(_) => {
+                valid.insert(key, value);
+            }
+            Err(err) if err.to_string().starts_with("unknown field") => {
+                problems.push(format!("unknown setting \"{key}\""));
+            }
+            Err(err) => problems.push(format!("\"{key}\": {err}")),
+        }
+    }
+    let config = serde_json::from_value(serde_json::Value::Object(valid))?;
+    Ok((config, problems))
 }
 
 #[cfg(test)]
@@ -205,5 +271,39 @@ mod tests {
         };
         assert_eq!(agent.args, ["--acp"]);
         assert!(parse(r#"{"agent": {"comand": "gemini"}}"#).is_err());
+
+        assert!(!config.agent_options.reasoning());
+        let options = parse(
+            r#"{"agent_options": {"model": "sonnet", "reasoning": true, "effort": "medium", "fast": "on", "verbose": false}}"#,
+        )
+        .unwrap()
+        .agent_options;
+        assert_eq!(options.model.as_deref(), Some("sonnet"));
+        assert!(options.reasoning());
+        assert_eq!(options.effort.as_deref(), Some("medium"));
+        assert_eq!(
+            options.other.get("fast"),
+            Some(&AgentOptionValue::Text("on".into()))
+        );
+        assert_eq!(
+            options.other.get("verbose"),
+            Some(&AgentOptionValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn one_bad_setting_keeps_the_others() {
+        let (config, problems) = parse_lenient(
+            r#"{"agent": false, "check_updates": false, "editr": "zed", "scrollback": "lots"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.agent, Some(AgentSetting::Enabled(false)));
+        assert_eq!(config.check_updates, Some(false));
+        assert_eq!(config.scrollback, None);
+        assert_eq!(problems.len(), 2);
+        assert!(problems.iter().any(|p| p == "unknown setting \"editr\""));
+        assert!(problems.iter().any(|p| p.starts_with("\"scrollback\":")));
+        assert!(parse_lenient("{ \"agent\": fal").is_err());
+        assert!(parse_lenient("[]").is_err());
     }
 }

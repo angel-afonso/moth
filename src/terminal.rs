@@ -5,7 +5,7 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -132,6 +132,46 @@ pub struct ShellState {
     /// The last command, if it failed, with its output and a fix found on the machine.
     /// Cleared when the next command starts.
     pub failure: Option<LastFailure>,
+    /// `cwd` is gone, most likely because its volume was unmounted (a disk unplugged, a share
+    /// dropped). When it's back, the shell goes back into it (see `Terminal::cwd_checked`).
+    pub cwd_missing: Option<MissingCwd>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MissingCwd {
+    /// The volume it was on, when the whole volume is gone (`/Volumes/<name>` on macOS,
+    /// `/media/<user>/<name>`, `/run/media/<user>/<name>` or `/mnt/<name>` on Linux).
+    pub volume: Option<String>,
+}
+
+impl MissingCwd {
+    /// Whether `cwd` is missing, and why. Touches the disk: off the UI thread.
+    fn check(cwd: &Path) -> Option<Self> {
+        if cwd.is_dir() {
+            return None;
+        }
+        let volume = mount_root(cwd)
+            .filter(|root| !root.exists())
+            .and_then(|root| Some(root.file_name()?.to_string_lossy().into_owned()));
+        Some(Self { volume })
+    }
+}
+
+/// Where the volume holding `path` is mounted, for the usual places removable disks and
+/// shares go.
+fn mount_root(path: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = path.components().collect();
+    let names: Vec<_> = parts
+        .iter()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect();
+    let depth = match names.get(1..3)? {
+        [first, _] if first == "Volumes" || first == "mnt" => 3,
+        [first, _] if first == "media" => 4,
+        [first, second] if first == "run" && second == "media" => 5,
+        _ => return None,
+    };
+    (parts.len() >= depth).then(|| parts[..depth].iter().collect())
 }
 
 pub struct LastFailure {
@@ -184,6 +224,9 @@ pub struct Terminal {
     pending_failure: Option<Failure>,
     capture_failure: Option<Task<()>>,
     resolver: CommandResolver,
+    /// The last highlighted line and the folder it was highlighted in: highlighting checks
+    /// whether arguments exist on disk, and the line is drawn every frame.
+    highlight_cache: Option<(EditLine, Option<PathBuf>, Vec<Token>)>,
     git_refresh: Option<Task<()>>,
     ssh_resolve: Option<Task<()>>,
     /// Command to run as soon as the shell shows its prompt ("Connect to…" tabs).
@@ -191,8 +234,15 @@ pub struct Terminal {
     started: Instant,
     /// The shell exited, with its status if known.
     exited: Option<Option<ExitStatus>>,
+    /// The shell's process, when it runs the zsh integration and so can be woken with
+    /// SIGUSR1 to go back into its folder.
+    wakeable_pid: Option<u32>,
     _events: Task<()>,
+    _watch_cwd: Task<()>,
 }
+
+/// How often each tab checks that its folder still exists.
+const CWD_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 enum Incoming {
     Terminal(AlacEvent),
@@ -208,6 +258,7 @@ pub struct TerminalBuilder {
     size: TermSize,
     events_rx: UnboundedReceiver<AlacEvent>,
     shell_rx: UnboundedReceiver<ShellEvent>,
+    wakeable_pid: Option<u32>,
 }
 
 impl TerminalBuilder {
@@ -226,21 +277,45 @@ impl TerminalBuilder {
             ("TERM_PROGRAM".to_string(), "moth".to_string()),
         ]);
         env.extend(shell::locale_env());
-        let (program, args) = shell::shell_command(config.shell.as_deref());
-        env.extend(shell::integration_env(&program).unwrap_or_default());
         let working_directory = cwd.filter(|dir| dir.is_dir()).or_else(state::home_dir);
-        let options = tty::Options {
-            shell: Some(tty::Shell::new(program, args)),
-            working_directory,
-            drain_on_exit: true,
-            env,
-            ..Default::default()
+        let spawn = |configured: Option<&str>| {
+            let (program, args) = shell::shell_command(configured);
+            let mut env = env.clone();
+            let integration = shell::integration_env(&program).unwrap_or_default();
+            let token = integration.get(shell::TOKEN_VAR).cloned();
+            env.extend(integration);
+            let options = tty::Options {
+                shell: Some(tty::Shell::new(program, args)),
+                working_directory: working_directory.clone(),
+                drain_on_exit: true,
+                env,
+                ..Default::default()
+            };
+            tty::new(&options, size.window_size(), 0).map(|pty| (pty, token))
         };
+        // A `shell` from the settings that can't start (not on the PATH an app launched from
+        // the Finder gets, say) falls back to the default one, so there's still a tab from
+        // which to fix the settings.
+        let (pty, token) = match spawn(config.shell.as_deref()) {
+            Err(err) if config.shell.is_some() => {
+                crate::log::error(format!(
+                    "couldn't start the shell in the settings ({err}); using the default one"
+                ));
+                spawn(None)?
+            }
+            result => result?,
+        };
+
+        // Only the integration's shell has the SIGUSR1 handler.
+        #[cfg(unix)]
+        let wakeable_pid = token.as_ref().map(|_| pty.child().id());
+        #[cfg(not(unix))]
+        let wakeable_pid = None;
 
         let (events_tx, events_rx) = unbounded();
         let (shell_tx, shell_rx) = unbounded();
         let listener = Listener(events_tx);
-        let pty = ShellPty::new(tty::new(&options, size.window_size(), 0)?, shell_tx);
+        let pty = ShellPty::new(pty, shell_tx, token);
         let term = Arc::new(FairMutex::new(Term::new(
             Config {
                 scrolling_history: config
@@ -263,6 +338,7 @@ impl TerminalBuilder {
             size,
             events_rx,
             shell_rx,
+            wakeable_pid,
         })
     }
 
@@ -292,6 +368,30 @@ impl TerminalBuilder {
             }
         });
 
+        // The check runs off the UI thread: on a network share that dropped, it can block.
+        let watch_cwd = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CWD_CHECK_INTERVAL).await;
+                let Ok(cwd) = this.update(cx, |this, _| this.shell.cwd.clone()) else {
+                    break;
+                };
+                let Some(cwd) = cwd else {
+                    continue;
+                };
+                let check = cwd.clone();
+                let missing = cx
+                    .background_executor()
+                    .spawn(async move { MissingCwd::check(&check) })
+                    .await;
+                if this
+                    .update(cx, |this, cx| this.cwd_checked(&cwd, missing, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
         Terminal {
             term: self.term,
             sender: self.sender,
@@ -302,12 +402,15 @@ impl TerminalBuilder {
             pending_failure: None,
             capture_failure: None,
             resolver: CommandResolver::from_env(),
+            highlight_cache: None,
             git_refresh: None,
             ssh_resolve: None,
             startup_command: None,
             started: Instant::now(),
             exited: None,
+            wakeable_pid: self.wakeable_pid,
             _events: events,
+            _watch_cwd: watch_cwd,
         }
     }
 }
@@ -319,6 +422,48 @@ impl Terminal {
 
     pub fn shell(&self) -> &ShellState {
         &self.shell
+    }
+
+    /// Whether `cwd` (still the shell's folder) exists, from the periodic check. Going missing
+    /// is shown in the view; coming back wakes the shell at the prompt, which goes back into
+    /// the folder. A shell running a command does it at its next prompt.
+    fn cwd_checked(&mut self, cwd: &Path, missing: Option<MissingCwd>, cx: &mut Context<Self>) {
+        if missing == self.shell.cwd_missing
+            || self.exited.is_some()
+            || self.shell.cwd.as_deref() != Some(cwd)
+        {
+            return;
+        }
+        let came_back = missing.is_none();
+        self.shell.cwd_missing = missing;
+        if came_back && self.at_prompt() {
+            self.wake_shell();
+        }
+        cx.notify();
+    }
+
+    /// Whether the shell goes back into its folder by itself when the folder comes back:
+    /// only with the zsh integration.
+    pub fn recovers_cwd(&self) -> bool {
+        self.wakeable_pid.is_some()
+    }
+
+    /// Sends the shell SIGUSR1, which the zsh integration takes as "check your folder".
+    fn wake_shell(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self
+            .wakeable_pid
+            .and_then(|pid| libc::pid_t::try_from(pid).ok())
+        {
+            // SAFETY: `kill` only sends a signal; the pid is our own child, which hasn't
+            // exited (`exited` is checked before), so it can't have been reused.
+            if unsafe { libc::kill(pid, libc::SIGUSR1) } != 0 {
+                crate::log::error(format!(
+                    "couldn't wake the shell: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
     }
 
     /// What's missing to complete the current line: the fix for the command that just failed,
@@ -354,6 +499,12 @@ impl Terminal {
         if line.buffer.is_empty() {
             return None;
         }
+        if let Some((cached, cwd, tokens)) = &self.highlight_cache
+            && *cached == line
+            && *cwd == self.shell.cwd
+        {
+            return Some((line, tokens.clone()));
+        }
         let cursor = line
             .buffer
             .char_indices()
@@ -365,12 +516,17 @@ impl Terminal {
             self.shell.cwd.as_deref(),
             &mut self.resolver,
         );
+        self.highlight_cache = Some((line.clone(), self.shell.cwd.clone(), tokens.clone()));
         Some((line, tokens))
     }
 
     fn handle_shell_event(&mut self, event: ShellEvent, cx: &mut Context<Self>) {
         match event {
-            ShellEvent::PromptStart => self.shell.integrated = true,
+            ShellEvent::PromptStart => {
+                self.shell.integrated = true;
+                // Files may have come and gone since the last prompt.
+                self.highlight_cache = None;
+            }
             ShellEvent::PromptEnd(_) => {}
             ShellEvent::Cwd(cwd) => {
                 // Arrives on every prompt: a good time to refresh git (branch switch, commit…).
@@ -381,6 +537,7 @@ impl Terminal {
                         .spawn(async move { state::record_dir(&save) })
                         .detach();
                     self.shell.cwd = Some(cwd);
+                    self.shell.cwd_missing = None;
                     cx.emit(TerminalEvent::TitleChanged);
                 }
             }
@@ -477,8 +634,12 @@ impl Terminal {
             ShellEvent::Path(path) => {
                 self.resolver.set_path(&path);
                 self.shell.path_env = Some(path);
+                self.highlight_cache = None;
             }
-            ShellEvent::Names(names) => self.resolver.set_names(&names),
+            ShellEvent::Names(names) => {
+                self.resolver.set_names(&names);
+                self.highlight_cache = None;
+            }
         }
     }
 
@@ -614,18 +775,22 @@ impl Terminal {
             .char_indices()
             .nth(line.cursor)
             .map_or(line.buffer.len(), |(i, _)| i);
-        let git = self.shell.git.clone();
-        let branches = git.as_ref().map(|g| g.branches.clone()).unwrap_or_default();
+        // This runs on every keystroke while the popup is open: borrow rather than copy, and
+        // read files only for what can be typed at the cursor.
+        let git = self.shell.git.as_ref();
+        let branches = git.map(|g| g.branches.as_slice()).unwrap_or_default();
         let history = shell::history(cx)
-            .map(|h| h.entries.clone())
+            .map(|h| h.entries.as_slice())
             .unwrap_or_default();
-        let hosts: Vec<(String, String)> = ssh::config_hosts()
-            .into_iter()
-            .map(|h| {
-                let describe = h.describe();
-                (h.alias, describe)
-            })
-            .collect();
+        let hosts = || {
+            ssh::config_hosts()
+                .into_iter()
+                .map(|h| {
+                    let describe = h.describe();
+                    (h.alias, describe)
+                })
+                .collect()
+        };
         let default_specs = completions::Specs::default();
         let specs = cx
             .try_global::<completions::Specs>()
@@ -643,9 +808,9 @@ impl Terminal {
             cursor,
             cwd: cwd.as_deref(),
             specs,
-            branches: &branches,
-            current_branch: git.as_ref().and_then(|g| g.branch.as_deref()),
-            history: &history,
+            branches,
+            current_branch: git.and_then(|g| g.branch.as_deref()),
+            history,
             hosts: &hosts,
             commands: &commands,
             list_dir: &completions::list_dir,
@@ -694,7 +859,11 @@ impl Terminal {
         if !self.at_prompt() {
             return false;
         }
-        let mut bytes = format!("\x05\x15{command}");
+        let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
+        let Some(text) = prompt_text(command, bracketed) else {
+            return false;
+        };
+        let mut bytes = format!("\x05\x15{text}");
         if run {
             bytes.push('\r');
         }
@@ -855,9 +1024,76 @@ fn remote_cwd_from_title(title: &str) -> Option<String> {
     (cwd.starts_with('/') || cwd.starts_with('~')).then(|| cwd.to_string())
 }
 
+/// `command` as it can be typed at the prompt. It may come from the history, the agent or the
+/// shell's own report, so control characters are dropped (an escape sequence, or a `\r` that
+/// would run part of it) and tabs become spaces. Line breaks only survive inside a bracketed
+/// paste, where the shell takes them as part of the line; without one there's nothing safe to
+/// type (`None`).
+fn prompt_text(command: &str, bracketed: bool) -> Option<String> {
+    let command = command.replace("\r\n", "\n").replace('\r', "\n");
+    let clean: String = command
+        .trim_matches('\n')
+        .chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .filter(|&c| c == '\n' || !c.is_control())
+        .collect();
+    if !clean.contains('\n') {
+        return Some(clean);
+    }
+    bracketed.then(|| format!("\x1b[200~{}\x1b[201~", clean.replace('\n', "\r")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::remote_cwd_from_title;
+
+    #[test]
+    fn finds_the_volume_of_a_folder() {
+        use super::mount_root;
+        use std::path::{Path, PathBuf};
+        let root = |path: &str| mount_root(Path::new(path));
+        assert_eq!(
+            root("/Volumes/EXTERNAL_DISK/work/app"),
+            Some(PathBuf::from("/Volumes/EXTERNAL_DISK"))
+        );
+        assert_eq!(
+            root("/media/dev/USB/photos"),
+            Some(PathBuf::from("/media/dev/USB"))
+        );
+        assert_eq!(
+            root("/run/media/dev/USB"),
+            Some(PathBuf::from("/run/media/dev/USB"))
+        );
+        assert_eq!(root("/mnt/share/x"), Some(PathBuf::from("/mnt/share")));
+        assert_eq!(root("/Volumes"), None);
+        assert_eq!(root("/Users/dev/project"), None);
+    }
+
+    #[test]
+    fn tells_a_missing_volume_from_a_missing_folder() {
+        use super::MissingCwd;
+        use std::path::Path;
+        assert_eq!(MissingCwd::check(&std::env::temp_dir()), None);
+        let gone = MissingCwd::check(Path::new("/Volumes/MothNoSuchVolume/work")).unwrap();
+        assert_eq!(gone.volume.as_deref(), Some("MothNoSuchVolume"));
+        let folder = std::env::temp_dir().join("moth-no-such-folder/x");
+        assert_eq!(MissingCwd::check(&folder).unwrap().volume, None);
+    }
+
+    #[test]
+    fn types_only_what_cannot_run_by_itself() {
+        use super::prompt_text;
+        assert_eq!(prompt_text("ls -la", false).as_deref(), Some("ls -la"));
+        assert_eq!(
+            prompt_text("echo\x1b]0;x\x07\tdone\u{9b}", false).as_deref(),
+            Some("echo]0;x done")
+        );
+        assert_eq!(prompt_text("cd build\rmake install", false), None);
+        assert_eq!(
+            prompt_text("cd build\nmake install\n", true).as_deref(),
+            Some("\x1b[200~cd build\rmake install\x1b[201~")
+        );
+    }
 
     #[cfg(unix)]
     #[test]

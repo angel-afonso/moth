@@ -69,23 +69,38 @@ impl<T> PaneTree<T> {
         }
     }
 
-    /// Fixes sizes that don't add up (from a hand-edited file, for example).
-    pub fn normalized(self) -> Self {
+    /// Fixes what the rest of the code takes for granted, for a tree from a hand-edited file,
+    /// say: sizes that add up, and splits with at least two children (an empty split goes,
+    /// and one with a single child becomes that child). `None` if no pane is left.
+    pub fn normalized(self) -> Option<Self> {
         match self {
-            Self::Leaf(_) => self,
+            Self::Leaf(_) => Some(self),
             Self::Split {
                 axis,
                 children,
                 sizes,
             } => {
-                let n = children.len();
-                let valid = sizes.len() == n && sizes.iter().all(|s| s.is_finite() && *s > 0.);
-                let sizes = if valid { sizes } else { vec![1.; n] };
-                let total: f32 = sizes.iter().sum();
-                Self::Split {
-                    axis,
-                    children: children.into_iter().map(Self::normalized).collect(),
-                    sizes: sizes.into_iter().map(|s| s / total).collect(),
+                let valid_sizes =
+                    sizes.len() == children.len() && sizes.iter().all(|s| s.is_finite() && *s > 0.);
+                let (mut children, sizes): (Vec<Self>, Vec<f32>) = children
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(ix, child)| {
+                        let size = if valid_sizes { sizes[ix] } else { 1. };
+                        child.normalized().map(|child| (child, size))
+                    })
+                    .unzip();
+                match children.len() {
+                    0 => None,
+                    1 => children.pop(),
+                    _ => {
+                        let total: f32 = sizes.iter().sum();
+                        Some(Self::Split {
+                            axis,
+                            children,
+                            sizes: sizes.into_iter().map(|s| s / total).collect(),
+                        })
+                    }
                 }
             }
         }
@@ -398,6 +413,34 @@ mod tests {
     }
 
     #[test]
+    fn normalizing_drops_empty_and_single_child_splits() {
+        let empty = || PaneTree::<u32>::Split {
+            axis: Row,
+            children: vec![],
+            sizes: vec![],
+        };
+        assert_eq!(empty().normalized(), None);
+        let lonely = PaneTree::Split {
+            axis: Column,
+            children: vec![PaneTree::Split {
+                axis: Row,
+                children: vec![leaf(1)],
+                sizes: vec![1.],
+            }],
+            sizes: vec![1.],
+        };
+        assert_eq!(lonely.normalized(), Some(leaf(1)));
+        let mixed = PaneTree::Split {
+            axis: Row,
+            children: vec![empty(), leaf(1), leaf(2)],
+            sizes: vec![0.2, 0.4, 0.4],
+        };
+        let mixed = mixed.normalized().unwrap();
+        assert_eq!(mixed.leaves(), vec![1, 2]);
+        assert_eq!(sizes_of(&mixed), vec![0.5, 0.5]);
+    }
+
+    #[test]
     fn replace_map_and_normalize() {
         let mut tree = leaf(1);
         tree.split(1, 2, Column);
@@ -410,6 +453,6 @@ mod tests {
             children: vec![leaf(1), leaf(2)],
             sizes: vec![3.],
         };
-        assert_eq!(sizes_of(&broken.normalized()), vec![0.5, 0.5]);
+        assert_eq!(sizes_of(&broken.normalized().unwrap()), vec![0.5, 0.5]);
     }
 }

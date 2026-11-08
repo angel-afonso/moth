@@ -90,7 +90,8 @@ pub struct Context<'a> {
     pub current_branch: Option<&'a str>,
     /// History, most recent last.
     pub history: &'a [String],
-    pub hosts: &'a [(String, String)],
+    /// SSH hosts: (alias, description). Only asked for when a host is what can be typed.
+    pub hosts: &'a dyn Fn() -> Vec<(String, String)>,
     /// PATH commands, aliases and functions that start with the prefix.
     pub commands: &'a dyn Fn(&str) -> Vec<String>,
     /// Entries of a folder: (name, is folder).
@@ -359,12 +360,12 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                     }
                 }
                 Some("host") => {
-                    for (alias, describe) in ctx.hosts {
+                    for (alias, describe) in (ctx.hosts)() {
                         b.push(
-                            escape(alias),
-                            alias.clone(),
+                            escape(&alias),
+                            alias,
                             SuggestionKind::Path,
-                            Some(describe.clone()),
+                            Some(describe),
                             None,
                             true,
                         );
@@ -402,7 +403,8 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                     kind: SuggestionKind::History,
                     description: Some("from history".into()),
                     doc: None,
-                    positions: (0..typed.len()).collect(),
+                    // Byte offsets of each typed character, for the highlight: `ú` takes two.
+                    positions: typed.char_indices().map(|(i, _)| i).collect(),
                     score: i32::MIN / 2,
                     replace_from: before.len() - typed.len(),
                     append_space: false,
@@ -574,7 +576,7 @@ mod tests {
             branches: &branches,
             current_branch: Some("main"),
             history: &history,
-            hosts: &hosts,
+            hosts: &|| hosts.clone(),
             commands: &commands,
             list_dir: &list_dir,
             scripts: &scripts,

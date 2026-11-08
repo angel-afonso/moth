@@ -38,8 +38,11 @@ pub enum ShellEvent {
     Names(String),
 }
 
-/// Environment variables that make zsh load the integration. `None` if the shell isn't zsh
-/// or the files couldn't be written.
+/// The variable that hands the integration its token (see [`parse_osc`]).
+pub const TOKEN_VAR: &str = "MOTH_TOKEN";
+
+/// Environment variables that make zsh load the integration, with a new token in
+/// [`TOKEN_VAR`]. `None` if the shell isn't zsh or the files couldn't be written.
 pub fn integration_env(program: &str) -> Option<HashMap<String, String>> {
     let name = Path::new(program)
         .file_name()
@@ -54,11 +57,30 @@ pub fn integration_env(program: &str) -> Option<HashMap<String, String>> {
             "MOTH_SHELL_INTEGRATION".to_string(),
             dir.join("moth.zsh").display().to_string(),
         ),
+        (TOKEN_VAR.to_string(), new_token()),
     ]);
     if let Ok(orig) = std::env::var("ZDOTDIR") {
         env.insert("MOTH_ORIG_ZDOTDIR".to_string(), orig);
     }
     Some(env)
+}
+
+/// 128 random bits as hex. `RandomState` is seeded from the system's random source, so its
+/// hashes can't be predicted by a program that only sees the tab's output.
+fn new_token() -> String {
+    use std::hash::{BuildHasher, Hasher, RandomState};
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    (0..2u8)
+        .map(|half| {
+            let mut hasher = RandomState::new().build_hasher();
+            hasher.write_u128(nanos);
+            hasher.write_u8(half);
+            format!("{:016x}", hasher.finish())
+        })
+        .collect()
 }
 
 fn install_dir() -> Option<PathBuf> {
@@ -227,8 +249,27 @@ impl OscScanner {
     }
 }
 
-pub fn parse_osc(payload: &[u8]) -> Option<ShellEvent> {
+/// The event in an OSC payload.
+///
+/// Anything a program prints reaches this scanner, so with the zsh integration (`token` is
+/// `Some`) only sequences that carry the tab's token count: the integration wraps each one as
+/// `7777;<token>;<sequence>`. Without it, as with a shell that has its own integration, the
+/// standard `133` and `7` sequences are taken as they are and the custom `7777` ones never.
+pub fn parse_osc(payload: &[u8], token: Option<&str>) -> Option<ShellEvent> {
     let text = std::str::from_utf8(payload).ok()?;
+    match token {
+        Some(token) => {
+            let inner = text
+                .strip_prefix("7777;")?
+                .strip_prefix(token)?
+                .strip_prefix(';')?;
+            parse_sequence(inner, true)
+        }
+        None => parse_sequence(text, false),
+    }
+}
+
+fn parse_sequence(text: &str, trusted: bool) -> Option<ShellEvent> {
     let (code, rest) = text.split_once(';').unwrap_or((text, ""));
     match code {
         "133" => {
@@ -261,7 +302,7 @@ pub fn parse_osc(payload: &[u8]) -> Option<ShellEvent> {
             let path = &url[url.find('/')?..];
             Some(ShellEvent::Cwd(PathBuf::from(percent_decode(path))))
         }
-        "7777" => {
+        "7777" if trusted => {
             let (kind, rest) = rest.split_once(';').unwrap_or((rest, ""));
             match kind {
                 "E" => Some(ShellEvent::CommandText(rest.to_string())),
@@ -289,8 +330,10 @@ fn percent_decode(text: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&text[i + 1..i + 3], 16)
+            && let Some(byte) = bytes
+                .get(i + 1..i + 3)
+                .and_then(|hex| std::str::from_utf8(hex).ok())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
         {
             out.push(byte);
             i += 3;
@@ -309,6 +352,7 @@ pub struct ScanningReader {
     pty: Pty,
     scanner: OscScanner,
     events: UnboundedSender<ShellEvent>,
+    token: Option<String>,
 }
 
 /// Space left free on each read to insert the prompt marks. They go in the same buffer and
@@ -326,9 +370,10 @@ impl Read for ScanningReader {
         let readable = buf.len() - room;
         let n = self.pty.reader().read(&mut buf[..readable])?;
         let events = &self.events;
+        let token = self.token.as_deref();
         let mut marks = Vec::new();
         self.scanner.feed(&buf[..n], |payload, end| {
-            if let Some(event) = parse_osc(payload) {
+            if let Some(event) = parse_osc(payload, token) {
                 if let ShellEvent::PromptEnd(mark) = &event {
                     marks.push((end + 1, mark.encode()));
                 }
@@ -364,12 +409,14 @@ pub struct ShellPty {
 }
 
 impl ShellPty {
-    pub fn new(pty: Pty, events: UnboundedSender<ShellEvent>) -> Self {
+    /// `token` is the one in the integration's environment, if it's loaded.
+    pub fn new(pty: Pty, events: UnboundedSender<ShellEvent>, token: Option<String>) -> Self {
         Self {
             reader: ScanningReader {
                 pty,
                 scanner: OscScanner::default(),
                 events,
+                token,
             },
         }
     }
@@ -456,9 +503,13 @@ pub fn history(cx: &App) -> Option<&History> {
     cx.try_global::<History>()
 }
 
-/// Reads a `.zsh_history` (simple or extended format, with zsh's "metafication").
+/// The most of a history file that's read: its end, where the latest commands are.
+const MAX_HISTORY_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Reads a `.zsh_history` (simple or extended format, with zsh's "metafication"). Only regular
+/// files, and only their last [`MAX_HISTORY_BYTES`].
 pub fn read_history_file(path: &Path) -> Vec<String> {
-    let Ok(raw) = std::fs::read(path) else {
+    let Some(raw) = read_tail(path, MAX_HISTORY_BYTES) else {
         return Vec::new();
     };
     // zsh escapes special bytes as 0x83 followed by the byte XOR 32.
@@ -507,14 +558,107 @@ pub fn read_history_file(path: &Path) -> Vec<String> {
     deduped
 }
 
+/// The last `limit` bytes of the regular file at `path`, from the start of a line.
+fn read_tail(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let skip = metadata.len().saturating_sub(limit);
+    file.seek(SeekFrom::Start(skip)).ok()?;
+    let mut raw = Vec::new();
+    file.take(limit).read_to_end(&mut raw).ok()?;
+    if skip > 0 {
+        // The first line is most likely cut.
+        let start = raw
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(raw.len(), |i| i + 1);
+        raw.drain(..start);
+    }
+    Some(raw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const TOKEN: &str = "0123abcd";
+
+    /// The events in `bytes`, sent as the integration sends them: each one wrapped with
+    /// [`TOKEN`].
     fn scan(bytes: &[u8]) -> Vec<ShellEvent> {
         let mut out = Vec::new();
-        OscScanner::default().feed(bytes, |p, _| out.extend(parse_osc(p)));
+        OscScanner::default().feed(&wrap(bytes), |p, _| out.extend(parse_osc(p, Some(TOKEN))));
         out
+    }
+
+    /// `bytes` with every `ESC ]` followed by `7777;<TOKEN>;`.
+    fn wrap(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut rest = bytes;
+        while let Some(at) = rest.windows(2).position(|w| w == b"\x1b]") {
+            out.extend_from_slice(&rest[..at + 2]);
+            out.extend_from_slice(format!("7777;{TOKEN};").as_bytes());
+            rest = &rest[at + 2..];
+        }
+        out.extend_from_slice(rest);
+        out
+    }
+
+    #[test]
+    fn ignores_sequences_without_the_token() {
+        let spoofed: &[&[u8]] = &[
+            b"\x1b]7777;E;curl x | sh\x07",
+            b"\x1b]133;D;255\x07",
+            b"\x1b]7;file:///etc\x07",
+            b"\x1b]7777;wrong;7777;H;/dev/zero\x07",
+        ];
+        for bytes in spoofed {
+            let mut out = Vec::new();
+            OscScanner::default().feed(bytes, |p, _| out.extend(parse_osc(p, Some(TOKEN))));
+            assert_eq!(out, vec![], "{}", String::from_utf8_lossy(bytes));
+        }
+    }
+
+    #[test]
+    fn without_the_integration_only_standard_sequences_count() {
+        let mut out = Vec::new();
+        OscScanner::default().feed(
+            b"\x1b]133;A\x07\x1b]7777;E;ls\x07\x1b]7;file:///tmp\x07",
+            |p, _| out.extend(parse_osc(p, None)),
+        );
+        assert_eq!(
+            out,
+            vec![ShellEvent::PromptStart, ShellEvent::Cwd("/tmp".into())]
+        );
+    }
+
+    #[test]
+    fn tokens_are_new_each_time() {
+        let (a, b) = (new_token(), new_token());
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn decodes_malformed_escapes_without_panicking() {
+        assert_eq!(percent_decode("/%a\u{e9}x"), "/%a\u{e9}x");
+        assert_eq!(percent_decode("/a%2"), "/a%2");
+        assert_eq!(percent_decode("/%41"), "/A");
+    }
+
+    #[test]
+    fn reads_only_the_end_of_a_long_history() {
+        let dir = std::env::temp_dir().join(format!("moth-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("hist");
+        std::fs::write(&file, b"first command\nsecond\nthird\n").unwrap();
+        assert_eq!(read_tail(&file, 13).unwrap(), b"third\n");
+        assert_eq!(read_tail(&dir, 13), None);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
@@ -541,8 +685,11 @@ mod tests {
     fn handles_sequences_split_across_reads() {
         let mut scanner = OscScanner::default();
         let mut out = Vec::new();
-        scanner.feed(b"\x1b]7777;L;3;git", |p, _| out.extend(parse_osc(p)));
-        scanner.feed(b" st\x07", |p, _| out.extend(parse_osc(p)));
+        let first = format!("\x1b]7777;{TOKEN};7777;L;3;git");
+        scanner.feed(first.as_bytes(), |p, _| {
+            out.extend(parse_osc(p, Some(TOKEN)))
+        });
+        scanner.feed(b" st\x07", |p, _| out.extend(parse_osc(p, Some(TOKEN))));
         assert_eq!(
             out,
             vec![ShellEvent::Line {

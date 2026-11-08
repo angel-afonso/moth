@@ -105,7 +105,7 @@ When the shell exits with `exit` or ⌃D, the tab closes. If it's killed by a si
 
 ## Notifications, zoom and reopening tabs
 
-When a command runs for at least 10 seconds and finishes in an inactive tab or while the window is in the background, the app flags the tab and shows a notice with the command, its result and duration. The notice is dismissed with its button. If the app is in the background, a desktop notification also appears with the result (✓ or ✕), the command and the duration (through `osascript` on macOS, `notify-send` on Linux and a PowerShell toast on Windows); `"notifications": false` in the settings turns it off. Requires the zsh integration.
+When a command runs for at least 10 seconds and finishes in an inactive tab or while the window is in the background, the app flags the tab and shows a notice with the command, its result and duration. The notice is dismissed with its button. If the app is in the background, a desktop notification also appears with the result (✓ or ✕), the command and the duration (from the app itself on macOS, `notify-send` on Linux and a PowerShell toast on Windows); `"notifications": false` in the settings turns it off. On macOS the first one asks for permission, and Moth then has its own entry in System Settings → Notifications. A binary run outside `Moth.app`, as `cargo run` does, has no app identity and goes through `osascript`, so its notifications appear as Script Editor's. Requires the zsh integration.
 
 Zoom changes the text in every tab, adjusts the cell size and persists across runs. The range is 8 to 32 points and ⌘0 resets it to 13.5 points.
 
@@ -146,6 +146,19 @@ Commands interrupted with ⌃C (or another signal), and `grep`, `diff` and `test
 
 For anything else there's the agent, any coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP): Claude Code, Codex, Gemini CLI… With nothing fixed locally, the empty prompt after a failure shows ⌘⇧I ("Fix Last Command with Agent"), which sends the command, its exit code and the end of its output and asks for a corrected command. ⌘I ("Ask Agent for a Command…") opens a field to describe what you want in plain words ("find files over 100 MB modified this week"); whatever was typed at the prompt starts in it. The answer streams into a panel at the prompt: ⏎ puts the command on the prompt to review and ⌘⏎ runs it. Nothing runs on its own, and esc closes the panel.
 
+The panel opens with an **AI** label, so it's clear from the start that what follows comes from a model, followed by the model answering and how. To answer in a second or two, each request runs on the agent's lightest model without reasoning: Haiku with thinking off for Claude; for Codex, whose models always reason a little, the Luna model at its lowest effort. Moth picks them from the options the agent announces (ACP session config options), by what their names and descriptions say, so new models are picked up without an update. An agent that announces none keeps its own model. `agent_options` in the settings chooses them instead:
+
+```json
+{ "agent_options": { "model": "sonnet", "reasoning": true, "effort": "medium" } }
+```
+
+- `model`: a model the agent offers, by its id or its name (`"sonnet"`, `"6 Luna"`), or `"auto"` (the default) for the lightest.
+- `reasoning`: `false` (the default) answers without reasoning where the agent allows it (Claude) and at the lowest effort elsewhere; `true` lets the model reason.
+- `effort`: a reasoning effort the model offers (`"low"`, `"medium"`, `"high"`…), or `"auto"` (the default) for the lowest.
+- Any other option the agent announces, by its id, like Codex's `"fast-mode": "on"`. The permission mode can't be set: the agent stays without tools.
+
+What the agent doesn't offer is left as it was, and the panel says why.
+
 What the agent gets is kept to a minimum and checked for secrets first:
 
 - Only the failed command, its exit code and its last 60 lines (6 KB) of output; for ⌘I, the request, the names of the files in the current folder (not their contents) and the previous command. Plus the folder (with your home folder as `~`), the git branch, the shell and the OS. Never history, environment variables or files.
@@ -176,9 +189,9 @@ URLs in the output (`http`, `https`, `ftp`, `file`, `mailto`), including ones wr
 File paths are links too, with their line and column if the output includes them: `src/main.rs:12:5` (rustc, grep, go, pytest), `src/app.ts(12,5)` (tsc) and `File "app.py", line 7` (Python). They're resolved against the tab's current folder (also `~/…`, absolute paths and the `a/…` and `b/…` paths from `git diff`), and are only underlined if the file exists. A click opens them in the editor:
 
 - the one set as `editor` in the settings, or the first one found among Zed, Cursor, VS Code, Windsurf and Sublime Text (on the shell's PATH or inside the app in `/Applications`);
-- if none is found, the system's default app for the file, without jumping to the line.
+- if none is found, the system's default app for the file, without jumping to the line. Programs and scripts (an executable file, `.app`, `.command`, `.exe`, `.bat`…) are shown in the file manager instead, so a link in the output never runs anything.
 
-Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an SSH session paths aren't links, since they're files on the server. Local `file://` hyperlinks also go to the editor.
+Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an SSH session paths aren't links, since they're files on the server. Local `file://` hyperlinks also go to the editor; one that leads to a folder or an app bundle is shown in the file manager, and `file://` links are never handed to the system as URLs.
 
 ## Settings
 
@@ -204,8 +217,9 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `tab_completion`: `"shell"` (default) leaves Tab to zsh's completion; `"popup"` makes Tab open the app's suggestions.
 - `check_updates`: look for new releases automatically (on by default; see [Updates](#updates)).
 - `agent`: the ACP agent for ⌘I and ⌘⇧I: `"claude"`, `"codex"`, `"gemini"`, `{"command": …, "args": […], "env": {…}}` for another one, or `false` to turn it off; unset, the first one found on the PATH (see [Fixes and the agent](#fixes-and-the-agent)).
+- `agent_options`: the agent's model, `reasoning` (`false` by default), `effort` and any other option it announces; unset, the lightest model without reasoning (see [Fixes and the agent](#fixes-and-the-agent)).
 
-The file is reloaded when the window regains focus. A misspelled key or invalid JSON shows a notice and the defaults are used.
+The file is reloaded when the window regains focus. A misspelled key or an invalid value shows a notice at startup or on reload, and only that setting falls back to its default; the others still apply. A file that isn't valid JSON shows a notice too: at startup the defaults are used, and on reload the settings in use are kept. If the `shell` can't start, the tab opens with the default shell instead.
 
 ## Command palette and history
 
@@ -263,7 +277,7 @@ Programs can copy to the clipboard with OSC 52 (handy for copying from vim or tm
 
 When a tab opens with zsh, the app installs `assets/shell/zsh/` into `shell/zsh` inside the settings folder and starts zsh with `ZDOTDIR` pointing there. That `.zshenv` restores your `ZDOTDIR`, sources your `.zshenv` and then the integration; `.zprofile` and `.zshrc` are still your own.
 
-The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH` and the names of aliases, functions and builtins. The app picks these up from the PTY output before handing it to alacritty, and uses them to:
+The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH` and the names of aliases, functions and builtins. Each one is wrapped as `OSC 7777;<token>;…`, with a random token the app hands the integration in `MOTH_TOKEN` (the script unsets it, so programs don't inherit it). The app ignores sequences without the token, so a file or a server that prints them can't pose as the shell (to put a command on the "Reconnect" button, say). The app picks these up from the PTY output before handing it to alacritty, and uses them to:
 
 - highlight the line you're typing (command, subcommand, flags, strings, paths, operators, variables; unknown commands get a red squiggle);
 - suggest in gray the rest of the most recent history command that starts the same way; → or End accepts it;
@@ -273,9 +287,11 @@ The integration emits OSC 133 (prompt and command start/end, with exit code; the
 
 If you use macOS's default zsh prompt, the integration replaces it with one in the app's style: a dim header with the folder (the last three if the path is long), the branch, the previous command's result and duration, and the time; below it, `❯` in green, or red if the command failed, with a blank line between blocks. If you have your own prompt (starship, p10k…) it's left alone; to disable it anyway, set `MOTH_PROMPT=0` in your `.zshrc`.
 
+If a tab's folder disappears, most likely because its volume was unmounted (an external disk unplugged, a network share dropped), a card in the corner of the tab says so; the app checks every two seconds, off the main thread. A shell left in a folder like that can't use it even once the volume is back (`ls` fails until you `cd` again), so with the zsh integration the tab goes back into the folder by itself: the app sends the shell `SIGUSR1` when the folder reappears and the shell is at the prompt, and every prompt checks it too (after a command that was running when it came back). If your `.zshrc` already handles `USR1`, only the prompt check applies. In other shells the card says so, and you `cd` back yourself.
+
 On macOS, if the app gets no locale (when launched from Finder), it passes the shell a UTF-8 `LANG` based on the macOS language, so accented and other non-ASCII characters work.
 
-The integration works wherever zsh runs: macOS, Linux, and zsh inside WSL or MSYS2 on Windows when it's set as the `shell`. The scanner that reads its sequences runs on every platform, so any shell that emits the same OSC 133 marks gets command blocks too.
+The integration works wherever zsh runs: macOS, Linux, and zsh inside WSL or MSYS2 on Windows when it's set as the `shell`. The scanner that reads its sequences runs on every platform, so any other shell that emits plain OSC 133 marks gets command blocks too (in tabs without the zsh integration, the standard OSC 133 and OSC 7 are taken as they come, and OSC 7777 never).
 
 Other shells work the same, just without these features.
 
@@ -319,16 +335,16 @@ The icon artwork is `assets/branding/moth-terminal-transparent.png`. The macOS s
 
 ## Project structure
 
-- `src/workspace.rs`: window, tab bar, panes, status bar with the branch picker, actions.
+- `src/workspace.rs`: the window, its tabs and panes (creating, splitting, focusing, closing), session snapshots and terminal events. Its submodules in `src/workspace/`: `actions.rs` (key bindings and actions), `palette.rs` (command palette and the history, branch, theme and host pickers), `chrome.rs` (tab bar, status bar, remote status bar and production strip), `close.rs` (what closing would kill, and the confirmation) and `pane_view.rs` (drawing the pane tree and its dividers).
 - `src/panes.rs`: a tab's pane tree (split, close, resize, neighbor in each direction).
 - `src/session.rs`: saves and restores windows, tabs and panes.
-- `src/notify.rs`: desktop notifications (`osascript`, `notify-send`, a PowerShell toast).
+- `src/notify.rs`: desktop notifications (gpui's on macOS, or `osascript` outside the bundle; `notify-send`; a PowerShell toast).
 - `src/update/`: the updater with no UI: release manifest, verified downloads and in-place installs.
 - `src/updates.rs`: the app's side of updates: the schedule, the status bar, the notice and the restart.
 - `src/process.rs`: finding programs on the PATH and starting them in the background, per platform.
 - `src/shortcuts.rs`: shortcuts written the macOS way and translated for Linux and Windows.
 - `src/terminal.rs`: PTY + `alacritty_terminal`, events to gpui.
-- `src/terminal_view.rs`: paints the grid with gpui's text system, cursor, IME.
+- `src/terminal_view.rs`: a session's view: keys, copy, zoom, command navigation and the render that puts it together. Its submodules in `src/terminal_view/`: `grid_layout.rs` (the grid painted with gpui's text system: runs, backgrounds, cursor, selection, block decorations), `pointer.rs` (mouse, selection, wheel, mouse reporting), `link_hover.rs` (links under the mouse), `edit_line.rs` (where the line being typed sits, for clicks and highlighting), `completion_menu.rs` (the suggestions popup), `output_search.rs` (⌘F), `overlays.rs` (paste guard, exit banner, fix hint, agent panel) and `input_handler.rs` (IME).
 - `src/shell.rs`: zsh script installation, OSC detection in the PTY, history.
 - `src/ssh.rs`: recognizes the `ssh` command, resolves it with `ssh -G` and reads `~/.ssh/config`.
 - `src/hosts.rs`: `hosts.json` rules (label, color, production).
