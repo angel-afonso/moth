@@ -49,6 +49,7 @@ mod edit_line;
 mod grid_layout;
 mod input_handler;
 mod link_hover;
+mod link_menu;
 mod output_search;
 mod overlays;
 mod pointer;
@@ -120,6 +121,8 @@ pub struct TerminalView {
     selected_block: Option<blocks::Anchor>,
     /// The agent's panel (⌘I, ⌘⇧I), at the prompt.
     agent_panel: Option<(Entity<AgentPanel>, Subscription)>,
+    /// A link's right-click menu, and where it opened.
+    link_menu: Option<(Entity<ui::ContextMenu>, Point<Pixels>, Subscription)>,
     _observe: Subscription,
 }
 
@@ -158,6 +161,7 @@ impl TerminalView {
             reopen_completion_on: None,
             selected_block: None,
             agent_panel: None,
+            link_menu: None,
             _observe: observe,
         }
     }
@@ -532,18 +536,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::copy))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    this.other_button(
-                        mouse::Button::Right,
-                        mouse::Action::Press,
-                        e.position,
-                        &e.modifiers,
-                        cx,
-                    )
-                }),
-            )
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::right_mouse_down))
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(|this, e: &MouseUpEvent, _, cx| {
@@ -632,6 +625,7 @@ impl Render for TerminalView {
             .children(completion_menu)
             .children(fix_hint)
             .children(agent_panel)
+            .children(self.render_link_menu())
     }
 }
 

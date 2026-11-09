@@ -52,13 +52,12 @@ pub(super) struct HoveredLink {
     pub(super) cells: Vec<(i32, usize)>,
 }
 
-/// Link at `point`: the cell's OSC 8 hyperlink, or a URL written on the logical line
-/// (rows wrapped by the terminal width are joined). Safe schemes only.
-/// The link under `point`: an OSC 8 hyperlink, a written URL, or, with `cwd`, a path to an
-/// existing file.
 /// How many rows above and below the mouse a wrapped line is searched for links.
 const LINK_SEARCH_ROWS: i32 = 32;
 
+/// The link under `point`: the cell's OSC 8 hyperlink, a URL written on the logical line (rows
+/// wrapped by the terminal width are joined), or, with `cwd`, a path to an existing file. Safe
+/// schemes only.
 pub(super) fn link_at<T>(
     term: &Term<T>,
     point: AlacPoint,

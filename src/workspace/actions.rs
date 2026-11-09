@@ -117,6 +117,9 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, action: &OpenFile, w, cx| this.open_file(&action.file, w, cx)),
             )
+            .on_action(cx.listener(|this, action: &OpenFolderInNewTab, w, cx| {
+                this.add_tab_in(Some(action.dir.clone()), w, cx)
+            }))
             .on_action(cx.listener(|this, _: &OpenConfig, w, cx| this.open_config(w, cx)))
             .on_action(
                 cx.listener(|this, _: &terminal_view::RestartShell, w, cx| {

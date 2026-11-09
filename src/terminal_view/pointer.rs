@@ -300,6 +300,29 @@ impl TerminalView {
         }
     }
 
+    /// Right click: a link's menu, or for a program that wants the mouse, the click.
+    pub(super) fn right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.reports_mouse(event.modifiers.shift, cx)
+            && let Some(link) = self.link_under(event.position, cx)
+        {
+            self.deploy_link_menu(&link.target, event.position, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        self.other_button(
+            mouse::Button::Right,
+            mouse::Action::Press,
+            event.position,
+            &event.modifiers,
+            cx,
+        );
+    }
+
     /// Right or middle click: only relevant to programs that want the mouse.
     pub(super) fn other_button(
         &mut self,
