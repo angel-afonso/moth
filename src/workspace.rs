@@ -97,6 +97,13 @@ pub struct OpenFile {
     pub file: crate::links::FileLink,
 }
 
+/// Open a new tab in a folder (from a link's menu in the output).
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenFolderInNewTab {
+    pub dir: PathBuf,
+}
+
 /// Tab bar height; the macOS traffic lights are centered within it.
 pub const TAB_BAR_HEIGHT: Pixels = px(40.);
 

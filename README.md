@@ -191,6 +191,8 @@ File paths are links too, with their line and column if the output includes them
 - the one set as `editor` in the settings, or the first one found among Zed, Cursor, VS Code, Windsurf and Sublime Text (on the shell's PATH or inside the app in `/Applications`);
 - if none is found, the system's default app for the file, without jumping to the line. Programs and scripts (an executable file, `.app`, `.command`, `.exe`, `.bat`…) are shown in the file manager instead, so a link in the output never runs anything.
 
+Right-clicking a link opens its menu: for a file, Open, Show in Finder (Show in File Explorer on Windows, Show in File Manager on Linux), Open Folder in New Tab, Copy Path and, when the output gives a line, Copy Path and Line; for a folder, Show in Finder, Open in New Tab and Copy Path; for a URL, Open Link and Copy Link. In a program that uses the mouse (vim, htop), right-click goes to the program unless Shift is held.
+
 Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an SSH session paths aren't links, since they're files on the server. Local `file://` hyperlinks also go to the editor; one that leads to a folder or an app bundle is shown in the file manager, and `file://` links are never handed to the system as URLs.
 
 ## Settings
@@ -344,7 +346,7 @@ The icon artwork is `assets/branding/moth-terminal-transparent.png`. The macOS s
 - `src/process.rs`: finding programs on the PATH and starting them in the background, per platform.
 - `src/shortcuts.rs`: shortcuts written the macOS way and translated for Linux and Windows.
 - `src/terminal.rs`: PTY + `alacritty_terminal`, events to gpui.
-- `src/terminal_view.rs`: a session's view: keys, copy, zoom, command navigation and the render that puts it together. Its submodules in `src/terminal_view/`: `grid_layout.rs` (the grid painted with gpui's text system: runs, backgrounds, cursor, selection, block decorations), `pointer.rs` (mouse, selection, wheel, mouse reporting), `link_hover.rs` (links under the mouse), `edit_line.rs` (where the line being typed sits, for clicks and highlighting), `completion_menu.rs` (the suggestions popup), `output_search.rs` (⌘F), `overlays.rs` (paste guard, exit banner, fix hint, agent panel) and `input_handler.rs` (IME).
+- `src/terminal_view.rs`: a session's view: keys, copy, zoom, command navigation and the render that puts it together. Its submodules in `src/terminal_view/`: `grid_layout.rs` (the grid painted with gpui's text system: runs, backgrounds, cursor, selection, block decorations), `pointer.rs` (mouse, selection, wheel, mouse reporting), `link_hover.rs` (links under the mouse), `link_menu.rs` (a link's right-click menu), `edit_line.rs` (where the line being typed sits, for clicks and highlighting), `completion_menu.rs` (the suggestions popup), `output_search.rs` (⌘F), `overlays.rs` (paste guard, exit banner, fix hint, agent panel) and `input_handler.rs` (IME).
 - `src/shell.rs`: zsh script installation, OSC detection in the PTY, history.
 - `src/ssh.rs`: recognizes the `ssh` command, resolves it with `ssh -G` and reads `~/.ssh/config`.
 - `src/hosts.rs`: `hosts.json` rules (label, color, production).
