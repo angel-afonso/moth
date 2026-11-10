@@ -31,6 +31,7 @@ use ui::{
 
 use crate::{
     agent,
+    agent_mode::panel::{AgentModeEvent, AgentModePanel},
     agent_panel::{AgentPanel, AgentPanelEvent, AgentTask},
     blocks, completions,
     components::{Kbd, KindBadge, SuggestionKind},
@@ -80,7 +81,8 @@ actions!(
         CopyCommandOutput,
         ShowCompletions,
         AskAgent,
-        FixWithAgent
+        FixWithAgent,
+        ToggleAgentMode
     ]
 );
 
@@ -123,6 +125,8 @@ pub struct TerminalView {
     agent_panel: Option<(Entity<AgentPanel>, Subscription)>,
     /// A link's right-click menu, and where it opened.
     link_menu: Option<(Entity<ui::ContextMenu>, Point<Pixels>, Subscription)>,
+    /// Agent mode's conversation (⌘⇧A), beside the terminal.
+    agent_mode: Option<(Entity<AgentModePanel>, Subscription)>,
     _observe: Subscription,
 }
 
@@ -162,6 +166,7 @@ impl TerminalView {
             selected_block: None,
             agent_panel: None,
             link_menu: None,
+            agent_mode: None,
             _observe: observe,
         }
     }
@@ -485,7 +490,7 @@ impl Render for TerminalView {
                 }))
         });
 
-        div()
+        let terminal_area = div()
             .id("terminal-view")
             .relative()
             .key_context("Terminal")
@@ -529,6 +534,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &FixWithAgent, window, cx| {
                 this.open_agent(AgentTask::Fix, window, cx)
             }))
+            .on_action(cx.listener(Self::toggle_agent_mode))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Some(1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Some(-1.), cx)))
             .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.zoom(None, cx)))
@@ -625,7 +631,15 @@ impl Render for TerminalView {
             .children(completion_menu)
             .children(fix_hint)
             .children(agent_panel)
-            .children(self.render_link_menu())
+            .children(self.render_link_menu());
+        match &self.agent_mode {
+            Some((panel, _)) => h_flex()
+                .size_full()
+                .child(terminal_area.flex_1().min_w_0())
+                .child(panel.clone())
+                .into_any_element(),
+            None => terminal_area.into_any_element(),
+        }
     }
 }
 

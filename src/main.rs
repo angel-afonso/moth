@@ -1,4 +1,5 @@
 mod agent;
+mod agent_mode;
 mod agent_panel;
 mod assets;
 mod blocks;
@@ -102,6 +103,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Ask Agent…", view::AskAgent),
                 MenuItem::action("Fix Last Command with Agent", view::FixWithAgent),
+                MenuItem::action("Agent Mode", view::ToggleAgentMode),
                 MenuItem::separator(),
                 MenuItem::action("Find…", view::FindOutput),
                 MenuItem::action("Clear Screen", ws::ClearScreen),
