@@ -218,6 +218,13 @@ impl Workspace {
             .shortcut(terminal_view::FixWithAgent),
             PickerItem::new(
                 "Actions",
+                "Agent Mode",
+                PickerAction::Dispatch(Box::new(terminal_view::ToggleAgentMode)),
+            )
+            .icon(IconName::Sparkle)
+            .shortcut(terminal_view::ToggleAgentMode),
+            PickerItem::new(
+                "Actions",
                 "Copy Last Command Output",
                 PickerAction::Dispatch(Box::new(terminal_view::CopyCommandOutput)),
             )

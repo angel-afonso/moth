@@ -37,6 +37,19 @@ pub struct Config {
     pub agent: Option<AgentSetting>,
     /// The agent's model and its settings (see `AgentOptions`); unset, the quickest ones.
     pub agent_options: AgentOptions,
+    /// Which of agent mode's commands run without asking, besides those that only read.
+    pub agent_mode: AgentModeSettings,
+}
+
+/// Commands for agent mode, each the start of a command line (`"cargo test"` covers
+/// `cargo test --release`).
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentModeSettings {
+    /// Run without asking.
+    pub allow: Vec<String>,
+    /// Always ask, with a warning, even if they only read.
+    pub deny: Vec<String>,
 }
 
 /// How the agent answers. By default its lightest model, without reasoning where the agent
@@ -115,7 +128,8 @@ const TEMPLATE: &str = r#"{
   "tab_completion": "shell",
   "check_updates": true,
   "agent": null,
-  "agent_options": { "model": "auto", "reasoning": false, "effort": "auto" }
+  "agent_options": { "model": "auto", "reasoning": false, "effort": "auto" },
+  "agent_mode": { "allow": [], "deny": [] }
 }
 "#;
 
@@ -273,6 +287,14 @@ mod tests {
         assert!(parse(r#"{"agent": {"comand": "gemini"}}"#).is_err());
 
         assert!(!config.agent_options.reasoning());
+        assert_eq!(config.agent_mode, AgentModeSettings::default());
+        let agent_mode =
+            parse(r#"{"agent_mode": {"allow": ["cargo test"], "deny": ["git push"]}}"#)
+                .unwrap()
+                .agent_mode;
+        assert_eq!(agent_mode.allow, ["cargo test"]);
+        assert_eq!(agent_mode.deny, ["git push"]);
+        assert!(parse(r#"{"agent_mode": {"alow": []}}"#).is_err());
         let options = parse(
             r#"{"agent_options": {"model": "sonnet", "reasoning": true, "effort": "medium", "fast": "on", "verbose": false}}"#,
         )

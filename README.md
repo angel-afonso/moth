@@ -70,6 +70,7 @@ The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own bel
 | → / End | Accept the gray suggestion (the fix for a failed command, or history) |
 | ⌘I | Ask the agent for a command |
 | ⌘⇧I | Ask the agent to fix the last command |
+| ⌘⇧A | Agent mode: the agent works in the current folder |
 | ⌥← / ⌥→ · ⌥⌦ | Previous / next word · delete the next word (at the prompt) |
 | ⌘← / ⌘→ · ⌘⌫ | Start / end of line · delete the line (at the prompt) |
 
@@ -165,7 +166,7 @@ What the agent gets is kept to a minimum and checked for secrets first:
 - Secrets are replaced with `[REDACTED]` before sending: private keys, tokens with a known format (GitHub, GitLab, AWS, OpenAI, Anthropic, Stripe, Slack, Google, npm, JWTs…), values named like secrets (`DB_PASSWORD=…`, `"api_key": …`, `--token …`), passwords in URLs (`https://user:…@host`), `Authorization` and `Cookie` headers, `curl -u user:…`, `mysql -p…`, and long random-looking strings. The panel says how many were removed, and "What was sent" shows the context exactly as the agent received it.
 - The output of commands that print secrets (`env`, `printenv`, `cat .env`, key files, `~/.aws` and `~/.ssh`, `gh auth token`, `kubectl get secret`, password managers…) isn't sent at all, only the command.
 - On production hosts (see SSH sessions) the agent is off.
-- The agent gets no file system or terminal from Moth, every permission it asks for (to run a tool, edit a file) is refused, and its sessions run in an empty folder (`agent` in the settings folder). Each request is a new session, so nothing from one carries over to the next.
+- The agent gets no file system or terminal from Moth, every permission it asks for (to run a tool, edit a file) is refused, and its sessions run in an empty folder (`agent` in the settings folder). Each request is a new session, so nothing from one carries over to the next. ([Agent mode](#agent-mode) is the exception: there the agent works in your folder.)
 
 The agent is launched when first needed and stopped after 10 minutes without requests. To choose it, set `agent` in the settings:
 
@@ -181,6 +182,26 @@ The agent is launched when first needed and stopped after 10 minutes without req
 Without `agent`, Moth uses an adapter installed by hand (`claude-agent-acp`, `claude-code-acp`, `codex-acp`) if there's one on the shell's PATH, or else the agent of the first of `claude`, `codex` and `gemini` it finds there.
 
 The agent signs in its own way, with the login of its CLI (`claude`, `codex login`, `gemini`), so Moth never sees API keys. If it isn't logged in, the panel says which command to run.
+
+## Agent mode
+
+⌘⇧A ("Agent Mode") opens a conversation with the agent in a panel beside the terminal, as in Warp. Describe a task ("find why the tests fail and fix it") and the agent works on it in the tab's current folder: it reads files, runs commands and edits, and each step shows in the panel with its output (the last lines; "Show all" for the rest) or, for an edit, the lines added and removed. Follow-up messages continue the same conversation; ⏎ sends, esc stops the agent while it works or goes back to the terminal, ⌘⇧A moves between the two and × ends the conversation.
+
+Commands that only read run on their own; anything else waits for you:
+
+- **Runs on its own**: commands that only read and print, like `ls`, `cat`, `grep`, `rg`, `find`, `wc`, `head`, `diff`, `jq`, `git status`, `git log`, `git diff`, `git branch` (listing), `cmd --version`, and pipes and `&&` chains made only of them. Reading files inside the folder doesn't ask either.
+- **Asks** (⏎ runs it, esc turns it down): everything else, like `cargo build`, `npm install`, `mkdir`, `git commit`, edits, and anything Moth can't follow: `$(…)`, a redirection into a file, a subshell, a program given by path, variables set before the command, or options that run other programs (`find -exec`, `rg --pre`, `git -c`). Commands that print secrets (`cat .env`, `printenv`) and files outside the folder ask too.
+- **Asks with a warning**: what can't be undone, like `rm`, `sudo`, `chmod`, `kill`, `git push --force`, `git reset --hard`, `git clean`, `find -delete`, `docker … prune`, `kubectl delete`, `… publish`, or a download piped into a shell (`curl … | sh`).
+
+When a command asks, ⌘⏎ ("Always allow") runs it and lets commands that start the same way (`cargo test`, `npm run`) run on their own for the rest of the conversation; for an edit it allows the next edits inside the folder. It's never offered for what comes with a warning. To allow or warn about commands for good, list how they start in the settings:
+
+```json
+{ "agent_mode": { "allow": ["cargo test", "cargo build", "make"], "deny": ["git push"] } }
+```
+
+`allow` runs them without asking, except what comes with a warning; `deny` always asks, with a warning, even if they only read.
+
+The agent is the one from the `agent` setting, and agent mode starts it in its most careful mode (Codex's read-only sandbox, Claude's "Manual"), so anything beyond reading comes to Moth first; the panel shows the mode in use. Each conversation runs its own agent process, with the agent's own model and settings (`agent_options` is for ⌘I), so ⌘I stays quick meanwhile. Unlike ⌘I, the agent sees the files it reads and the output of the commands it runs; what you type is still checked for secrets before it's sent. Agent mode works on this computer's folders, so it's off in SSH sessions.
 
 ## Links
 
@@ -220,6 +241,7 @@ Terminal editors (vim, nvim, helix, nano, micro, kak) open in a new tab. In an S
 - `check_updates`: look for new releases automatically (on by default; see [Updates](#updates)).
 - `agent`: the ACP agent for ⌘I and ⌘⇧I: `"claude"`, `"codex"`, `"gemini"`, `{"command": …, "args": […], "env": {…}}` for another one, or `false` to turn it off; unset, the first one found on the PATH (see [Fixes and the agent](#fixes-and-the-agent)).
 - `agent_options`: the agent's model, `reasoning` (`false` by default), `effort` and any other option it announces; unset, the lightest model without reasoning (see [Fixes and the agent](#fixes-and-the-agent)).
+- `agent_mode`: `allow` and `deny`, lists of how commands start (`"cargo test"`): what agent mode runs without asking, and what always asks with a warning (see [Agent mode](#agent-mode)).
 
 The file is reloaded when the window regains focus. A misspelled key or an invalid value shows a notice at startup or on reload, and only that setting falls back to its default; the others still apply. A file that isn't valid JSON shows a notice too: at startup the defaults are used, and on reload the settings in use are kept. If the `shell` can't start, the tab opens with the default shell instead.
 
@@ -363,6 +385,7 @@ The icon artwork is `assets/branding/moth-terminal-transparent.png`. The macOS s
 - `src/fixes.rs`: fixes for a failed command found on the machine (the tool's own suggestion, typos of commands, folders and branches).
 - `src/agent.rs`: the ACP client: finds and launches the agent, builds the prompts, reads the answer.
 - `src/agent_panel.rs`: the agent's panel at the prompt (⌘I, ⌘⇧I).
+- `src/agent_mode.rs`: agent mode (⌘⇧A): the conversation with the agent, its tool calls and permission requests. In `src/agent_mode/`: `policy.rs` (which commands run without asking) and `panel.rs` (the panel beside the terminal).
 - `src/redact.rs`: takes secrets out of what's sent to the agent.
 - `src/mouse.rs`: mouse reporting to programs that request it (SGR and X10).
 - `src/links.rs`: URLs and paths with line and column in the output, allowed schemes.

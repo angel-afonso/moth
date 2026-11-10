@@ -1,5 +1,5 @@
 //! What's drawn over the grid: the production paste guard, the exit banner, the fix hint
-//! and the agent panel.
+//! and the agent panel; and agent mode's panel, beside the grid.
 
 use super::*;
 
@@ -56,6 +56,31 @@ impl TerminalView {
             cx.notify();
         });
         self.agent_panel = Some((panel, subscription));
+        cx.notify();
+    }
+
+    /// ⌘⇧A: opens agent mode beside the terminal, or moves the keyboard to it when it's open.
+    pub(super) fn toggle_agent_mode(
+        &mut self,
+        _: &ToggleAgentMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((panel, _)) = &self.agent_mode {
+            panel.read(cx).focus_handle(cx).focus(window, cx);
+            return;
+        }
+        self.completion = None;
+        let terminal = self.terminal.clone();
+        let panel = cx.new(|cx| AgentModePanel::new(terminal, window, cx));
+        let subscription = cx.subscribe_in(&panel, window, |this, _, event, window, cx| {
+            if let AgentModeEvent::Close = event {
+                this.agent_mode = None;
+            }
+            this.focus_handle.focus(window, cx);
+            cx.notify();
+        });
+        self.agent_mode = Some((panel, subscription));
         cx.notify();
     }
 

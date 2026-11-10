@@ -38,6 +38,16 @@ pub fn init(cx: &mut App) {
             ),
             shortcuts::bind("cmd-i", terminal_view::AskAgent, Some("Terminal")),
             shortcuts::bind("cmd-shift-i", terminal_view::FixWithAgent, Some("Terminal")),
+            shortcuts::bind(
+                "cmd-shift-a",
+                terminal_view::ToggleAgentMode,
+                Some("Terminal"),
+            ),
+            shortcuts::bind(
+                "cmd-shift-a",
+                terminal_view::ToggleAgentMode,
+                Some("AgentMode"),
+            ),
             // The last binding for each action is the one shown in menus and buttons.
             shortcuts::bind("ctrl-tab", NextTab, None),
             shortcuts::bind("ctrl-shift-tab", PreviousTab, None),

@@ -213,24 +213,30 @@ fn known_kind(program: &Path) -> Option<AgentKind> {
 /// `reasoning` is on; for Claude and Codex, none of the follow-up suggestions they'd write
 /// after each answer. What the settings' own `env` says wins.
 pub fn tuned(command: &AgentCommand, options: &AgentOptions) -> AgentCommand {
-    let mut tuned = command.clone();
-    let mut set = |key: &str, value: &str| {
+    let mut tuned = quiet(command);
+    if command.kind == Some(AgentKind::Claude) && !options.reasoning() {
         tuned
             .env
-            .entry(key.to_string())
-            .or_insert_with(|| value.to_string());
-    };
-    match command.kind {
-        Some(AgentKind::Claude) => {
-            set("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false");
-            if !options.reasoning() {
-                set("MAX_THINKING_TOKENS", "0");
-            }
-        }
-        Some(AgentKind::Codex) => set("CODEX_ACP_PROMPT_SUGGESTIONS", "false"),
-        _ => {}
+            .entry("MAX_THINKING_TOKENS".to_string())
+            .or_insert_with(|| "0".to_string());
     }
     tuned
+}
+
+/// `command` without the follow-up suggestions Claude and Codex write after each answer. What
+/// the settings' own `env` says wins.
+pub fn quiet(command: &AgentCommand) -> AgentCommand {
+    let mut quiet = command.clone();
+    let key = match command.kind {
+        Some(AgentKind::Claude) => "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION",
+        Some(AgentKind::Codex) => "CODEX_ACP_PROMPT_SUGGESTIONS",
+        _ => return quiet,
+    };
+    quiet
+        .env
+        .entry(key.to_string())
+        .or_insert_with(|| "false".to_string());
+    quiet
 }
 
 /// The agent runs without thinking (`MAX_THINKING_TOKENS=0`, which Claude's adapter reads).
@@ -242,7 +248,7 @@ fn thinking_off(command: &AgentCommand) -> bool {
 }
 
 /// `text`, from a failed request, with how to log in when it's about that.
-fn explain(name: &str, text: String) -> String {
+pub fn explain(name: &str, text: String) -> String {
     let lower = text.to_lowercase();
     let auth = [
         "auth",
@@ -815,14 +821,14 @@ fn effort_rank(value: &SessionConfigSelectOption) -> Option<u8> {
     }
 }
 
-fn as_select(option: &SessionConfigOption) -> Option<&SessionConfigSelect> {
+pub fn as_select(option: &SessionConfigOption) -> Option<&SessionConfigSelect> {
     match &option.kind {
         SessionConfigKind::Select(select) => Some(select),
         _ => None,
     }
 }
 
-fn values(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption> {
+pub fn values(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption> {
     match &select.options {
         SessionConfigSelectOptions::Ungrouped(values) => values.iter().collect(),
         SessionConfigSelectOptions::Grouped(groups) => {
@@ -841,7 +847,7 @@ fn words(text: &str) -> std::collections::BTreeSet<String> {
 }
 
 /// The error in a line or two, with what the agent printed on stderr if that's all there is.
-fn message(err: &agent_client_protocol::Error) -> String {
+pub fn message(err: &agent_client_protocol::Error) -> String {
     let text = err.to_string();
     let text = text.trim();
     let text = text
