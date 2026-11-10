@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/angel-afonso/moth/compare/v0.4.0...v0.5.0) - 2026-11-10
+
+### Added
+
+- *(agent)* add agent mode, which runs read-only commands on its own and asks for the rest
+- *(links)* add a right-click menu to links and paths
+
 ## [0.4.0](https://github.com/angel-afonso/moth/compare/v0.3.0...v0.4.0) - 2026-11-08
 
 ### Added
