@@ -25,6 +25,8 @@ const ROW_HEIGHT: f32 = 34.;
 const MAX_VISIBLE_ROWS: usize = 11;
 const MAX_RESULTS: usize = 300;
 
+gpui::actions!(picker, [NextFilter, PreviousFilter]);
+
 pub fn init(cx: &mut App) {
     text_input::init(cx);
     let ctx = Some("Picker");
@@ -38,6 +40,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", menu::Confirm, ctx),
         KeyBinding::new("secondary-enter", menu::SecondaryConfirm, ctx),
         KeyBinding::new("escape", menu::Cancel, ctx),
+        KeyBinding::new("tab", NextFilter, ctx),
+        KeyBinding::new("shift-tab", PreviousFilter, ctx),
     ]);
 }
 
@@ -84,6 +88,9 @@ pub struct PickerItem {
     /// Action whose shortcut is shown on the right.
     pub shortcut: Option<Box<dyn Action>>,
     pub mono: bool,
+    /// The filters it shows under besides the first, which shows everything: bit N for
+    /// the Nth of [`PickerConfig::filters`].
+    pub filters: u32,
     pub action: PickerAction,
 }
 
@@ -99,8 +106,15 @@ impl PickerItem {
             chip: None,
             shortcut: None,
             mono: false,
+            filters: 0,
             action,
         }
+    }
+
+    /// Also shows it under the Nth filter.
+    pub fn in_filter(mut self, filter: usize) -> Self {
+        self.filters |= 1 << filter;
+        self
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
@@ -149,6 +163,9 @@ pub struct PickerConfig {
     pub disabled_reason: Option<SharedString>,
     /// Item highlighted on open, with an empty query (index into the item list).
     pub selected_item: Option<usize>,
+    /// Views of the list to switch between with Tab, shown as chips under the field. The
+    /// first one shows every item; the others, the items tagged with them.
+    pub filters: Vec<SharedString>,
 }
 
 pub enum PickerEvent {
@@ -171,6 +188,8 @@ pub struct Picker {
     items: Vec<PickerItem>,
     rows: Vec<Row>,
     selected: Option<usize>,
+    /// The filter in use (index into the config's).
+    filter: usize,
     scroll: UniformListScrollHandle,
     config: PickerConfig,
     _input_changed: Subscription,
@@ -193,6 +212,7 @@ impl Picker {
             items,
             rows: Vec::new(),
             selected: None,
+            filter: 0,
             scroll: UniformListScrollHandle::new(),
             config,
             _input_changed: input_changed,
@@ -204,9 +224,14 @@ impl Picker {
     fn update_matches(&mut self, cx: &mut Context<Self>) {
         let query = self.input.read(cx).text().trim().to_string();
         self.rows.clear();
+        let filter = self.filter;
+        let shown = |item: &PickerItem| filter == 0 || item.filters & (1 << filter) != 0;
         if query.is_empty() {
             let mut section: Option<&SharedString> = None;
             for (ix, item) in self.items.iter().enumerate() {
+                if !shown(item) {
+                    continue;
+                }
                 if section != Some(&item.section) && !item.section.is_empty() {
                     self.rows.push(Row::Header(item.section.clone()));
                 }
@@ -221,6 +246,7 @@ impl Picker {
                 .items
                 .iter()
                 .enumerate()
+                .filter(|(_, item)| shown(item))
                 .filter_map(|(ix, item)| {
                     fuzzy_match(&query, &item.label).map(|m| (m.score, ix, m.positions))
                 })
@@ -349,6 +375,23 @@ impl Picker {
         cx.emit(PickerEvent::Dismiss);
     }
 
+    fn set_filter(&mut self, filter: usize, cx: &mut Context<Self>) {
+        if filter != self.filter && filter < self.config.filters.len() {
+            self.filter = filter;
+            self.update_matches(cx);
+        }
+    }
+
+    fn next_filter(&mut self, _: &NextFilter, _: &mut Window, cx: &mut Context<Self>) {
+        let count = self.config.filters.len().max(1);
+        self.set_filter((self.filter + 1) % count, cx);
+    }
+
+    fn previous_filter(&mut self, _: &PreviousFilter, _: &mut Window, cx: &mut Context<Self>) {
+        let count = self.config.filters.len().max(1);
+        self.set_filter((self.filter + count - 1) % count, cx);
+    }
+
     fn render_rows(
         &mut self,
         range: std::ops::Range<usize>,
@@ -471,6 +514,8 @@ impl Render for Picker {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::next_filter))
+            .on_action(cx.listener(Self::previous_filter))
             .w(px(620.))
             .max_w_full()
             .bg(ui.surface)
@@ -496,6 +541,37 @@ impl Render for Picker {
                     .child(self.input.clone())
                     .child(Kbd::new("esc")),
             )
+            .when(!self.config.filters.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .gap(px(4.))
+                        .border_b_1()
+                        .border_color(ui.divider)
+                        .children(self.config.filters.iter().enumerate().map(|(ix, name)| {
+                            let active = ix == self.filter;
+                            div()
+                                .id(("picker-filter", ix))
+                                .px(px(8.))
+                                .py(px(2.))
+                                .rounded(metrics::RADIUS_ROW)
+                                .cursor_pointer()
+                                .when(active, |chip| chip.bg(ui.element_selected))
+                                .when(!active, |chip| {
+                                    chip.hover(|style| style.bg(ui.element_hover))
+                                })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.set_filter(ix, cx);
+                                }))
+                                .child(
+                                    Label::new(name.clone())
+                                        .size(LabelSize::Small)
+                                        .color(if active { Color::Default } else { Color::Muted }),
+                                )
+                        })),
+                )
+            })
             .child(if self.rows.is_empty() {
                 div()
                     .h(px(ROW_HEIGHT * 2.))

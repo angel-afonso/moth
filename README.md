@@ -60,7 +60,7 @@ The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own bel
 | ⌘1…⌘8, ⌘9 | Go to tab N / to the last tab |
 | ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Next / previous tab |
 | ⌘K · ⌘⇧P | Command palette |
-| ⌘R | Search history (⏎ puts it on the prompt, ⌘⏎ runs it) |
+| ⌘R | Search history (⏎ puts it on the prompt, ⌘⏎ runs it, Tab filters by folder or failures) |
 | ⌘L | Clear the screen and scrollback |
 | ⌘⇧R | Reconnect a dropped SSH session |
 | ⌘V | Paste (honors bracketed paste) |
@@ -247,7 +247,7 @@ The file is reloaded when the window regains focus. A misspelled key or an inval
 
 ## Command palette and history
 
-⌘K opens the command palette: actions (with their shortcuts), open tabs and recent folders, which open in a new tab. ⌘R ("Search History") opens the zsh history search: it starts with whatever was already typed at the prompt, filters with fuzzy matching and highlights the matching characters. ⏎ puts the command on the prompt for editing and ⌘⏎ runs it. Clicking the branch in the status bar (or "Switch Branch…" in the palette) opens the same picker with the local branches.
+⌘K opens the command palette: actions (with their shortcuts), open tabs and recent folders, which open in a new tab. ⌘R ("Search History") opens the zsh history search: it starts with whatever was already typed at the prompt, filters with fuzzy matching and highlights the matching characters. ⏎ puts the command on the prompt for editing and ⌘⏎ runs it. Commands run in Moth show the folder of their last run and, if that run failed, its exit code; Tab (or a click on the chips under the field) switches between all of the history, the commands run in the current folder ("This folder") and the ones that failed last time ("Failed"). Clicking the branch in the status bar (or "Switch Branch…" in the palette) opens the same picker with the local branches.
 
 ## SSH sessions
 
