@@ -3,7 +3,8 @@
 #                     B carries rows=N (prompt height) and prev_err=0|1 (previous command failed)
 #   OSC 7             current directory
 #   OSC 7777;...      custom: E command run, L line being edited, F editing finished,
-#                     H history file, P PATH, N alias/function/builtin names
+#                     H history file, P PATH, N alias/function/builtin names,
+#                     V names of the exported variables
 # Each one goes as OSC 7777;<token>;<sequence>, with the token the app passes in MOTH_TOKEN:
 # the app ignores sequences without it, so output that prints them can't pose as the shell.
 #
@@ -11,7 +12,7 @@
 # with folder, branch and previous command result; `❯` below it). With your own theme
 # (starship, p10k…) or MOTH_PROMPT=0 in your .zshrc, it's left alone.
 [[ -n "$_MOTH_LOADED" ]] && return
-typeset -g _MOTH_LOADED=1 _moth_running= _moth_first=1 _moth_own_prompt= _moth_started= _moth_prev_err=0
+typeset -g _MOTH_LOADED=1 _moth_running= _moth_first=1 _moth_own_prompt= _moth_started= _moth_prev_err=0 _moth_vars=
 typeset -gH _moth_token=$MOTH_TOKEN
 unset MOTH_SHELL_INTEGRATION MOTH_TOKEN
 zmodload zsh/parameter 2>/dev/null
@@ -74,6 +75,12 @@ _moth_precmd() {
     fi
   fi
   _moth_report_cwd
+  # Names of the exported variables (not their values), when they change.
+  local vars="${(ko)parameters[(R)*export*]}"
+  if [[ "$vars" != "$_moth_vars" ]]; then
+    _moth_vars=$vars
+    _moth_osc "7777;V;$vars"
+  fi
   [[ -n "$_moth_own_prompt" ]] && _moth_build_prompt "$ret" "$ran"
   _moth_osc "133;A"
   # Set the prompt-end mark now and again at the end of precmd, in case a theme

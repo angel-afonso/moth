@@ -73,6 +73,59 @@ pub fn read_status(dir: &Path) -> Option<GitStatus> {
     Some(status)
 }
 
+/// Files with changes under `dir`, relative to it, with what changed: modified, deleted or
+/// untracked. What `git add` or `git restore` would take. Blocking, but only asked for when
+/// one of them is what can be typed.
+pub fn changed_files(dir: &Path) -> Vec<(String, String)> {
+    let Ok(output) = git(dir)
+        .args([
+            "ls-files",
+            "-z",
+            "-t",
+            "--modified",
+            "--deleted",
+            "--others",
+            "--exclude-standard",
+        ])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_changed(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Entries of `git ls-files -z -t`: a status letter, a space and the path. A deleted file
+/// is listed as modified too, so the first one of each path wins after sorting deletions
+/// first.
+fn parse_changed(output: &str) -> Vec<(String, String)> {
+    const MAX_CHANGED: usize = 300;
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut entries: Vec<(&str, &str)> = output
+        .split('\0')
+        .filter_map(|entry| entry.split_once(' '))
+        .collect();
+    entries.sort_by_key(|(tag, _)| *tag != "R");
+    for (tag, path) in entries {
+        if files.iter().any(|(seen, _)| seen == path) {
+            continue;
+        }
+        let change = match tag {
+            "R" => "deleted",
+            "C" => "modified",
+            "?" => "untracked",
+            _ => continue,
+        };
+        files.push((path.to_string(), change.to_string()));
+        if files.len() == MAX_CHANGED {
+            break;
+        }
+    }
+    files
+}
+
 pub fn parse_porcelain(output: &str) -> GitStatus {
     let mut status = GitStatus::default();
     for line in output.lines() {
@@ -156,6 +209,19 @@ mod tests {
         let initial = parse_porcelain("# branch.oid (initial)\n# branch.head main\n");
         assert_eq!(initial.display_name(), "main");
         assert_eq!(initial.staged + initial.modified + initial.untracked, 0);
+    }
+
+    #[test]
+    fn lists_changed_files_once() {
+        let output = "C src/main.rs\0C old.rs\0R old.rs\0? notes with space.md\0H kept.rs\0";
+        assert_eq!(
+            parse_changed(output),
+            vec![
+                ("old.rs".to_string(), "deleted".to_string()),
+                ("src/main.rs".to_string(), "modified".to_string()),
+                ("notes with space.md".to_string(), "untracked".to_string()),
+            ]
+        );
     }
 
     #[test]
