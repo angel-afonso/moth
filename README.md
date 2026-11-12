@@ -60,14 +60,14 @@ The shortcuts below are macOS's. On Linux and Windows, where Ctrl on its own bel
 | ⌘1…⌘8, ⌘9 | Go to tab N / to the last tab |
 | ⌘⇧] / ⌘⇧[ · ⌃Tab / ⌃⇧Tab | Next / previous tab |
 | ⌘K · ⌘⇧P | Command palette |
-| ⌘R | Search history (⏎ puts it on the prompt, ⌘⏎ runs it) |
+| ⌘R | Search history (⏎ puts it on the prompt, ⌘⏎ runs it, Tab filters by folder or failures) |
 | ⌘L | Clear the screen and scrollback |
 | ⌘⇧R | Reconnect a dropped SSH session |
 | ⌘V | Paste (honors bracketed paste) |
 | ⌘C | Copy the selection (with no selection, the visible screen) |
 | Tab | Shell completion, as usual (`Doc` → `Documents/`) |
 | ⌃Space | App suggestions (↑↓ choose, Tab complete, ⏎ run, esc close) |
-| → / End | Accept the gray suggestion (the fix for a failed command, or history) |
+| → / End · ⌥→ | Accept the gray suggestion (the fix for a failed command, or history) · only its next word |
 | ⌘I | Ask the agent for a command |
 | ⌘⇧I | Ask the agent to fix the last command |
 | ⌘⇧A | Agent mode: the agent works in the current folder |
@@ -132,7 +132,7 @@ Dragging selects, double-click selects a word, triple-click a line and Shift+cli
 
 ## Completions
 
-Tab at the prompt is the shell's completion, so navigating folders with `Doc` + Tab works like in any terminal. The app's suggestions are separate so they don't get in the way of that habit: the history suggestion appears in gray and is accepted with → or End, and ⌃Space ("Show Suggestions") opens a popup with what can be typed at the cursor: commands (PATH, aliases, functions, builtins), subcommands and flags of common tools with their descriptions, git branches, `package.json` scripts, hosts from `~/.ssh/config`, paths and history. The rest of the selected candidate is shown in gray on the line, and a side panel shows its documentation (usage and flags). If there's only one candidate it's completed right away, and after completing a folder the popup reopens with its contents. With nothing to suggest, ⌃Space goes to the shell as usual. With `"tab_completion": "popup"` in the settings, Tab opens the popup as it used to. The specs live in [`assets/completions/specs.json`](assets/completions/specs.json) and can be extended.
+Tab at the prompt is the shell's completion, so navigating folders with `Doc` + Tab works like in any terminal. The app's suggestions are separate so they don't get in the way of that habit: the history suggestion appears in gray and is accepted with → or End (⌥→ takes only its next word, or the next folder of a path), and ⌃Space ("Show Suggestions") opens a popup with what can be typed at the cursor: commands (PATH, aliases, functions, builtins), subcommands and flags of common tools with their descriptions (nested ones too, as in `git stash pop` or `docker compose up`; flags already on the line aren't offered again), git branches (most recently committed first), files with changes for `git add`, `git restore` and `git diff`, `package.json` scripts, Makefile targets, hosts from `~/.ssh/config`, exported variables after a `$`, and paths; `cd` also offers the folders used lately, after the ones in the current folder. The rest of the selected candidate is shown in gray on the line, and a side panel shows its documentation (usage and flags). If there's only one candidate it's completed right away, and after completing a folder the popup reopens with its contents. With nothing to suggest, ⌃Space goes to the shell as usual. With `"tab_completion": "popup"` in the settings, Tab opens the popup as it used to. The specs live in [`assets/completions/specs.json`](assets/completions/specs.json) and can be extended.
 
 ## Fixes and the agent
 
@@ -247,7 +247,7 @@ The file is reloaded when the window regains focus. A misspelled key or an inval
 
 ## Command palette and history
 
-⌘K opens the command palette: actions (with their shortcuts), open tabs and recent folders, which open in a new tab. ⌘R ("Search History") opens the zsh history search: it starts with whatever was already typed at the prompt, filters with fuzzy matching and highlights the matching characters. ⏎ puts the command on the prompt for editing and ⌘⏎ runs it. Clicking the branch in the status bar (or "Switch Branch…" in the palette) opens the same picker with the local branches.
+⌘K opens the command palette: actions (with their shortcuts), open tabs and recent folders, which open in a new tab. ⌘R ("Search History") opens the zsh history search: it starts with whatever was already typed at the prompt, filters with fuzzy matching and highlights the matching characters. ⏎ puts the command on the prompt for editing and ⌘⏎ runs it. Commands run in Moth show the folder of their last run and, if that run failed, its exit code; Tab (or a click on the chips under the field) switches between all of the history, the commands run in the current folder ("This folder") and the ones that failed last time ("Failed"). Clicking the branch in the status bar (or "Switch Branch…" in the palette) opens the same picker with the local branches.
 
 ## SSH sessions
 
@@ -301,10 +301,10 @@ Programs can copy to the clipboard with OSC 52 (handy for copying from vim or tm
 
 When a tab opens with zsh, the app installs `assets/shell/zsh/` into `shell/zsh` inside the settings folder and starts zsh with `ZDOTDIR` pointing there. That `.zshenv` restores your `ZDOTDIR`, sources your `.zshenv` and then the integration; `.zprofile` and `.zshrc` are still your own.
 
-The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH` and the names of aliases, functions and builtins. Each one is wrapped as `OSC 7777;<token>;…`, with a random token the app hands the integration in `MOTH_TOKEN` (the script unsets it, so programs don't inherit it). The app ignores sequences without the token, so a file or a server that prints them can't pose as the shell (to put a command on the "Reconnect" button, say). The app picks these up from the PTY output before handing it to alacritty, and uses them to:
+The integration emits OSC 133 (prompt and command start/end, with exit code; the end of prompt also carries the prompt's row count and whether the previous command failed), OSC 7 (current directory) and a custom OSC 7777: the line being edited on every keystroke, the command run, `HISTFILE`, `PATH`, the names of aliases, functions and builtins, and the names (not the values) of the exported variables. Each one is wrapped as `OSC 7777;<token>;…`, with a random token the app hands the integration in `MOTH_TOKEN` (the script unsets it, so programs don't inherit it). The app ignores sequences without the token, so a file or a server that prints them can't pose as the shell (to put a command on the "Reconnect" button, say). The app picks these up from the PTY output before handing it to alacritty, and uses them to:
 
 - highlight the line you're typing (command, subcommand, flags, strings, paths, operators, variables; unknown commands get a red squiggle);
-- suggest in gray the rest of the most recent history command that starts the same way; → or End accepts it;
+- suggest in gray the rest of a history command that starts the same way; → or End accepts it and ⌥→ takes its next word. Recent commands come first, but one run before in the current folder, or run often, beats a newer one; one that failed last time falls behind, and one the shell didn't find (a typo) is only suggested when nothing else matches. For this Moth keeps a log of the commands run in it, with the folder and exit code of each (`runs.jsonl` in the settings folder, at most 20,000 lines; on macOS and Linux only you can read it); like zsh with `HIST_IGNORE_SPACE`, a line typed with a space in front isn't logged;
 - move the cursor where you click on the line you're typing, like in an editor (including wrapped lines and wide characters);
 - show the running command or the folder in the tab, and the path plus the last command's result and duration in the status bar;
 - show the git status on every prompt (branch, `↓`/`↑` relative to upstream, `+` staged, `~` modified, `?` untracked, `!` conflicted). Picking a branch in the picker types and runs `git switch` in the shell, so the result or any error stays visible. Switching only works with the shell at the prompt, not while a command is running.

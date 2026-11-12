@@ -140,13 +140,6 @@ impl TerminalView {
         let menu = self.completion.as_ref()?;
         let candidate = menu.completion.items.get(menu.selected)?;
         let typed = &menu.completion.token;
-        if candidate.kind == SuggestionKind::History {
-            let line = &menu.line.buffer;
-            return candidate
-                .text
-                .strip_prefix(line.as_str())
-                .map(str::to_string);
-        }
         candidate
             .text
             .strip_prefix(typed.as_str())
@@ -197,7 +190,6 @@ impl TerminalView {
 
         let items = &menu.completion.items;
         let selected = items.get(menu.selected);
-        let first_history = items.iter().position(|c| c.kind == SuggestionKind::History);
         let rows = items
             .iter()
             .enumerate()
@@ -206,9 +198,6 @@ impl TerminalView {
             .map(|(ix, item)| {
                 let is_selected = ix == menu.selected;
                 v_flex()
-                    .when(Some(ix) == first_history && ix > menu.top, |el| {
-                        el.child(div().h(px(1.)).mx(px(8.)).my(px(3.)).bg(ui.divider))
-                    })
                     .child(
                         h_flex()
                             .id(("completion", ix))

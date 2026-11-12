@@ -36,6 +36,8 @@ pub enum ShellEvent {
     HistoryFile(PathBuf),
     Path(String),
     Names(String),
+    /// Names of the exported variables, separated by spaces.
+    Variables(String),
 }
 
 /// The variable that hands the integration its token (see [`parse_osc`]).
@@ -317,6 +319,7 @@ fn parse_sequence(text: &str, trusted: bool) -> Option<ShellEvent> {
                 "H" => Some(ShellEvent::HistoryFile(PathBuf::from(rest))),
                 "P" => Some(ShellEvent::Path(rest.to_string())),
                 "N" => Some(ShellEvent::Names(rest.to_string())),
+                "V" => Some(ShellEvent::Variables(rest.to_string())),
                 _ => None,
             }
         }
@@ -472,9 +475,72 @@ impl OnResize for ShellPty {
 pub struct History {
     pub loaded_from: Option<PathBuf>,
     pub entries: Vec<String>,
+    /// What Moth saw of the commands run in it, by command.
+    usage: HashMap<String, Usage>,
 }
 
 impl Global for History {}
+
+/// A command run in Moth: where, and how it ended.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Run {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<i32>,
+    /// Seconds since the Unix epoch.
+    #[serde(default)]
+    pub at: u64,
+}
+
+impl Run {
+    /// `None` for what shouldn't be remembered: nothing, or a line typed with a space in
+    /// front (what zsh's `HIST_IGNORE_SPACE` keeps out of the history).
+    pub fn new(command: &str, cwd: Option<PathBuf>, exit: Option<i32>) -> Option<Self> {
+        if command.starts_with(char::is_whitespace) || command.trim().is_empty() {
+            return None;
+        }
+        Some(Run {
+            command: command.trim().to_string(),
+            cwd,
+            exit,
+            at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+        })
+    }
+}
+
+/// What Moth saw of a command across its runs.
+#[derive(Default)]
+pub struct Usage {
+    runs: u32,
+    last_exit: Option<i32>,
+    /// Folders it was run in.
+    dirs: Vec<PathBuf>,
+    last_dir: Option<PathBuf>,
+}
+
+impl Usage {
+    pub fn ran_in(&self, dir: &Path) -> bool {
+        self.dirs.iter().any(|d| d == dir)
+    }
+
+    /// The folder of its last run.
+    pub fn last_dir(&self) -> Option<&Path> {
+        self.last_dir.as_deref()
+    }
+
+    /// The exit code of its last run if it failed. Being interrupted with ⌃C (130) isn't a
+    /// failure of the command.
+    pub fn failure(&self) -> Option<i32> {
+        self.last_exit.filter(|code| !matches!(code, 0 | 130))
+    }
+}
+
+/// How many of the most recent matches are ranked for the gray suggestion.
+const RANKED_MATCHES: usize = 300;
 
 impl History {
     pub fn push(&mut self, command: &str) {
@@ -486,17 +552,163 @@ impl History {
         self.entries.push(command.to_string());
     }
 
-    /// The rest of the most recent entry that starts with `prefix`.
-    pub fn suggest(&self, prefix: &str) -> Option<&str> {
+    /// Counts a finished command: how often it's run, where, and how it ended last.
+    pub fn record(&mut self, run: &Run) {
+        let usage = self.usage.entry(run.command.clone()).or_default();
+        usage.runs += 1;
+        usage.last_exit = run.exit;
+        if let Some(cwd) = &run.cwd {
+            if !usage.dirs.contains(cwd) {
+                usage.dirs.push(cwd.clone());
+            }
+            usage.last_dir = Some(cwd.clone());
+        }
+    }
+
+    /// What's known of `command`, if it was run in Moth.
+    pub fn usage(&self, command: &str) -> Option<&Usage> {
+        self.usage.get(command)
+    }
+
+    /// The rest of the best entry that starts with `prefix`. Recent entries come first, but
+    /// one run in `cwd`, or run often, beats a newer one; one that failed last time falls
+    /// behind, and one the shell didn't find (a typo) is only offered if there's nothing else.
+    pub fn suggest(&self, prefix: &str, cwd: Option<&Path>) -> Option<&str> {
         if prefix.trim().is_empty() {
             return None;
         }
-        self.entries
+        let mut best: Option<(i32, &str)> = None;
+        let matches = self
+            .entries
             .iter()
             .rev()
-            .find(|e| e.len() > prefix.len() && e.starts_with(prefix))
-            .map(|e| &e[prefix.len()..])
+            .filter(|e| e.len() > prefix.len() && e.starts_with(prefix))
+            .take(RANKED_MATCHES);
+        for (age, entry) in matches.enumerate() {
+            let score = self.score(entry, age, cwd);
+            // Newest first, so on a tie the newer one stays.
+            if best.is_none_or(|(top, _)| score > top) {
+                best = Some((score, entry));
+            }
+        }
+        best.map(|(_, entry)| &entry[prefix.len()..])
     }
+
+    fn score(&self, entry: &str, age: usize, cwd: Option<&Path>) -> i32 {
+        // 100 for the newest match, half of that twenty matches back.
+        let mut score = (2000 / (20 + age)) as i32;
+        let Some(usage) = self.usage.get(entry) else {
+            return score;
+        };
+        if cwd.is_some_and(|cwd| usage.ran_in(cwd)) {
+            score += 80;
+        }
+        score += usage.runs.min(10) as i32 * 4;
+        match usage.failure() {
+            // Not found by the shell: most likely a typo.
+            Some(127) => score -= 1000,
+            Some(_) => score -= 60,
+            None => {}
+        }
+        score
+    }
+}
+
+/// The start of a suggestion up to the end of its first word: the blanks before it, then up
+/// to the next blank or just past a `/`, so a path is taken one folder at a time.
+pub fn next_word(rest: &str) -> &str {
+    let start = rest.len() - rest.trim_start().len();
+    let word = &rest[start..];
+    let end = word
+        .char_indices()
+        .find_map(|(i, c)| match c {
+            '/' => Some(i + 1),
+            c if c.is_whitespace() => Some(i),
+            _ => None,
+        })
+        .unwrap_or(word.len());
+    &rest[..start + end]
+}
+
+/// The most runs kept in the log; it's cut back to this when it grows to twice as many.
+const MAX_RUNS: usize = 10_000;
+
+fn runs_file() -> Option<PathBuf> {
+    crate::state::state_dir().map(|dir| dir.join("runs.jsonl"))
+}
+
+/// One writer at a time within the app, so a trim never drops a line being appended.
+static RUNS_LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The runs in the log at `path`, oldest first, cutting the file back if it grew too long.
+fn load_runs(path: &Path) -> Vec<Run> {
+    let _log = RUNS_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<&str> = text.lines().collect();
+    if lines.len() >= MAX_RUNS * 2 {
+        lines.drain(..lines.len() - MAX_RUNS);
+        let mut kept = lines.join("\n");
+        kept.push('\n');
+        if let Err(err) = crate::state::write_atomic(path, kept.as_bytes()) {
+            crate::log::error(format!("couldn't trim the command log: {err}"));
+        }
+    }
+    lines
+        .into_iter()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// Adds `run` to the log at `path`, which only the user can read.
+fn append_run(path: &Path, run: &Run) -> io::Result<()> {
+    use std::io::Write;
+    let _log = RUNS_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut line = serde_json::to_string(run)?;
+    line.push('\n');
+    options.open(path)?.write_all(line.as_bytes())
+}
+
+/// Saves `run` to the command log. Blocking: call from the background executor.
+pub fn save_run(run: &Run) {
+    if let Some(path) = runs_file()
+        && let Err(err) = append_run(&path, run)
+    {
+        crate::log::error(format!("couldn't save the command to the log: {err}"));
+    }
+}
+
+/// Loads the command log into the shared history, in the background.
+pub fn init(cx: &mut App) {
+    let Some(path) = runs_file() else {
+        return;
+    };
+    let read = cx
+        .background_executor()
+        .spawn(async move { load_runs(&path) });
+    cx.spawn(async move |cx| {
+        let runs = read.await;
+        cx.update(|cx| {
+            let history = cx.default_global::<History>();
+            for run in &runs {
+                history.record(run);
+            }
+        });
+    })
+    .detach();
 }
 
 pub fn history(cx: &App) -> Option<&History> {
@@ -745,10 +957,80 @@ mod tests {
         history.push("git push origin main");
         history.push("git pull --rebase");
         history.push("ls");
-        assert_eq!(history.suggest("git p"), Some("ull --rebase"));
-        assert_eq!(history.suggest("git pus"), Some("h origin main"));
-        assert_eq!(history.suggest("ls"), None);
-        assert_eq!(history.suggest(""), None);
+        assert_eq!(history.suggest("git p", None), Some("ull --rebase"));
+        assert_eq!(history.suggest("git pus", None), Some("h origin main"));
+        assert_eq!(history.suggest("ls", None), None);
+        assert_eq!(history.suggest("", None), None);
+    }
+
+    fn run(command: &str, cwd: &str, exit: i32) -> Run {
+        Run {
+            command: command.into(),
+            cwd: Some(PathBuf::from(cwd)),
+            exit: Some(exit),
+            at: 0,
+        }
+    }
+
+    #[test]
+    fn suggestion_prefers_this_folder_and_what_worked() {
+        let mut history = History::default();
+        for command in ["cargo test --workspace", "cargo tree", "cargo tset"] {
+            history.push(command);
+        }
+        history.record(&run("cargo test --workspace", "/moth", 0));
+        history.record(&run("cargo tree", "/other", 0));
+        history.record(&run("cargo tset", "/moth", 127));
+        // The typo is the newest, and was typed here, but the shell didn't find it.
+        let moth = Some(Path::new("/moth"));
+        assert_eq!(history.suggest("cargo t", moth), Some("est --workspace"));
+        // Elsewhere, the newer of the two that worked.
+        let other = Some(Path::new("/other"));
+        assert_eq!(history.suggest("cargo t", other), Some("ree"));
+        // The typo is still offered when it's all there is.
+        assert_eq!(history.suggest("cargo ts", moth), Some("et"));
+    }
+
+    #[test]
+    fn a_failure_falls_behind_but_an_interruption_doesnt() {
+        let mut history = History::default();
+        history.push("make dist");
+        history.push("make deploy");
+        history.record(&run("make deploy", "/moth", 2));
+        assert_eq!(history.suggest("make d", None), Some("ist"));
+        let usage = history.usage("make deploy").unwrap();
+        assert_eq!(usage.failure(), Some(2));
+        assert!(usage.ran_in(Path::new("/moth")) && !usage.ran_in(Path::new("/other")));
+        history.record(&run("make deploy", "/later", 130));
+        assert_eq!(history.suggest("make d", None), Some("eploy"));
+        let usage = history.usage("make deploy").unwrap();
+        assert_eq!(usage.failure(), None);
+        assert_eq!(usage.last_dir(), Some(Path::new("/later")));
+    }
+
+    #[test]
+    fn takes_a_suggestion_one_word_at_a_time() {
+        assert_eq!(next_word("ll --rebase"), "ll");
+        assert_eq!(next_word(" --rebase origin"), " --rebase");
+        assert_eq!(next_word("rk/personal/moth"), "rk/");
+        assert_eq!(next_word("/personal"), "/");
+        assert_eq!(next_word("main"), "main");
+        assert_eq!(next_word(""), "");
+    }
+
+    #[test]
+    fn remembers_runs_but_not_lines_typed_after_a_space() {
+        assert!(Run::new(" export TOKEN=abc", None, Some(0)).is_none());
+        assert!(Run::new("  ", None, Some(0)).is_none());
+        let dir = std::env::temp_dir().join(format!("moth-runs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("runs.jsonl");
+        let first = Run::new("ls -la", Some(PathBuf::from("/moth")), Some(0)).unwrap();
+        let second = Run::new("git psuh", None, Some(1)).unwrap();
+        append_run(&file, &first).unwrap();
+        append_run(&file, &second).unwrap();
+        assert_eq!(load_runs(&file), vec![first, second]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -129,6 +129,8 @@ pub struct ShellState {
     pub disconnected: Option<Disconnected>,
     /// The shell's PATH, to find the editor even when the app is launched from Finder.
     pub path_env: Option<String>,
+    /// Names of the shell's exported variables, for completing `$NAME`.
+    pub variables: Vec<String>,
     /// The last command, if it failed, with its output and a fix found on the machine.
     /// Cleared when the next command starts.
     pub failure: Option<LastFailure>,
@@ -467,8 +469,8 @@ impl Terminal {
     }
 
     /// What's missing to complete the current line: the fix for the command that just failed,
-    /// while the line is still a start of it, or else the most recent history entry. Only when
-    /// the cursor is at the end of the line.
+    /// while the line is still a start of it, or else the best history entry (see
+    /// [`History::suggest`]). Only when the cursor is at the end of the line.
     pub fn suggestion(&self, cx: &App) -> Option<String> {
         let line = self.shell.line.as_ref()?;
         if self.shell.running.is_some() || line.cursor != line.buffer.chars().count() {
@@ -478,7 +480,7 @@ impl Terminal {
             return Some(rest);
         }
         shell::history(cx)?
-            .suggest(&line.buffer)
+            .suggest(&line.buffer, self.shell.cwd.as_deref())
             .filter(|rest| !rest.contains('\n'))
             .map(str::to_string)
     }
@@ -562,6 +564,16 @@ impl Terminal {
             }
             ShellEvent::CommandFinished(exit_code) => {
                 if let Some(running) = self.shell.running.take() {
+                    // The folder is still the one the command was typed in: the new one
+                    // arrives after this, with the prompt.
+                    if let Some(run) =
+                        shell::Run::new(&running.text, self.shell.cwd.clone(), exit_code)
+                    {
+                        cx.default_global::<History>().record(&run);
+                        cx.background_executor()
+                            .spawn(async move { shell::save_run(&run) })
+                            .detach();
+                    }
                     cx.emit(TerminalEvent::CommandFinished {
                         command: running.text.clone(),
                         exit_code,
@@ -635,6 +647,9 @@ impl Terminal {
                 self.resolver.set_path(&path);
                 self.shell.path_env = Some(path);
                 self.highlight_cache = None;
+            }
+            ShellEvent::Variables(names) => {
+                self.shell.variables = names.split_whitespace().map(str::to_string).collect();
             }
             ShellEvent::Names(names) => {
                 self.resolver.set_names(&names);
@@ -779,9 +794,6 @@ impl Terminal {
         // read files only for what can be typed at the cursor.
         let git = self.shell.git.as_ref();
         let branches = git.map(|g| g.branches.as_slice()).unwrap_or_default();
-        let history = shell::history(cx)
-            .map(|h| h.entries.as_slice())
-            .unwrap_or_default();
         let hosts = || {
             ssh::config_hosts()
                 .into_iter()
@@ -803,6 +815,12 @@ impl Terminal {
                 .map(completions::package_scripts)
                 .unwrap_or_default()
         };
+        let targets = || {
+            cwd.as_deref()
+                .map(completions::make_targets)
+                .unwrap_or_default()
+        };
+        let changed_files = || cwd.as_deref().map(git::changed_files).unwrap_or_default();
         let result = completions::complete(&completions::Context {
             buffer: &line.buffer,
             cursor,
@@ -810,11 +828,14 @@ impl Terminal {
             specs,
             branches,
             current_branch: git.and_then(|g| g.branch.as_deref()),
-            history,
+            variables: &self.shell.variables,
             hosts: &hosts,
             commands: &commands,
             list_dir: &completions::list_dir,
             scripts: &scripts,
+            targets: &targets,
+            changed_files: &changed_files,
+            recent_dirs: &state::recent_dirs,
         });
         self.resolver = resolver.into_inner();
         result

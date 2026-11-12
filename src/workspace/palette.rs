@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// The history search's filters, after "All": positions in its `PickerConfig::filters`.
+const HISTORY_THIS_FOLDER: usize = 1;
+const HISTORY_FAILED: usize = 2;
+
 #[derive(Clone, Copy, PartialEq)]
 enum ModalKind {
     CommandPalette,
@@ -395,6 +399,7 @@ impl Workspace {
             ],
             disabled_reason: None,
             selected_item: None,
+            filters: Vec::new(),
         };
         self.open_modal(ModalKind::CommandPalette, items, config, window, cx);
     }
@@ -409,6 +414,7 @@ impl Workspace {
             .as_ref()
             .map(|line| line.buffer.clone())
             .unwrap_or_default();
+        let cwd = terminal.shell().cwd.as_deref();
         let items: Vec<PickerItem> = shell::history(cx)
             .map(|history| {
                 history
@@ -416,13 +422,36 @@ impl Workspace {
                     .iter()
                     .rev()
                     .map(|command| {
-                        PickerItem::new(
+                        let mut item = PickerItem::new(
                             "",
                             command.clone(),
                             PickerAction::InsertCommand(command.clone()),
                         )
                         .kind(SuggestionKind::History)
-                        .mono()
+                        .mono();
+                        // Where it last ran and whether it failed, for what ran in Moth.
+                        let Some(usage) = history.usage(command) else {
+                            return item;
+                        };
+                        if cwd.is_some_and(|cwd| usage.ran_in(cwd)) {
+                            item = item.in_filter(HISTORY_THIS_FOLDER);
+                        }
+                        let mut detail = usage
+                            .last_dir()
+                            .map(chrome::abbreviate_home)
+                            .unwrap_or_default();
+                        if let Some(code) = usage.failure() {
+                            item = item.in_filter(HISTORY_FAILED);
+                            if !detail.is_empty() {
+                                detail.push_str(" · ");
+                            }
+                            detail.push_str(&format!("exit {code}"));
+                        }
+                        if detail.is_empty() {
+                            item
+                        } else {
+                            item.detail(detail)
+                        }
                     })
                     .collect()
             })
@@ -437,6 +466,7 @@ impl Workspace {
             },
             hints: vec![
                 ("↑↓".into(), "navigate".into()),
+                ("Tab".into(), "filter".into()),
                 ("⏎".into(), "insert at prompt".into()),
                 (shortcuts::label("cmd-enter").into(), "run".into()),
                 ("esc".into(), "close".into()),
@@ -444,6 +474,7 @@ impl Workspace {
             disabled_reason: (!terminal.at_prompt())
                 .then(|| "A command is running; wait for it to finish to use history".into()),
             selected_item: None,
+            filters: vec!["All".into(), "This folder".into(), "Failed".into()],
         };
         self.open_modal(ModalKind::History, items, config, window, cx);
     }
@@ -484,6 +515,7 @@ impl Workspace {
             disabled_reason: (!terminal.at_prompt())
                 .then(|| "A command is running; wait for it to finish to switch branches".into()),
             selected_item: None,
+            filters: Vec::new(),
         };
         self.open_modal(ModalKind::Branches, items, config, window, cx);
     }
@@ -524,6 +556,7 @@ impl Workspace {
             ],
             disabled_reason: None,
             selected_item: themes.iter().position(|t| t.name == current),
+            filters: Vec::new(),
         };
         self.open_modal(ModalKind::Themes, items, config, window, cx);
     }
@@ -670,6 +703,7 @@ impl Workspace {
             ],
             disabled_reason: None,
             selected_item: None,
+            filters: Vec::new(),
         };
         self.open_modal(ModalKind::Hosts, items, config, window, cx);
     }

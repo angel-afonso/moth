@@ -1,9 +1,10 @@
 //! Completions for the line being edited: what can be typed at the cursor position.
 //!
 //! The sources are the specs in `assets/completions/specs.json` (each tool's subcommands,
-//! flags and argument type), commands on the PATH, git branches, `package.json` scripts,
-//! SSH hosts, paths and history. Everything external comes in through `Context`, so the
-//! engine can be tested without touching the disk.
+//! flags and argument type), commands on the PATH, git branches and changed files,
+//! `package.json` scripts, Makefile targets, SSH hosts, exported variables, paths and recent
+//! folders. Everything external comes in through `Context`, so the engine can be tested
+//! without touching the disk.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -21,7 +22,8 @@ pub struct Spec {
     pub description: Option<String>,
     #[serde(default)]
     pub usage: Option<String>,
-    /// What the arguments expect: `path`, `dir`, `branch`, `script`, `host`, `command`.
+    /// What the arguments expect: `path`, `dir`, `branch`, `changed` (files with changes in
+    /// git), `script`, `target` (of the Makefile), `host`, `command`.
     #[serde(default)]
     pub args: Option<String>,
     #[serde(default)]
@@ -88,8 +90,8 @@ pub struct Context<'a> {
     pub specs: &'a Specs,
     pub branches: &'a [String],
     pub current_branch: Option<&'a str>,
-    /// History, most recent last.
-    pub history: &'a [String],
+    /// Names of the shell's exported variables.
+    pub variables: &'a [String],
     /// SSH hosts: (alias, description). Only asked for when a host is what can be typed.
     pub hosts: &'a dyn Fn() -> Vec<(String, String)>,
     /// PATH commands, aliases and functions that start with the prefix.
@@ -98,6 +100,12 @@ pub struct Context<'a> {
     pub list_dir: &'a dyn Fn(&Path) -> Vec<(String, bool)>,
     /// `package.json` scripts in the current folder: (name, command).
     pub scripts: &'a dyn Fn() -> Vec<(String, String)>,
+    /// Targets of the current folder's Makefile.
+    pub targets: &'a dyn Fn() -> Vec<String>,
+    /// Files with changes in git, relative to the current folder: (path, what changed).
+    pub changed_files: &'a dyn Fn() -> Vec<(String, String)>,
+    /// Folders used lately, most recent first.
+    pub recent_dirs: &'a dyn Fn() -> Vec<PathBuf>,
 }
 
 const PRECOMMANDS: &[&str] = &[
@@ -216,12 +224,10 @@ impl Builder<'_> {
         description: Option<String>,
         doc: Option<Doc>,
         append_space: bool,
-    ) {
+    ) -> Option<&mut Candidate> {
         let query = self.token.trim_start_matches(['-']);
         let target = label.trim_start_matches(['-']);
-        let Some(m) = fuzzy_match(query, target) else {
-            return;
-        };
+        let m = fuzzy_match(query, target)?;
         // The matcher works without the leading dashes, so positions are shifted back.
         let shift = label.len() - target.len();
         let prefix_bonus = if label.starts_with(self.token) {
@@ -240,6 +246,7 @@ impl Builder<'_> {
             replace_from: self.replace_from,
             append_space,
         });
+        self.items.last_mut()
     }
 }
 
@@ -269,7 +276,23 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
         items: Vec::new(),
     };
 
-    if words.is_empty() {
+    // `$HO` → `$HOME`, wherever it's typed (but not inside quotes or as part of a path).
+    let variable = before[token_start..]
+        .strip_prefix('$')
+        .filter(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    if variable.is_some() {
+        for name in ctx.variables {
+            let text = format!("${name}");
+            b.push(
+                text.clone(),
+                text,
+                SuggestionKind::Variable,
+                Some("variable".into()),
+                None,
+                false,
+            );
+        }
+    } else if words.is_empty() {
         if token.is_empty() {
             return None;
         }
@@ -297,13 +320,45 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
         }
     } else {
         let command = words[0].1.as_str();
-        let spec = ctx.specs.0.get(command);
-        let sub = spec.and_then(|s| words.get(1).and_then(|(_, w)| s.subcommands.get(w)));
-        let active = sub.or(spec);
+        // Walk down the subcommands typed so far (`git stash pop`, `docker compose up`),
+        // past the flags in between. `active` is the deepest one: its flags and arguments
+        // are what can be typed now.
+        let mut active = ctx.specs.0.get(command);
+        let mut chain = command.to_string();
+        let mut used_flags = Vec::new();
+        let mut arguments = 0;
+        let mut after_flag = false;
+        for (_, word) in &words[1..] {
+            if word.starts_with('-') {
+                used_flags.push(word.as_str());
+                after_flag = true;
+                continue;
+            }
+            let sub = active
+                .filter(|_| arguments == 0)
+                .and_then(|spec| spec.subcommands.get(word));
+            match sub {
+                Some(sub) => {
+                    active = Some(sub);
+                    chain = format!("{chain} {word}");
+                }
+                // Right after a flag it's taken as the flag's value (`-f dev.yml`).
+                None if after_flag => {}
+                None => arguments += 1,
+            }
+            after_flag = false;
+        }
+        let subcommands = active
+            .map(|spec| &spec.subcommands)
+            .filter(|subs| !subs.is_empty() && arguments == 0);
 
         if token.starts_with('-') {
             if let Some(active) = active {
                 for (flag, description) in &active.flags {
+                    // Not the ones already on the line.
+                    if used_flags.contains(&flag.as_str()) {
+                        continue;
+                    }
                     b.push(
                         flag.clone(),
                         flag.clone(),
@@ -314,37 +369,39 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                     );
                 }
             }
-        } else if let (Some(spec), 1) = (spec, words.len())
-            && !spec.subcommands.is_empty()
-        {
-            for (name, sub) in &spec.subcommands {
+        } else if let Some(subcommands) = subcommands {
+            for (name, sub) in subcommands {
                 b.push(
                     name.clone(),
                     name.clone(),
                     SuggestionKind::Subcommand,
                     sub.description.clone(),
-                    Some(spec_doc(format!("{command} {name}"), sub)),
+                    Some(spec_doc(format!("{chain} {name}"), sub)),
                     true,
                 );
             }
         } else {
             match active.and_then(|s| s.args.as_deref()) {
                 Some("branch") => {
-                    for branch in ctx.branches {
+                    // They come most recently committed first, and stay that way among
+                    // those that match equally well.
+                    for (recency, branch) in ctx.branches.iter().enumerate() {
                         let current = ctx.current_branch == Some(branch.as_str());
                         let description = if current {
                             "current branch"
                         } else {
                             "local branch"
                         };
-                        b.push(
+                        if let Some(candidate) = b.push(
                             escape(branch),
                             branch.clone(),
                             SuggestionKind::Branch,
                             Some(description.into()),
                             None,
                             true,
-                        );
+                        ) {
+                            candidate.score -= recency.min(100) as i32;
+                        }
                     }
                 }
                 Some("script") => {
@@ -354,6 +411,18 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                             name,
                             SuggestionKind::Subcommand,
                             Some(command),
+                            None,
+                            true,
+                        );
+                    }
+                }
+                Some("target") => {
+                    for name in (ctx.targets)() {
+                        b.push(
+                            escape(&name),
+                            name,
+                            SuggestionKind::Subcommand,
+                            Some("Makefile target".into()),
                             None,
                             true,
                         );
@@ -385,32 +454,28 @@ pub fn complete(ctx: &Context) -> Option<Completion> {
                         }
                     }
                 }
-                args => complete_paths(&mut b, &token, ctx.cwd, ctx.list_dir, args == Some("dir")),
-            }
-        }
-    }
-
-    // History lines that start with the typed text, at the end of the list.
-    let typed = before.trim_start();
-    if typed.len() >= 2 {
-        let mut seen = Vec::new();
-        for entry in ctx.history.iter().rev() {
-            if entry.len() > typed.len() && entry.starts_with(typed) && !seen.contains(entry) {
-                seen.push(entry.clone());
-                b.items.push(Candidate {
-                    text: entry.clone(),
-                    label: entry.clone(),
-                    kind: SuggestionKind::History,
-                    description: Some("from history".into()),
-                    doc: None,
-                    // Byte offsets of each typed character, for the highlight: `ú` takes two.
-                    positions: typed.char_indices().map(|(i, _)| i).collect(),
-                    score: i32::MIN / 2,
-                    replace_from: before.len() - typed.len(),
-                    append_space: false,
-                });
-                if seen.len() == 3 {
-                    break;
+                Some("changed") => {
+                    for (path, change) in (ctx.changed_files)() {
+                        b.push(
+                            escape(&path),
+                            path,
+                            SuggestionKind::Path,
+                            Some(change),
+                            None,
+                            true,
+                        );
+                    }
+                    // Nothing changed, or none of it matches: any path.
+                    if b.items.is_empty() {
+                        complete_paths(&mut b, &token, ctx.cwd, ctx.list_dir, false);
+                    }
+                }
+                args => {
+                    complete_paths(&mut b, &token, ctx.cwd, ctx.list_dir, args == Some("dir"));
+                    // `cd` also goes to the folders used lately, after the ones right here.
+                    if command == "cd" && !token.contains('/') {
+                        recent_dirs(&mut b, ctx);
+                    }
                 }
             }
         }
@@ -469,6 +534,36 @@ fn complete_paths(
     b.items.extend(names.items);
 }
 
+/// Recent folders for `cd`, written from the home folder (`~/work/moth/`). They rank below
+/// the folders of the current one, in order of use.
+fn recent_dirs(b: &mut Builder, ctx: &Context) {
+    const MAX_RECENT: usize = 15;
+    let home = crate::state::home_dir();
+    let dirs = (ctx.recent_dirs)()
+        .into_iter()
+        .filter(|dir| Some(dir.as_path()) != ctx.cwd && dir.parent() != ctx.cwd)
+        .take(MAX_RECENT);
+    for (recency, dir) in dirs.enumerate() {
+        let (root, rest) = match home.as_deref().and_then(|home| dir.strip_prefix(home).ok()) {
+            Some(rest) => ("~/", rest.to_string_lossy().into_owned()),
+            None => ("", dir.to_string_lossy().into_owned()),
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        if let Some(candidate) = b.push(
+            format!("{root}{}/", escape(&rest)),
+            format!("{root}{rest}/"),
+            SuggestionKind::Path,
+            Some("recent folder".into()),
+            None,
+            false,
+        ) {
+            candidate.score -= 1000 + recency as i32;
+        }
+    }
+}
+
 /// The line after accepting `candidate`, and where the cursor ends up (in characters).
 pub fn apply(buffer: &str, cursor: usize, candidate: &Candidate) -> (String, usize) {
     let rest = &buffer[cursor.min(buffer.len())..];
@@ -506,6 +601,41 @@ pub fn package_scripts(dir: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// Targets of the Makefile in `dir`: the names before a `:` at the start of a line, without
+/// the special ones (`.PHONY`) or pattern rules (`%.o`).
+pub fn make_targets(dir: &Path) -> Vec<String> {
+    let text = ["GNUmakefile", "makefile", "Makefile"]
+        .iter()
+        .find_map(|name| std::fs::read_to_string(dir.join(name)).ok())
+        .unwrap_or_default();
+    parse_make_targets(&text)
+}
+
+fn parse_make_targets(text: &str) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with(char::is_whitespace) || line.starts_with('#') {
+            continue;
+        }
+        let Some((names, rest)) = line.split_once(':') else {
+            continue;
+        };
+        // `NAME := value` and `NAME ::= value` are variables.
+        if rest.starts_with('=') || rest.starts_with(":=") || names.contains('=') {
+            continue;
+        }
+        for name in names.split_whitespace() {
+            let plain = name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-./".contains(c));
+            if plain && !name.starts_with('.') && !targets.iter().any(|t| t == name) {
+                targets.push(name.to_string());
+            }
+        }
+    }
+    targets
+}
+
 /// Entries of a folder (at most 500), for path completion.
 pub fn list_dir(dir: &Path) -> Vec<(String, bool)> {
     std::fs::read_dir(dir)
@@ -535,10 +665,7 @@ mod tests {
             "feat/tabs".to_string(),
             "fix/scroll".to_string(),
         ];
-        let history = vec![
-            "git checkout -b feat/completions".to_string(),
-            "ls -la".to_string(),
-        ];
+        let variables = vec!["HOME".to_string(), "HOMEBREW_PREFIX".to_string()];
         let hosts = vec![("prod-db".to_string(), "angel@10.0.4.12".to_string())];
         let commands = |prefix: &str| {
             ["gcc", "git", "gitk", "grep", "go"]
@@ -575,11 +702,26 @@ mod tests {
             specs: &specs,
             branches: &branches,
             current_branch: Some("main"),
-            history: &history,
+            variables: &variables,
             hosts: &|| hosts.clone(),
             commands: &commands,
             list_dir: &list_dir,
             scripts: &scripts,
+            targets: &|| vec!["build".to_string(), "bundle".to_string()],
+            changed_files: &|| {
+                vec![
+                    ("src/main.rs".to_string(), "modified".to_string()),
+                    ("notes.md".to_string(), "untracked".to_string()),
+                ]
+            },
+            recent_dirs: &|| {
+                vec![
+                    PathBuf::from("/project"),
+                    PathBuf::from("/project/src"),
+                    PathBuf::from("/srv/my app"),
+                    PathBuf::from("/srv/site"),
+                ]
+            },
         };
         complete(&ctx)
             .map(|c| c.items.into_iter().map(|i| (i.text, i.kind)).collect())
@@ -598,20 +740,77 @@ mod tests {
     }
 
     #[test]
-    fn subcommands_ranked_by_prefix_then_history() {
+    fn subcommands_ranked_by_prefix() {
         let items = run("git ch");
         assert_eq!(
             items[0],
             ("checkout".to_string(), SuggestionKind::Subcommand)
         );
         assert!(texts(&items).contains(&"cherry-pick"));
+    }
+
+    #[test]
+    fn nested_subcommands() {
+        assert_eq!(texts(&run("git stash p"))[..2], ["pop", "push"]);
+        assert_eq!(run("docker compose u")[0].0, "up");
+        // Flags in between don't hide them, and the deepest one's flags are offered.
+        assert_eq!(run("docker compose -f dev.yml lo")[0].0, "logs");
+        assert_eq!(texts(&run("docker compose up --bu")), vec!["--build"]);
+        // After the subcommand's own argument, no more subcommands.
+        assert!(!texts(&run("git stash show 1 p")).contains(&"pop"));
+    }
+
+    #[test]
+    fn flags_already_typed_are_left_out() {
+        assert!(texts(&run("git add -")).contains(&"-A"));
+        let items = run("git add -A -");
+        assert!(!texts(&items).contains(&"-A") && texts(&items).contains(&"-p"));
+    }
+
+    #[test]
+    fn branches_keep_their_recency() {
+        // As git gives them, not alphabetical.
         assert_eq!(
-            items.last().unwrap(),
-            &(
-                "git checkout -b feat/completions".to_string(),
-                SuggestionKind::History
-            )
+            texts(&run("git switch ")),
+            vec!["main", "feat/tabs", "fix/scroll"]
         );
+    }
+
+    #[test]
+    fn variables_targets_and_changed_files() {
+        assert_eq!(texts(&run("echo $HO")), vec!["$HOME", "$HOMEBREW_PREFIX"]);
+        assert_eq!(texts(&run("$HOMEB")), vec!["$HOMEBREW_PREFIX"]);
+        // Not as part of a path: that's the shell's.
+        let in_path = run("ls $HOME/s");
+        assert!(
+            in_path
+                .iter()
+                .all(|(_, kind)| *kind == SuggestionKind::Path)
+        );
+        assert_eq!(texts(&run("make bu")), vec!["build", "bundle"]);
+        assert_eq!(texts(&run("git add ")), vec!["notes.md", "src/main.rs"]);
+        assert_eq!(texts(&run("git add ma")), vec!["src/main.rs"]);
+        // Nothing changed matches: any path.
+        assert_eq!(texts(&run("git add READ")), vec!["README.md"]);
+    }
+
+    #[test]
+    fn cd_offers_recent_folders_after_the_local_ones() {
+        // Not the current folder or its children, which are already there.
+        assert_eq!(
+            texts(&run("cd ")),
+            vec!["src/", "/srv/my\\ app/", "/srv/site/"]
+        );
+        assert_eq!(texts(&run("cd si")), vec!["/srv/site/"]);
+        // With a path typed, only that path.
+        assert_eq!(texts(&run("cd /srv/")), vec!["/srv/src/"]);
+        assert!(texts(&run("mkdir ")).iter().all(|t| !t.starts_with("/srv")));
+    }
+
+    #[test]
+    fn reads_makefile_targets() {
+        let makefile = "CC := clang\nOUT = dist\n.PHONY: build test\n\nbuild: deps\n\tcargo build\n\ntest lint: build\n%.o: %.c\n# clean: old\nbuild:\n";
+        assert_eq!(parse_make_targets(makefile), vec!["build", "test", "lint"]);
     }
 
     #[test]
@@ -635,7 +834,7 @@ mod tests {
         assert_eq!(texts(&run("npm run b")), vec!["build"]);
         assert_eq!(texts(&run("ssh pro")), vec!["prod-db"]);
         // `cd` only offers folders, and no hidden ones.
-        assert_eq!(texts(&run("cd ")), vec!["src/"]);
+        assert_eq!(texts(&run("mkdir ")), vec!["src/"]);
         assert_eq!(texts(&run("cd .g")), vec![".git/"]);
     }
 

@@ -34,7 +34,7 @@ use crate::{
     agent_mode::panel::{AgentModeEvent, AgentModePanel},
     agent_panel::{AgentPanel, AgentPanelEvent, AgentTask},
     blocks, completions,
-    components::{Kbd, KindBadge, SuggestionKind},
+    components::{Kbd, KindBadge},
     glyphs,
     highlight::{Token, TokenKind},
     keys, links, mouse, palette, shortcuts,
@@ -340,12 +340,20 @@ impl TerminalView {
             return;
         }
 
-        if plain
-            && matches!(keystroke.key.as_str(), "right" | "end")
+        // The gray suggestion: → or End take all of it, ⌥→ its next word.
+        let only_alt = m.alt && !(m.control || m.shift || m.platform);
+        let whole = plain && matches!(keystroke.key.as_str(), "right" | "end");
+        let word = only_alt && keystroke.key == "right";
+        if (whole || word)
             && let Some(rest) = self.terminal.read(cx).suggestion(cx)
         {
+            let accepted = if whole {
+                rest
+            } else {
+                crate::shell::next_word(&rest).to_string()
+            };
             self.terminal
-                .update(cx, |t, cx| t.input(rest.into_bytes(), cx));
+                .update(cx, |t, cx| t.input(accepted.into_bytes(), cx));
             cx.stop_propagation();
             return;
         }

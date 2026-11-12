@@ -73,6 +73,7 @@ pub enum SuggestionKind {
     Flag,
     Path,
     Branch,
+    Variable,
     History,
 }
 
@@ -96,6 +97,7 @@ impl RenderOnce for KindBadge {
             SuggestionKind::Flag => (syntax.flag, Some("−")),
             SuggestionKind::Path => (syntax.path, Some("/")),
             SuggestionKind::Branch => (syntax.command, Some("B")),
+            SuggestionKind::Variable => (syntax.number, Some("$")),
             SuggestionKind::History => (syntax.flag, None),
         };
         div()

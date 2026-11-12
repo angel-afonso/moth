@@ -51,6 +51,7 @@ fn main() {
             log::init();
             state::migrate_legacy_dir();
             config::init(cx);
+            shell::init(cx);
             theme::init(cx);
             session::init(cx);
             workspace::init(cx);
