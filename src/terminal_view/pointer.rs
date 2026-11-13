@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// How often a selection is extended while its pointer rests beyond the terminal edge.
+const SELECTION_AUTOSCROLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(35);
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Press {
     point: AlacPoint,
@@ -12,6 +15,83 @@ pub(super) struct Press {
 }
 
 impl TerminalView {
+    /// Number of display rows to scroll for an edge drag. Moving farther beyond an edge speeds
+    /// the drag up, while a pointer just beyond it still scrolls one row at a time.
+    fn selection_autoscroll_delta(
+        position_y: f32,
+        top: f32,
+        line_height: f32,
+        screen_lines: usize,
+    ) -> i32 {
+        let bottom = top + line_height * screen_lines as f32;
+        let (distance, direction) = if position_y < top {
+            (top - position_y, 1)
+        } else if position_y >= bottom {
+            (position_y - bottom, -1)
+        } else {
+            return 0;
+        };
+        let rows = (distance / line_height).floor() as i32 + 1;
+        // Positive display deltas move toward older output; negative ones return toward the
+        // prompt, which is the direction needed when dragging below the terminal.
+        rows.clamp(1, 3) * direction
+    }
+
+    /// Scroll one edge-drag tick and update the selection endpoint in the newly visible grid.
+    /// Returns false once the mouse button is released, which ends the timer task.
+    fn continue_selection_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(position) = self.selection_drag_position else {
+            return false;
+        };
+        if !self.press.is_some_and(|press| press.dragged) {
+            return false;
+        }
+        let Some(geometry) = self.geometry.get() else {
+            return true;
+        };
+        let term = self.terminal.read(cx).term.clone();
+        let mut term = term.lock();
+        let delta = Self::selection_autoscroll_delta(
+            f32::from(position.y),
+            f32::from(geometry.origin.y),
+            f32::from(geometry.line_height),
+            term.screen_lines(),
+        );
+        if delta == 0 {
+            return true;
+        }
+        term.scroll_display(Scroll::Delta(delta));
+        if let Some((point, side)) = self.grid_point_side(position, &term, true)
+            && let Some(selection) = term.selection.as_mut()
+        {
+            selection.update(point, side);
+        }
+        drop(term);
+        cx.notify();
+        true
+    }
+
+    /// Start the timer once for a drag. It stays inexpensive while the pointer is inside the
+    /// grid, then scrolls immediately when the pointer crosses an edge.
+    fn start_selection_autoscroll(&mut self, cx: &mut Context<Self>) {
+        if self.selection_autoscroll.is_some() {
+            return;
+        }
+        self.selection_autoscroll = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(SELECTION_AUTOSCROLL_INTERVAL)
+                    .await;
+                let active = this
+                    .update(cx, |this, cx| this.continue_selection_drag(cx))
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        }));
+    }
+
     /// Grid cell under `position` and which side of it was hit. With `clamp`, a point
     /// off-screen is clamped to the edge (for dragging a selection past it).
     fn grid_point_side(
@@ -128,6 +208,8 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.selection_drag_position = None;
+        self.selection_autoscroll.take();
         self.focus_handle.focus(window, cx);
         if self.agent_panel.take().is_some() {
             cx.notify();
@@ -226,6 +308,8 @@ impl TerminalView {
                 }
                 drop(term);
                 self.press = Some(press);
+                self.selection_drag_position = Some(event.position);
+                self.start_selection_autoscroll(cx);
                 cx.notify();
                 return;
             }
@@ -262,6 +346,8 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.selection_drag_position = None;
+        self.selection_autoscroll.take();
         if std::mem::take(&mut self.reported_press) {
             self.send_mouse(
                 Some(mouse::Button::Left),
@@ -453,5 +539,38 @@ impl TerminalView {
         } else {
             self.terminal.update(cx, |t, cx| t.scroll(lines as i32, cx));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_edge_drag_scrolls_toward_the_pointer() {
+        let top = 100.;
+        let line_height = 20.;
+        let lines = 10;
+
+        assert_eq!(
+            TerminalView::selection_autoscroll_delta(180., top, line_height, lines),
+            0
+        );
+        assert_eq!(
+            TerminalView::selection_autoscroll_delta(99., top, line_height, lines),
+            1
+        );
+        assert_eq!(
+            TerminalView::selection_autoscroll_delta(60., top, line_height, lines),
+            3
+        );
+        assert_eq!(
+            TerminalView::selection_autoscroll_delta(300., top, line_height, lines),
+            -1
+        );
+        assert_eq!(
+            TerminalView::selection_autoscroll_delta(380., top, line_height, lines),
+            -3
+        );
     }
 }

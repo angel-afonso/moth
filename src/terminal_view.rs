@@ -111,6 +111,11 @@ pub struct TerminalView {
     link_press: Option<LinkTarget>,
     /// Left button pressed outside a link: the selection's starting point.
     press: Option<Press>,
+    /// Last pointer position while a text selection is being dragged. The timer uses it to
+    /// extend the selection after scrolling past the top or bottom edge.
+    selection_drag_position: Option<Point<Pixels>>,
+    /// Keeps edge-scrolling alive while the mouse button is down; dropping it stops the task.
+    selection_autoscroll: Option<gpui::Task<()>>,
     /// The current left click was reported to the program (vim, htop…).
     reported_press: bool,
     /// Last cell reported on motion, so we don't repeat events within the same cell.
@@ -159,6 +164,8 @@ impl TerminalView {
             hover_point: None,
             link_press: None,
             press: None,
+            selection_drag_position: None,
+            selection_autoscroll: None,
             reported_press: false,
             last_motion_cell: None,
             completion: None,
@@ -501,6 +508,7 @@ impl Render for TerminalView {
         let terminal_area = div()
             .id("terminal-view")
             .relative()
+            .overflow_hidden()
             .key_context("Terminal")
             .track_focus(&self.focus_handle)
             .size_full()
